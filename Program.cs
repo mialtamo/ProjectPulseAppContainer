@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Net.Sockets;
 using Azure.Core;
 using Azure.Identity;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Options;
 using ProjectPulse.Processor.ContainerApp;
 using ProjectPulse.Processor.Options;
 using ProjectPulse.Processor.Services;
+using ProjectPulse.Processor.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,20 +55,20 @@ builder.Services.AddHostedService<ClaimPollingWorker>();
 
 var app = builder.Build();
 
-app.MapGet("/", () =>
+app.MapGet("/", (HttpContext context) =>
 {
-    var pollInterval = Environment.GetEnvironmentVariable("POLL_INTERVAL_SECONDS") ?? "5";
-    return Results.Content($"""
-<!doctype html>
-<html><head><meta charset="utf-8"><title>Project Pulse</title>
-<style>body{font-family:system-ui;background:#05070b;color:#e5eefc;padding:40px}a{color:#19ddff}code{color:#54e39b}</style>
-</head><body>
-<h1>Project Pulse - Container App</h1>
-<p>Continuous claims polling worker is running.</p>
-<p><a href="/pulse-health">Health</a> | <a href="/requests.html">Request history</a></p>
-<p>Polling interval: <code>{{pollInterval}} seconds</code></p>
-</body></html>
-""", "text/html");
+    context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+    context.Response.Headers.Pragma = "no-cache";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; img-src 'self' https://raw.githubusercontent.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
+
+    return Results.Content(
+        UiPages.LandingPage(
+            Environment.GetEnvironmentVariable("PROJECT_PULSE_VERSION"),
+            Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT")),
+        "text/html; charset=utf-8");
 });
 
 app.MapGet("/pulse", () => Results.Redirect("/"));
@@ -117,37 +119,38 @@ app.MapGet("/pulse-health", async (IConfiguration configuration) =>
     });
 });
 
-app.MapGet("/requests", async (IRequestHistoryStore store, CancellationToken cancellationToken) =>
+var historyJsonOptions = new JsonSerializerOptions
 {
+    PropertyNamingPolicy = null
+};
+
+app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
     var items = await store.ListAsync(1000, cancellationToken);
-    return Results.Ok(items);
+    return Results.Json(items, historyJsonOptions);
 });
 
-app.MapGet("/requests/{id}", async (string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>
+app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
+    context.Response.Headers.CacheControl = "no-store";
     var item = await store.GetAsync(id, cancellationToken);
-    return item is null ? Results.NotFound() : Results.Ok(item);
+    return item is null
+        ? Results.NotFound()
+        : Results.Json(item, historyJsonOptions);
 });
 
-app.MapGet("/requests.html", () => Results.Content("""
-<!doctype html>
-<html><head><meta charset="utf-8"><title>Project Pulse Requests</title>
-<style>
-body{font-family:system-ui;background:#05070b;color:#e5eefc;padding:24px}
-a{color:#19ddff}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #1c2a3a;text-align:left;font-size:12px}
-th{color:#9fb4cf}pre{white-space:pre-wrap}
-</style></head><body>
-<p><a href="/">Home</a></p>
-<h1>Project Pulse Requests</h1>
-<table><thead><tr><th>Updated</th><th>Unique ID</th><th>Status</th><th>Destination</th><th>HTTP</th><th>Reason</th></tr></thead><tbody id="rows"></tbody></table>
-<script>
-async function load(){
-  const r=await fetch('/requests',{cache:'no-store'});
-  const items=await r.json();
-  document.getElementById('rows').innerHTML=items.map(x=>'<tr><td>'+new Date(x.updatedAtUtc).toLocaleString()+'</td><td>'+String(x.uniqueId??'')+'</td><td>'+String(x.status??'')+'</td><td>'+String(x.destination??'')+'</td><td>'+String(x.httpStatusCode??'')+'</td><td>'+String(x.reason??'')+'</td></tr>').join('');
-}
-load(); setInterval(load,30000);
-</script></body></html>
-""", "text/html"));
+app.MapGet("/requests.html", (HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+    return Results.Content(UiPages.RequestHistoryPage, "text/html; charset=utf-8");
+});
+
+app.MapGet("/live", () => Results.Ok(new { status = "ok" }));
 
 app.Run();
