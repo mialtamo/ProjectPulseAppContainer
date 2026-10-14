@@ -24,6 +24,11 @@ jobs:
       - name: Checkout to the branch
         uses: actions/checkout@v2
 
+      - name: Read image version
+        id: version
+        shell: bash
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -42,7 +47,7 @@ jobs:
           registryPassword: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_PASSWORD }}
           containerAppName: projectpulse-appcontainer
           resourceGroup: NewWorld-RSG
-          imageToBuild: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ github.sha }}
+          imageToBuild: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
 
