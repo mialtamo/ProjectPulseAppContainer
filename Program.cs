@@ -53,7 +53,10 @@ builder.Services.AddHostedService<ClaimPollingWorker>();
 
 var app = builder.Build();
 
-app.MapGet("/", () => Results.Content("""
+app.MapGet("/", () =>
+{
+    var pollInterval = Environment.GetEnvironmentVariable("POLL_INTERVAL_SECONDS") ?? "5";
+    return Results.Content($"""
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Project Pulse</title>
 <style>body{font-family:system-ui;background:#05070b;color:#e5eefc;padding:40px}a{color:#19ddff}code{color:#54e39b}</style>
@@ -61,9 +64,10 @@ app.MapGet("/", () => Results.Content("""
 <h1>Project Pulse - Container App</h1>
 <p>Continuous claims polling worker is running.</p>
 <p><a href="/pulse-health">Health</a> | <a href="/requests.html">Request history</a></p>
-<p>Polling interval: <code>POLL_INTERVAL_SECONDS</code></p>
+<p>Polling interval: <code>{{pollInterval}} seconds</code></p>
 </body></html>
-""", "text/html"));
+""", "text/html");
+});
 
 app.MapGet("/pulse", () => Results.Redirect("/"));
 
@@ -140,7 +144,7 @@ th{color:#9fb4cf}pre{white-space:pre-wrap}
 async function load(){
   const r=await fetch('/requests',{cache:'no-store'});
   const items=await r.json();
-  document.getElementById('rows').innerHTML=items.map(x=>'<tr><td>'+new Date(x.UpdatedAtUtc).toLocaleString()+'</td><td>'+String(x.UniqueId??'')+'</td><td>'+String(x.Status??'')+'</td><td>'+String(x.Destination??'')+'</td><td>'+String(x.HttpStatusCode??'')+'</td><td>'+String(x.Reason??'')+'</td></tr>').join('');
+  document.getElementById('rows').innerHTML=items.map(x=>'<tr><td>'+new Date(x.updatedAtUtc).toLocaleString()+'</td><td>'+String(x.uniqueId??'')+'</td><td>'+String(x.status??'')+'</td><td>'+String(x.destination??'')+'</td><td>'+String(x.httpStatusCode??'')+'</td><td>'+String(x.reason??'')+'</td></tr>').join('');
 }
 load(); setInterval(load,30000);
 </script></body></html>
