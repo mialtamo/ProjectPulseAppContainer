@@ -10,6 +10,8 @@ using ProjectPulse.Processor.Services;
 using ProjectPulse.Processor.Web;
 
 var builder = WebApplication.CreateBuilder(args);
+var projectPulseRole = ProjectPulseRoleResolver.Resolve();
+var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
 
 builder.Services.AddApplicationInsightsTelemetry();
 
@@ -51,7 +53,14 @@ builder.Services.AddSingleton<IClaimProcessor, ClaimProcessor>();
 builder.Services.AddSingleton<OutboundCircuitBreaker>();
 builder.Services.AddSingleton<ApimOutageTracker>();
 
-builder.Services.AddHostedService<ClaimPollingWorker>();
+if (projectPulseRole == ProjectPulseRole.Rta)
+{
+    builder.Services.AddHostedService<ClaimPollingWorker>();
+}
+else
+{
+    builder.Services.AddHostedService<ServiceBusWorker>();
+}
 
 var app = builder.Build();
 
@@ -67,7 +76,8 @@ app.MapGet("/", (HttpContext context) =>
     return Results.Content(
         UiPages.LandingPage(
             Environment.GetEnvironmentVariable("PROJECT_PULSE_VERSION"),
-            Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT")),
+            Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT"),
+            projectPulseRoleName),
         "text/html; charset=utf-8");
 });
 
@@ -115,6 +125,7 @@ app.MapGet("/pulse-health", async (IConfiguration configuration) =>
         appApi,
         apim,
         serviceBus,
+        role = projectPulseRoleName,
         checkedAt = DateTimeOffset.UtcNow
     });
 });
@@ -151,6 +162,6 @@ app.MapGet("/requests.html", (HttpContext context) =>
     return Results.Content(UiPages.RequestHistoryPage, "text/html; charset=utf-8");
 });
 
-app.MapGet("/live", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRoleName }));
 
 app.Run();

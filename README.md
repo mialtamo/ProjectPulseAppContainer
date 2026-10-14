@@ -14,7 +14,25 @@ Project Pulse App Container is licensed under the MIT License. See [LICENSE](LIC
 
 This repository is the Azure Container Apps version of Project Pulse. It is intentionally isolated from the original Azure Functions implementation so the POC can validate sub-minute polling without changing the working Function App.
 
-The application is a .NET 10 ASP.NET Core container with a long-running `BackgroundService`. It polls the RTA/App API continuously, transforms queued claim requests, sends batches to APIM for adjudication, writes results back to RTA, and can buffer work to Azure Service Bus when APIM is unavailable.
+The application is a .NET 10 ASP.NET Core container that supports two runtime roles from one codebase and one image. `PROJECT_PULSE_ROLE=RTA` runs the continuous RTA/App API poller. `PROJECT_PULSE_ROLE=SERVICEBUS` runs the Service Bus-only retry worker. Both roles reuse the same APIM, writeback, request-history, managed-identity, and telemetry services.
+
+## Runtime roles
+
+Use the same image for two independent Azure Container Apps:
+
+```text
+PROJECT_PULSE_ROLE=RTA
+```
+
+The RTA role starts `ClaimPollingWorker`, polls the RTA/App API, sends claims to APIM, writes results back to RTA, and buffers retryable work to Service Bus.
+
+```text
+PROJECT_PULSE_ROLE=SERVICEBUS
+```
+
+The Service Bus role does not poll RTA. It receives `RetryEnvelope` messages from the configured Service Bus queue, waits for RTA/APIM health, retries processing through the shared `ClaimProcessor`, completes successful/requeued messages, and dead-letters malformed payloads.
+
+For backward compatibility, if `PROJECT_PULSE_ROLE` is not yet configured the container starts in `RTA` mode. Any non-empty unsupported role value fails startup.
 
 ## Why Container Apps
 
@@ -125,6 +143,7 @@ The Container App managed identity needs its own downstream permissions. Permiss
 ## Core configuration
 
 ```text
+PROJECT_PULSE_ROLE=RTA
 POLL_INTERVAL_SECONDS=5
 
 APP_API_MODE=MOCK
@@ -156,6 +175,8 @@ Do not commit secrets. Use Container Apps secrets, managed identity, and/or Key 
 ```text
 ContainerApp/
   ClaimPollingWorker.cs
+  ServiceBusWorker.cs
+  ProjectPulseRole.cs
 
 Models/
 Options/

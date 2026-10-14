@@ -4,10 +4,11 @@ namespace ProjectPulse.Processor.Web;
 
 public static class UiPages
 {
-    public static string LandingPage(string? versionValue, string? environmentValue)
+    public static string LandingPage(string? versionValue, string? environmentValue, string? roleValue)
     {
         var version = WebUtility.HtmlEncode(versionValue ?? "0.0.0");
         var environment = WebUtility.HtmlEncode(environmentValue ?? "UNKNOWN");
+        var role = WebUtility.HtmlEncode(roleValue ?? "RTA");
 
         return $$"""
 <!doctype html>
@@ -237,9 +238,9 @@ public static class UiPages
         </section>
     </main>
 
-    <div class="version" aria-label="Project Pulse version {{version}}, environment {{environment}}">
+    <div class="version" aria-label="Project Pulse version {{version}}, environment {{environment}}, role {{role}}">
         <span class="dot" aria-hidden="true"></span>
-        <span>Project Pulse&nbsp;&nbsp;v{{version}}&nbsp;&nbsp;•&nbsp;&nbsp;{{environment}}</span>
+        <span>Project Pulse&nbsp;&nbsp;v{{version}}&nbsp;&nbsp;•&nbsp;&nbsp;{{environment}}&nbsp;&nbsp;•&nbsp;&nbsp;{{role}}</span>
     </div>
 
     <script>

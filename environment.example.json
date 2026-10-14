@@ -1,6 +1,7 @@
 {
   "PROJECT_PULSE_ENVIRONMENT": "POC",
   "PROJECT_PULSE_VERSION": "0.1.0",
+  "PROJECT_PULSE_ROLE": "RTA",
   "POLL_INTERVAL_SECONDS": "5",
   "APP_API_MODE": "MOCK",
   "AppApiBaseUrl": "https://example.invalid",
@@ -36,5 +37,8 @@
   "RequestHistoryStorageConnectionString": "",
   "RequestHistoryTableName": "ProjectPulseRequestHistory",
   "RequestHistoryBlobContainerName": "projectpulse-history-payloads",
-  "LOG_POLL_PAYLOADS": "false"
+  "LOG_POLL_PAYLOADS": "false",
+  "ServiceBusReceiveBatchSize": "10",
+  "ServiceBusReceiveWaitSeconds": "5",
+  "ServiceBusDependencyRetrySeconds": "5"
 }

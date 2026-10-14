@@ -70,6 +70,9 @@ public sealed class ClaimProcessorOptions
 
     public string ServiceBusQueueName { get; init; } = "claim-retry";
     public int ServiceBusMessageTtlMinutes { get; init; } = 10;
+    public int ServiceBusReceiveBatchSize { get; init; } = 10;
+    public int ServiceBusReceiveWaitSeconds { get; init; } = 5;
+    public int ServiceBusDependencyRetrySeconds { get; init; } = 5;
 
     public int CircuitFailureThreshold { get; init; } = 5;
     public int CircuitOpenSeconds { get; init; } = 30;
@@ -79,6 +82,9 @@ public sealed class ClaimProcessorOptions
 
     public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, 100);
     public int GetClampedPagesPerPoll() => Math.Clamp(RtaPagesPerPoll, 1, 3);
+    public int GetServiceBusReceiveBatchSize() => Math.Clamp(ServiceBusReceiveBatchSize, 1, 100);
+    public int GetServiceBusReceiveWaitSeconds() => Math.Clamp(ServiceBusReceiveWaitSeconds, 1, 60);
+    public int GetServiceBusDependencyRetrySeconds() => Math.Clamp(ServiceBusDependencyRetrySeconds, 1, 300);
 
     public bool IsMockApiMode() =>
         string.Equals(
