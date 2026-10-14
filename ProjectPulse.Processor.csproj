@@ -18,8 +18,4 @@
   <ItemGroup>
     <Compile Remove="Functions/**/*.cs" />
   </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Assets/project-pulse-logo.png" />
-  </ItemGroup>
 </Project>
