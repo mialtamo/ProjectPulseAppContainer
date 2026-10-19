@@ -2,23 +2,27 @@ name: Trigger auto deployment for projectpulse-appcontainer
 
 # When this action will be executed
 on:
-  # Automatically trigger it when detected changes in repo
+  # Automatically trigger only for runtime/build-affecting changes on main.
   push:
-    branches: 
-      [ main ]
+    branches:
+      - main
     paths:
-    - '**'
-    - '.github/workflows/projectpulse-appcontainer-AutoDeployTrigger-28d6598e-03e1-41fa-896e-bc5a5f110cb9.yml'
+      - '**/*.cs'
+      - '**/*.csproj'
+      - 'Dockerfile'
+      - 'VERSION'
+      - 'environment.example.json'
+      - '.github/workflows/projectpulse-appcontainer-AutoDeployTrigger-28d6598e-03e1-41fa-896e-bc5a5f110cb9.yml'
 
-  # Allow manual trigger 
-  workflow_dispatch:      
+  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    permissions: 
-      id-token: write #This is required for requesting the OIDC JWT Token
-      contents: read #Required when GH token is used to authenticate with private repo
+    permissions:
+      id-token: write # This is required for requesting the OIDC JWT Token
+      contents: read # Required when GH token is used to authenticate with private repo
 
     steps:
       - name: Checkout to the branch
@@ -50,5 +54,3 @@ jobs:
           imageToBuild: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
-
-
