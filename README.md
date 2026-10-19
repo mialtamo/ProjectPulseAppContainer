@@ -181,6 +181,55 @@ RequestHistoryStorageConnectionString=<secret reference>
 
 Do not commit either secret value. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full list, defaults, role applicability, and descriptions.
 
+### APIM response token named value and policy
+
+Project Pulse validates that an APIM response contains the header configured by `ApimResponseHeaderName` and that its value matches the Container App secret exposed as `ApimResponseToken`.
+
+In APIM, create a Named Value for the shared token:
+
+```text
+Display name: Project Pulse response token
+Name: rta-key
+Type: Secret
+Value: <generate/store the shared token value>
+```
+
+The value stored in the APIM Named Value `rta-key` must be exactly the same value stored in the Container Apps secret referenced by the `ApimResponseToken` environment variable.
+
+To return that token to Project Pulse, add this policy to the APIM API or operation policy:
+
+```xml
+<set-header name="X-Pulse-Response-Token" exists-action="override">
+    <value>{{rta-key}}</value>
+</set-header>
+```
+
+Because Project Pulse validates a **response** header, this `set-header` policy belongs in the APIM `<outbound>` section:
+
+```xml
+<policies>
+    <inbound>
+        <base />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+        <set-header name="X-Pulse-Response-Token" exists-action="override">
+            <value>{{rta-key}}</value>
+        </set-header>
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
+```
+
+Do not place this response-token header only in `<inbound>`. An inbound header is added to the request APIM sends toward the backend; Project Pulse would not receive it as a response header.
+
+If `ApimResponseHeaderName` is changed from `X-Pulse-Response-Token`, change the APIM `set-header` name to the same value.
+
 ## Repository structure
 
 ```text
