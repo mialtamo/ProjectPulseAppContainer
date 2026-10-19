@@ -25,6 +25,7 @@
   "APIM_OUTAGE_POLL_STOP_SECONDS": "300",
   "CorrelationIdField": "CORRELATION_ID",
   "ApimBatchRootProperty": "claims",
+  "ApimFieldMapping": "",
   "RetryHttpStatusCodes": "404,408,429,500,502,503,504",
   "JsonResponseCodeField": "RESPONSE_CODE",
   "JsonRetryCodes": "",
@@ -32,13 +33,15 @@
   "ServiceBusFullyQualifiedNamespace": "example.servicebus.windows.net",
   "ServiceBusQueueName": "projectpulsequeue",
   "ServiceBusMessageTtlMinutes": "10",
+  "ServiceBusReceiveBatchSize": "10",
+  "ServiceBusReceiveWaitSeconds": "5",
+  "ServiceBusDependencyRetrySeconds": "5",
   "ResultWriteMaxAttempts": "3",
   "ResultWriteRetryDelayMilliseconds": "500",
+  "CircuitFailureThreshold": "5",
+  "CircuitOpenSeconds": "30",
   "RequestHistoryStorageConnectionString": "",
   "RequestHistoryTableName": "ProjectPulseRequestHistory",
   "RequestHistoryBlobContainerName": "projectpulse-history-payloads",
-  "LOG_POLL_PAYLOADS": "false",
-  "ServiceBusReceiveBatchSize": "10",
-  "ServiceBusReceiveWaitSeconds": "5",
-  "ServiceBusDependencyRetrySeconds": "5"
+  "LOG_POLL_PAYLOADS": "false"
 }
