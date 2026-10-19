@@ -181,9 +181,9 @@ RequestHistoryStorageConnectionString=<secret reference>
 
 Do not commit either secret value. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full list, defaults, role applicability, and descriptions.
 
-### APIM response token named value and policy
+### APIM response token named value and mock policy
 
-Project Pulse validates that an APIM response contains the header configured by `ApimResponseHeaderName` and that its value matches the Container App secret exposed as `ApimResponseToken`.
+Project Pulse validates that the APIM response contains the header configured by `ApimResponseHeaderName` and that the returned value matches the Container Apps secret exposed as `ApimResponseToken`.
 
 In APIM, create a Named Value for the shared token:
 
@@ -194,31 +194,58 @@ Type: Secret
 Value: <generate/store the shared token value>
 ```
 
-The value stored in the APIM Named Value `rta-key` must be exactly the same value stored in the Container Apps secret referenced by the `ApimResponseToken` environment variable.
+The value stored in the APIM Named Value `rta-key` must exactly match the value stored in the Container Apps secret referenced by the `ApimResponseToken` environment variable.
 
-To return that token to Project Pulse, add this policy to the APIM API or operation policy:
+For the current POC, APIM generates the mock adjudication response directly from the `<inbound>` policy by using `<return-response>`. Because `return-response` short-circuits the normal APIM pipeline, the response headers and body are configured inside that `return-response` block even though the block itself is located in `<inbound>`.
+
+The response-token header is therefore configured like this inside the existing inbound `return-response`:
 
 ```xml
-<set-header name="X-Pulse-Response-Token" exists-action="override">
-    <value>{{rta-key}}</value>
-</set-header>
+<return-response>
+    <set-status code="200" reason="OK" />
+    <set-header name="Content-Type" exists-action="override">
+        <value>application/json</value>
+    </set-header>
+    <set-header name="X-Pulse-Policy-Version" exists-action="override">
+        <value>N50983445987</value>
+    </set-header>
+    <set-header name="X-Pulse-Response-Token" exists-action="override">
+        <value>{{rta-key}}</value>
+    </set-header>
+    <!-- set-body omitted here -->
+</return-response>
 ```
 
-Because Project Pulse validates a **response** header, this `set-header` policy belongs in the APIM `<outbound>` section:
+The important distinction is that `X-Pulse-Response-Token` is still an HTTP **response** header. It is not being added to the backend request. It appears under `<inbound>` only because the POC policy returns the mock response immediately from that section.
+
+The current policy structure is therefore:
 
 ```xml
 <policies>
     <inbound>
         <base />
+
+        <!-- request validation and requestBody variable setup -->
+
+        <return-response>
+            <set-status code="200" reason="OK" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-header name="X-Pulse-Policy-Version" exists-action="override">
+                <value>N50983445987</value>
+            </set-header>
+            <set-header name="X-Pulse-Response-Token" exists-action="override">
+                <value>{{rta-key}}</value>
+            </set-header>
+            <!-- mock adjudication response body -->
+        </return-response>
     </inbound>
     <backend>
         <base />
     </backend>
     <outbound>
         <base />
-        <set-header name="X-Pulse-Response-Token" exists-action="override">
-            <value>{{rta-key}}</value>
-        </set-header>
     </outbound>
     <on-error>
         <base />
@@ -226,7 +253,7 @@ Because Project Pulse validates a **response** header, this `set-header` policy 
 </policies>
 ```
 
-Do not place this response-token header only in `<inbound>`. An inbound header is added to the request APIM sends toward the backend; Project Pulse would not receive it as a response header.
+If the POC is later changed so APIM forwards the request to a real backend instead of returning the response from `<inbound>`, then the response-token header should be added in the appropriate response path, typically `<outbound>`.
 
 If `ApimResponseHeaderName` is changed from `X-Pulse-Response-Token`, change the APIM `set-header` name to the same value.
 
