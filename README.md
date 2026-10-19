@@ -102,6 +102,7 @@ Project Pulse
 /requests
 /requests/{id}
 /requests.html
+/live
 ```
 
 Container Apps ingress target port:
@@ -140,7 +141,11 @@ Max replicas: 1
 
 The Container App managed identity needs its own downstream permissions. Permissions assigned to the original Function App identity do not automatically transfer.
 
-## Core configuration
+## Configuration
+
+The complete environment-variable and secret reference is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The deployable template is [environment.example.json](environment.example.json).
+
+Core RTA configuration:
 
 ```text
 PROJECT_PULSE_ROLE=RTA
@@ -163,12 +168,18 @@ RtaStatusPathTemplate=/requests/{correlationId}/status
 RtaStatusWritebackEnabled=true
 
 ApimResponseHeaderName=X-Pulse-Response-Token
-ApimResponseToken=<secret>
+ApimResponseToken=<secret reference>
 
-RequestHistoryStorageConnectionString=<storage connection string>
+RequestHistoryStorageConnectionString=<secret reference>
 ```
 
-Do not commit secrets. Use Container Apps secrets, managed identity, and/or Key Vault.
+### Required secret references
+
+`ApimResponseToken` is the expected value returned by APIM in the configured response-token header. Store it as a Container Apps secret, recommended name `apim-response-token`, and configure the `ApimResponseToken` environment variable to reference that secret.
+
+`RequestHistoryStorageConnectionString` is the Azure Storage connection string used for request-history Table metadata and Blob payload storage. Store it as a Container Apps secret, recommended name `request-history-storage`, and configure the `RequestHistoryStorageConnectionString` environment variable to reference that secret.
+
+Do not commit either secret value. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full list, defaults, role applicability, and descriptions.
 
 ## Repository structure
 
@@ -187,6 +198,7 @@ ProjectPulse.Processor.csproj
 Dockerfile
 environment.example.json
 docs/
+  CONFIGURATION.md
 ```
 
 The Azure Functions trigger classes, `host.json`, Function App workflow, and `POLL_SCHEDULE` configuration are intentionally excluded.
