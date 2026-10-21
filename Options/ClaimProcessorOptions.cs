@@ -43,7 +43,6 @@ public sealed class ClaimProcessorOptions
     public int ApimOutagePollStopSeconds { get; init; } = 300;
 
     public string CorrelationIdField { get; init; } = "CORRELATION_ID";
-    public string ApimBatchRootProperty { get; init; } = "claims";
 
     public string ApimFieldMapping { get; init; } = """
     {

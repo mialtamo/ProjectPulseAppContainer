@@ -24,7 +24,6 @@
   "APIM_OUTAGE_MODE": "BUFFER_THEN_STOP",
   "APIM_OUTAGE_POLL_STOP_SECONDS": "300",
   "CorrelationIdField": "CORRELATION_ID",
-  "ApimBatchRootProperty": "claims",
   "ApimFieldMapping": "",
   "RetryHttpStatusCodes": "404,408,429,500,502,503,504",
   "JsonResponseCodeField": "RESPONSE_CODE",

@@ -138,17 +138,12 @@ public sealed class ClaimProcessor(
             return BuildResults(correlationIds, ClaimProcessingDisposition.QueuedForRetry, "OutboundCircuitOpen");
         }
 
-        var transformedArray = new JsonArray();
-        foreach (var transformed in transformedClaims)
+        if (transformedClaims.Count != 1)
         {
-            transformedArray.Add(transformed.DeepClone());
+            throw new InvalidOperationException("Each APIM request must contain exactly one mapped claim.");
         }
 
-        JsonNode outboundPayload = string.IsNullOrWhiteSpace(_options.ApimBatchRootProperty)
-            ? transformedArray
-            : new JsonObject { [_options.ApimBatchRootProperty] = transformedArray };
-
-        var outboundPayloadJson = outboundPayload.ToJsonString();
+        var outboundPayloadJson = transformedClaims[0].ToJsonString();
 
         await TryRecordHistoryAsync(
             () => requestHistoryStore.RecordApimAttemptAsync(
@@ -178,7 +173,7 @@ public sealed class ClaimProcessor(
         var idempotencyKey = TryGetScalar(claims[0], "IDEMPOTENCY_KEY", out var claimIdempotencyKey)
             ? claimIdempotencyKey
             : batchId;
-        request.Headers.TryAddWithoutValidation("idempotencyKey", idempotencyKey);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
         request.Headers.TryAddWithoutValidation("X-Pulse-Record-Count", "1");
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
 
