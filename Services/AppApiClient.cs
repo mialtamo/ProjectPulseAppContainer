@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Options;
 using Microsoft.ApplicationInsights;
 using Microsoft.Extensions.Logging;
@@ -17,14 +18,14 @@ public sealed class AppApiClient(
 {
     private readonly ClaimProcessorOptions _options = options.Value;
 
-    public async Task<IReadOnlyList<JsonElement>> GetPendingClaimsAsync(CancellationToken cancellationToken)
+    public async Task<AppApiPollResult> GetPendingClaimsAsync(CancellationToken cancellationToken)
     {
         return _options.IsMockApiMode()
             ? await GetMockPendingClaimsAsync(cancellationToken)
             : await GetRtaQueuedRequestsAsync(cancellationToken);
     }
 
-    private async Task<IReadOnlyList<JsonElement>> GetMockPendingClaimsAsync(CancellationToken cancellationToken)
+    private async Task<AppApiPollResult> GetMockPendingClaimsAsync(CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("AppApi");
         var maxRecords = _options.GetClampedPageSize();
@@ -59,7 +60,7 @@ public sealed class AppApiClient(
 
         if (string.IsNullOrWhiteSpace(responseText))
         {
-            return [];
+            return new AppApiPollResult([], [responseText]);
         }
 
         using var document = JsonDocument.Parse(responseText);
@@ -67,15 +68,16 @@ public sealed class AppApiClient(
 
         telemetry.TrackMetric("RtaQueuedRecordsReturned", records.Count);
         logger.LogInformation("App API mock polling returned {Count} record(s)", records.Count);
-        return records;
+        return new AppApiPollResult(records, [responseText]);
     }
 
-    private async Task<IReadOnlyList<JsonElement>> GetRtaQueuedRequestsAsync(CancellationToken cancellationToken)
+    private async Task<AppApiPollResult> GetRtaQueuedRequestsAsync(CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("AppApi");
         var pageSize = _options.GetClampedPageSize();
         var pagesPerPoll = _options.GetClampedPagesPerPoll();
         var records = new List<JsonElement>(pageSize * pagesPerPoll);
+        var responsePayloads = new List<string>(pagesPerPoll);
 
         for (var page = 1; page <= pagesPerPoll; page++)
         {
@@ -89,6 +91,7 @@ public sealed class AppApiClient(
 
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
             var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+            responsePayloads.Add(responseText);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -143,7 +146,7 @@ public sealed class AppApiClient(
 
         telemetry.TrackMetric("RtaQueuedRecordsReturned", records.Count);
         logger.LogInformation("RTA queued polling returned {Count} record(s) total", records.Count);
-        return records;
+        return new AppApiPollResult(records, responsePayloads);
     }
 
     private static IReadOnlyList<JsonElement> ParseRecords(JsonElement root)
@@ -238,3 +241,4 @@ public sealed class AppApiClient(
         (int)statusCode == 429 ||
         (int)statusCode >= 500;
 }
+

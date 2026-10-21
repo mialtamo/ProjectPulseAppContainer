@@ -7,6 +7,7 @@ public interface IRequestHistoryStore
     Task RecordApimAttemptAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string> rtaResponsePayloads,
         string requestPayload,
         DateTimeOffset sentAtUtc,
         CancellationToken cancellationToken);
@@ -26,6 +27,7 @@ public interface IRequestHistoryStore
     Task RecordServiceBusAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string> rtaResponsePayloads,
         string reason,
         DateTimeOffset bufferedAtUtc,
         CancellationToken cancellationToken);
@@ -38,3 +40,4 @@ public interface IRequestHistoryStore
         string recordId,
         CancellationToken cancellationToken);
 }
+

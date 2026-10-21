@@ -119,10 +119,10 @@ public sealed class ClaimPollingWorker(
             return;
         }
 
-        IReadOnlyList<System.Text.Json.JsonElement> claims;
+        AppApiPollResult pollResult;
         try
         {
-            claims = await appApiClient.GetPendingClaimsAsync(cancellationToken);
+            pollResult = await appApiClient.GetPendingClaimsAsync(cancellationToken);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
         {
@@ -131,6 +131,7 @@ public sealed class ClaimPollingWorker(
             return;
         }
 
+        var claims = pollResult.Claims;
         if (claims.Count == 0)
         {
             logger.LogInformation("No queued requests returned by RTA/App API");
@@ -146,8 +147,8 @@ public sealed class ClaimPollingWorker(
         try
         {
             results = outageDecision.Action == ApimOutageAction.BufferToServiceBus
-                ? await claimProcessor.BufferBatchAsync(claims, outageDecision.Reason, cancellationToken)
-                : await claimProcessor.ProcessBatchAsync(claims, cancellationToken);
+                ? await claimProcessor.BufferBatchAsync(claims, outageDecision.Reason, pollResult.RtaResponsePayloads, cancellationToken)
+                : await claimProcessor.ProcessBatchAsync(claims, pollResult.RtaResponsePayloads, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -175,3 +176,4 @@ public sealed class ClaimPollingWorker(
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.FailedWriteback), 0));
     }
 }
+

@@ -140,7 +140,7 @@ public sealed class ServiceBusWorker(
                 message.DeliveryCount,
                 envelope.Reason);
 
-            var results = await claimProcessor.ProcessBatchAsync([claim], cancellationToken);
+            var results = await claimProcessor.ProcessBatchAsync([claim], [], cancellationToken);
             var result = results.SingleOrDefault();
 
             if (result is null)
@@ -213,3 +213,4 @@ public sealed class ServiceBusWorker(
         }
     }
 }
+
