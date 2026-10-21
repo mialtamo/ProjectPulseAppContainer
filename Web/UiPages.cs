@@ -310,7 +310,8 @@ header{position:sticky;top:0;z-index:10;padding:18px 24px;border-bottom:1px soli
 h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-size:12px;margin-top:4px}
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
-.toolbar{display:grid;grid-template-columns:minmax(260px,1fr) auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text);padding:9px 11px;border-radius:7px}
 button{cursor:pointer}.muted{color:var(--muted)}
 .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
@@ -355,6 +356,15 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
       <option value="ServiceBus">Service Bus</option>
     </select>
     <button onclick="load()">Refresh</button>
+    <label class="refresh-control">Auto refresh
+      <select id="refreshInterval" aria-label="Auto refresh interval" onchange="setRefreshRate()">
+        <option value="5">5 seconds</option>
+        <option value="10">10 seconds</option>
+        <option value="30" selected>30 seconds</option>
+        <option value="60">60 seconds</option>
+        <option value="300">5 minutes</option>
+      </select>
+    </label>
     <span id="status" class="muted"></span>
   </div>
   <div id="summary" class="summary"></div>
@@ -375,7 +385,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
   </div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; const detailCache=new Map();
 
 function groupByBatch(source){
   const groups=new Map();
@@ -516,7 +526,12 @@ async function load(){
   document.getElementById('status').textContent=groupByBatch(items).length+' batch(es) loaded from '+items.length+' claim record(s)'; render();
 }
 document.querySelectorAll('th[data-key]').forEach(th=>th.addEventListener('click',()=>{const k=th.dataset.key;if(sortKey===k)sortDir=sortDir==='asc'?'desc':'asc';else{sortKey=k;sortDir='asc'}render()}));
-load(); setInterval(load,30000);
+function setRefreshRate(){
+  const seconds=Number(document.getElementById('refreshInterval').value);
+  if(refreshTimer)clearInterval(refreshTimer);
+  refreshTimer=setInterval(load,seconds*1000);
+}
+load(); setRefreshRate();
 </script>
 </body>
 </html>
