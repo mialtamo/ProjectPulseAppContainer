@@ -177,7 +177,10 @@ public sealed class AppApiClient(
         if (item.ValueKind == JsonValueKind.Object &&
             TryGetItemsArray(item, out var items))
         {
-            records.AddRange(items.EnumerateArray().Select(record => record.Clone()));
+            foreach (var record in items.EnumerateArray())
+            {
+                records.Add(record.Clone());
+            }
             return;
         }
 
