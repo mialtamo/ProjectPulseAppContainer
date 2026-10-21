@@ -326,7 +326,7 @@ public sealed class ClaimProcessor(
 
             if (_options.RtaStatusWritebackEnabled)
             {
-                var writebackResult = await WriteBatchResultsAsync(responseJson, correlationIds, cancellationToken);
+                var writebackResult = await WriteBatchResultsAsync(responseJson, claims, correlationIds, cancellationToken);
                 if (!writebackResult.Success)
                 {
                     await TryRecordHistoryAsync(
@@ -626,6 +626,7 @@ public sealed class ClaimProcessor(
 
     private async Task<(bool Success, string Reason)> WriteBatchResultsAsync(
         string responseJson,
+        IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
         CancellationToken cancellationToken)
     {
@@ -651,15 +652,20 @@ public sealed class ClaimProcessor(
             return (false, "InvalidApimResponseShape");
         }
 
-        if (responseItems.Length != correlationIds.Count)
+        if (responseItems.Length != correlationIds.Count || claims.Count != correlationIds.Count)
         {
             logger.LogWarning(
-                "APIM response item count {ResponseCount} did not match submitted request count {SubmittedCount}",
+                "APIM response item count {ResponseCount}, request count {RequestCount}, and submitted count {SubmittedCount} did not match",
                 responseItems.Length,
+                claims.Count,
                 correlationIds.Count);
             return (false, "ApimResponseCountMismatch");
         }
 
+        var requestsByCorrelationId = claims.ToDictionary(
+            GetCorrelationId,
+            claim => claim,
+            StringComparer.OrdinalIgnoreCase);
         var expectedCorrelationIds = correlationIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var responseCorrelationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -697,9 +703,10 @@ public sealed class ClaimProcessor(
         foreach (var item in responseItems)
         {
             TryGetResponseCorrelationId(item, out var correlationId);
+            var statusPayload = BuildRtaStatusPayload(item, requestsByCorrelationId[correlationId]);
             var written = await appApiClient.WriteStatusAsync(
                 correlationId,
-                item.GetRawText(),
+                statusPayload.ToJsonString(),
                 cancellationToken);
 
             if (!written)
@@ -712,6 +719,130 @@ public sealed class ClaimProcessor(
         }
 
         return (true, "WritebackCompleted");
+    }
+
+    private static JsonObject BuildRtaStatusPayload(JsonElement apimResponse, JsonElement originatingRequest)
+    {
+        var payload = new JsonObject();
+        CopyJsonProperty(originatingRequest, payload, "REQUEST_ID");
+        CopyJsonProperty(originatingRequest, payload, "CORRELATION_ID");
+        CopyJsonProperty(originatingRequest, payload, "IDEMPOTENCY_KEY");
+        CopyJsonProperty(originatingRequest, payload, "REQUEST_TYPE");
+
+        SetFromResponse(payload, apimResponse, "REQUEST_STATUS_TYPE", "REQUEST_STATUS_TYPE", "STATUS");
+        SetFromResponse(payload, apimResponse, "RESPONSE_CODE", "RESPONSE_CODE");
+        SetFromResponse(payload, apimResponse, "PROCESS_DT", "PROCESS_DT", "RESPONSE_DTM");
+
+        var metadata = GetJsonProperty(apimResponse, "METADATA") as JsonObject ?? new JsonObject();
+        var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
+        var isUpdate = requestType?.Contains("UPDATE", StringComparison.OrdinalIgnoreCase) == true;
+        var mappedResponse = GetJsonProperty(apimResponse, isUpdate ? "UPDATE_RESPONSE" : "INITIAL_RESPONSE_INBD");
+
+        if (mappedResponse is JsonObject responseFields)
+        {
+            SetMappedValue(metadata, responseFields, "patientIcn", "MBR_ICN");
+            if (!isUpdate)
+            {
+                SetMappedValue(metadata, responseFields, "sponsorIcn", "SPON_ICN");
+                SetNestedMappedValue(metadata, "benefitPeriod", "startDate", responseFields, "START_DOS");
+                SetNestedMappedValue(metadata, "benefitPeriod", "endDate", responseFields, "END_DOS");
+            }
+
+            SetNestedMappedValue(metadata, isUpdate ? "updatedAccumulator.individualDeductible" : "individualDeductible", "current", responseFields, "CUR_IND_DEDUCTIBLE");
+            SetNestedMappedValue(metadata, isUpdate ? "updatedAccumulator.individualDeductible" : "individualDeductible", "max", responseFields, "MAX_IND_DEDUCTIBLE");
+            SetNestedMappedValue(metadata, isUpdate ? "updatedAccumulator.familyDeductible" : "familyDeductible", "current", responseFields, "CUR_FAM_DEDUCTIBLE");
+            SetNestedMappedValue(metadata, isUpdate ? "updatedAccumulator.familyDeductible" : "familyDeductible", "max", responseFields, "MAX_FAM_DEDUCTIBLE");
+            SetNestedMappedValue(metadata, isUpdate ? "updatedAccumulator.outOfPocketMax" : "outOfPocketMax", "current", responseFields, "CUR_OUT_OF_POCKET");
+            SetNestedMappedValue(metadata, isUpdate ? "updatedAccumulator.outOfPocketMax" : "outOfPocketMax", "max", responseFields, "MAX_OUT_OF_POCKET");
+        }
+
+        payload["METADATA"] = metadata;
+        return payload;
+    }
+
+    private static void SetFromResponse(
+        JsonObject target,
+        JsonElement source,
+        string targetName,
+        params string[] sourceNames)
+    {
+        foreach (var sourceName in sourceNames)
+        {
+            var value = GetJsonProperty(source, sourceName);
+            if (value is not null)
+            {
+                target[targetName] = value;
+                return;
+            }
+        }
+    }
+
+    private static void CopyJsonProperty(JsonElement source, JsonObject target, string propertyName)
+    {
+        var value = GetJsonProperty(source, propertyName);
+        if (value is not null)
+        {
+            target[propertyName] = value;
+        }
+    }
+
+    private static JsonNode? GetJsonProperty(JsonElement source, string propertyName)
+    {
+        if (source.ValueKind != JsonValueKind.Object ||
+            !source.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        return JsonNode.Parse(value.GetRawText());
+    }
+
+    private static string? GetScalar(JsonElement source, string propertyName)
+    {
+        if (source.ValueKind != JsonValueKind.Object ||
+            !source.TryGetProperty(propertyName, out var value) ||
+            value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+    }
+
+    private static void SetMappedValue(JsonObject target, JsonObject source, string targetName, string sourceName)
+    {
+        if (source.TryGetPropertyValue(sourceName, out var value) && value is not null)
+        {
+            target[targetName] = value.DeepClone();
+        }
+    }
+
+    private static void SetNestedMappedValue(
+        JsonObject target,
+        string targetPath,
+        string targetName,
+        JsonObject source,
+        string sourceName)
+    {
+        if (!source.TryGetPropertyValue(sourceName, out var value) || value is null)
+        {
+            return;
+        }
+
+        var pathParts = targetPath.Split('.');
+        var current = target;
+        foreach (var pathPart in pathParts)
+        {
+            if (current[pathPart] is not JsonObject child)
+            {
+                child = new JsonObject();
+                current[pathPart] = child;
+            }
+
+            current = child;
+        }
+
+        current[targetName] = value.DeepClone();
     }
 
     private static bool TryGetResponseCorrelationId(JsonElement item, out string correlationId)
