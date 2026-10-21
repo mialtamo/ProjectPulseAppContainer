@@ -26,9 +26,9 @@ public sealed class PayloadTransformer(IOptions<ClaimProcessorOptions> options)
         }
 
         if (string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase) &&
-            !output.ContainsKey("Program"))
+            !output.ContainsKey("program"))
         {
-            output["Program"] = "CHAMPVA";
+            output["program"] = "CHAMPVA";
         }
 
         return output;

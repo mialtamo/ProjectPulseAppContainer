@@ -49,7 +49,6 @@ public sealed class ClaimProcessorOptions
     {
       "correlationId": "CORRELATION_ID",
       "requestId": "REQUEST_ID",
-      "idempotencyKey": "IDEMPOTENCY_KEY",
       "requestType": "REQUEST_TYPE",
       "patientIcn": "METADATA.PATIENT_ICN",
       "sponsorIcn": "METADATA.SPONSOR_ICN",
@@ -64,14 +63,13 @@ public sealed class ClaimProcessorOptions
     {
       "correlationId": "CORRELATION_ID",
       "requestId": "REQUEST_ID",
-      "idempotencyKey": "IDEMPOTENCY_KEY",
       "requestType": "REQUEST_TYPE",
-      "PatientIcn": "METADATA.PATIENT_ICN",
-      "SponsorIcn": "METADATA.SPONSOR_ICN",
-      "StartDateOfService": "METADATA.START_DATE_OF_SERVICE",
-      "EndDateOfService": "METADATA.END_DATE_OF_SERVICE",
-      "Program": "METADATA.PROGRAM",
-      "IncludeDetails": "METADATA.INCLUDE_ADJUSTMENT_DETAILS"
+      "patientIcn": "METADATA.PATIENT_ICN",
+      "sponsorIcn": "METADATA.SPONSOR_ICN",
+      "startDateOfService": "METADATA.START_DATE_OF_SERVICE",
+      "endDateOfService": "METADATA.END_DATE_OF_SERVICE",
+      "program": "METADATA.PROGRAM",
+      "includeDetails": "METADATA.INCLUDE_ADJUSTMENT_DETAILS"
     }
     """;
 
@@ -79,7 +77,6 @@ public sealed class ClaimProcessorOptions
     {
       "correlationId": "CORRELATION_ID",
       "requestId": "REQUEST_ID",
-      "idempotencyKey": "IDEMPOTENCY_KEY",
       "requestType": "REQUEST_TYPE",
       "patientIcn": "METADATA.PATIENT_ICN",
       "sponsorIcn": "METADATA.SPONSOR_ICN",

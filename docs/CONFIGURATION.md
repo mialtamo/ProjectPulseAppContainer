@@ -74,6 +74,8 @@ The configured storage account must be reachable from the Container App environm
 | `ApimFieldMapping` | Both | No | built-in JSON mapping | No | Fallback JSON mapping for request types without a dedicated mapping. |
 | `ApimInitialRequestFieldMapping` | Both | No | built-in initial-request mapping | No | JSON mapping for `INITIAL_REQUEST` fields. |
 | `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields, including nested adjustment deltas. |
+
+For `INITIAL_REQUEST`, the outbound target field names use APIM's camel-case JSON contract (`patientIcn`, `sponsorIcn`, `startDateOfService`, `endDateOfService`, `program`, `includeDetails`). Source paths remain the uppercase RTA names under `METADATA`. `IDEMPOTENCY_KEY` is sent in the `Idempotency-Key` HTTP header and is not duplicated in the claim body.
 | `RetryHttpStatusCodes` | Both | No | `404,408,429,500,502,503,504` | No | HTTP status codes considered retryable. |
 | `JsonResponseCodeField` | Both | No | `RESPONSE_CODE` | No | JSON field inspected for application response codes. |
 | `JsonRetryCodes` | Both | No | empty | No | Optional comma-separated application response codes that should be retried. |
