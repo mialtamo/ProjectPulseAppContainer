@@ -334,8 +334,10 @@ td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:260px
 .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
 .payload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .payload-panel{min-width:0}
-.payload-title{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;font-weight:700;margin:0 0 7px;color:#c7d9f2}
-.copy-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:4px;border:1px solid #24405a;border-radius:5px;background:#0b1520;color:#9fb4cf;cursor:pointer;flex:none}
+.payload-title{font-size:12px;font-weight:700;margin:0 0 7px;color:#c7d9f2}
+.payload-code{position:relative}
+.payload-code.has-copy pre{padding-top:40px}
+.copy-button{position:absolute;top:7px;right:7px;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:4px;border:1px solid #24405a;border-radius:5px;background:#0b1520;color:#9fb4cf;cursor:pointer}
 .copy-button:hover{border-color:var(--cyan);color:var(--cyan)}.copy-button.copied{color:var(--green);border-color:var(--green)}.copy-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;border:1px solid var(--border);padding:12px;border-radius:7px;max-height:420px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 .json-key{color:var(--blue)}.json-string{color:var(--green)}.json-number{color:var(--amber)}.json-boolean{color:var(--purple)}.json-null{color:var(--red)}
@@ -419,7 +421,7 @@ function payloadPanel(title,payload){
   const copyButton=hasPayload
     ? '<button type="button" class="copy-button" aria-label="Copy JSON" title="Copy JSON" onclick="event.stopPropagation();copyPayload(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button>'
     : '';
-  return '<div class="payload-panel"><div class="payload-title"><span>'+esc(title)+'</span>'+copyButton+'</div><pre>'+syntaxHighlight(payload)+'</pre></div>';
+  return '<div class="payload-panel"><div class="payload-title">'+esc(title)+'</div><div class="payload-code'+(hasPayload?' has-copy':'')+'">'+copyButton+'<pre>'+syntaxHighlight(payload)+'</pre></div></div>';
 }
 async function copyPayload(button){
   const pre=button.closest('.payload-panel')?.querySelector('pre');
