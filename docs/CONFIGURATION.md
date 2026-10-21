@@ -70,7 +70,7 @@ The configured storage account must be reachable from the Container App environm
 | `APIM_OUTAGE_MODE` | Both | No | `BUFFER_THEN_STOP` | No | Controls behavior during APIM outage: `BUFFER_THEN_STOP`, `STOP_IMMEDIATELY`, or `BUFFER_CONTINUOUSLY`. |
 | `APIM_OUTAGE_POLL_STOP_SECONDS` | RTA | No | `300` | No | Outage duration used before the RTA poller stops in buffer-then-stop mode. |
 | `CorrelationIdField` | Both | No | `CORRELATION_ID` | No | Input JSON field containing the correlation ID. |
-| `ApimBatchRootProperty` | Both | No | `claims` | No | Root property used for APIM batched claim payloads. |
+| `ApimBatchRootProperty` | Both | No | `claims` | No | Root property wrapping the single mapped claim in each APIM request body. |
 | `ApimFieldMapping` | Both | No | built-in JSON mapping | No | Fallback JSON mapping for request types without a dedicated mapping. |
 | `ApimInitialRequestFieldMapping` | Both | No | built-in initial-request mapping | No | JSON mapping for `INITIAL_REQUEST` fields. |
 | `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields, including nested adjustment deltas. |

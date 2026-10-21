@@ -83,6 +83,21 @@ public sealed class ClaimProcessor(
         IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken)
     {
+        var results = new List<ClaimProcessingResult>(claims.Count);
+        foreach (var claim in claims)
+        {
+            var result = await ProcessSingleClaimAsync([claim], rtaResponsePayloads, cancellationToken);
+            results.AddRange(result);
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<ClaimProcessingResult>> ProcessSingleClaimAsync(
+        IReadOnlyList<JsonElement> claims,
+        IReadOnlyList<string> rtaResponsePayloads,
+        CancellationToken cancellationToken)
+    {
         if (claims.Count == 0)
         {
             return [];
@@ -159,9 +174,12 @@ public sealed class ClaimProcessor(
             Content = new StringContent(outboundPayloadJson, Encoding.UTF8, "application/json")
         };
 
-        request.Headers.TryAddWithoutValidation("X-Correlation-ID", batchId);
-        request.Headers.TryAddWithoutValidation("Idempotency-Key", batchId);
-        request.Headers.TryAddWithoutValidation("X-Pulse-Record-Count", claims.Count.ToString());
+        request.Headers.TryAddWithoutValidation("X-Correlation-ID", correlationIds[0]);
+        var idempotencyKey = TryGetScalar(claims[0], "IDEMPOTENCY_KEY", out var claimIdempotencyKey)
+            ? claimIdempotencyKey
+            : batchId;
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        request.Headers.TryAddWithoutValidation("X-Pulse-Record-Count", "1");
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -619,19 +637,25 @@ public sealed class ClaimProcessor(
 
         using var document = JsonDocument.Parse(responseJson);
         var root = document.RootElement;
+        JsonElement[] responseItems = root.ValueKind switch
+        {
+            JsonValueKind.Array => root.EnumerateArray().ToArray(),
+            JsonValueKind.Object when correlationIds.Count == 1 => new[] { root },
+            _ => Array.Empty<JsonElement>()
+        };
 
-        if (root.ValueKind != JsonValueKind.Array)
+        if (responseItems.Length == 0)
         {
             logger.LogWarning(
-                "RTA writeback is enabled but APIM response was not an array.");
+                "RTA writeback is enabled but APIM response was not a supported object or array.");
             return (false, "InvalidApimResponseShape");
         }
 
-        if (root.GetArrayLength() != correlationIds.Count)
+        if (responseItems.Length != correlationIds.Count)
         {
             logger.LogWarning(
-                "APIM response item count {ResponseCount} did not match submitted batch count {SubmittedCount}",
-                root.GetArrayLength(),
+                "APIM response item count {ResponseCount} did not match submitted request count {SubmittedCount}",
+                responseItems.Length,
                 correlationIds.Count);
             return (false, "ApimResponseCountMismatch");
         }
@@ -639,7 +663,7 @@ public sealed class ClaimProcessor(
         var expectedCorrelationIds = correlationIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var responseCorrelationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var item in root.EnumerateArray())
+        foreach (var item in responseItems)
         {
             if (!TryGetResponseCorrelationId(item, out var correlationId))
             {
@@ -670,7 +694,7 @@ public sealed class ClaimProcessor(
             return (false, "CorrelationIdSetMismatch");
         }
 
-        foreach (var item in root.EnumerateArray())
+        foreach (var item in responseItems)
         {
             TryGetResponseCorrelationId(item, out var correlationId);
             var written = await appApiClient.WriteStatusAsync(

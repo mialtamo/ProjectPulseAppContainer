@@ -1,6 +1,6 @@
 # Project Pulse RTA polling and APIM outage behavior
 
-Project Pulse polls the RTA/App API, transforms queued requests, and sends them to APIM. Project Pulse is write-only to Service Bus. A separate recovery application is responsible for consuming Service Bus messages.
+Project Pulse polls the RTA/App API in pages, transforms the queued requests, and sends each request to APIM in its own HTTP call. Each APIM response is written back to RTA with one PUT to `/requests/{correlationId}/status`. Project Pulse is write-only to Service Bus. A separate recovery application is responsible for consuming Service Bus messages.
 
 ## APIM outage modes
 
