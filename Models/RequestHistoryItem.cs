@@ -17,5 +17,6 @@ public sealed record RequestHistoryItem(
     bool PayloadLoggingEnabled,
     string? ApimRequestPayload,
     string? ApimResponsePayload,
-    IReadOnlyList<string>? RtaResponsePayloads);
+    IReadOnlyList<string>? RtaResponsePayloads,
+    string? RtaStatusPayload);
 

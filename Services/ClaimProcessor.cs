@@ -326,7 +326,7 @@ public sealed class ClaimProcessor(
 
             if (_options.RtaStatusWritebackEnabled)
             {
-                var writebackResult = await WriteBatchResultsAsync(responseJson, claims, correlationIds, cancellationToken);
+                var writebackResult = await WriteBatchResultsAsync(responseJson, batchId, claims, correlationIds, cancellationToken);
                 if (!writebackResult.Success)
                 {
                     await TryRecordHistoryAsync(
@@ -626,6 +626,7 @@ public sealed class ClaimProcessor(
 
     private async Task<(bool Success, string Reason)> WriteBatchResultsAsync(
         string responseJson,
+        string batchId,
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
         CancellationToken cancellationToken)
@@ -704,9 +705,17 @@ public sealed class ClaimProcessor(
         {
             TryGetResponseCorrelationId(item, out var correlationId);
             var statusPayload = BuildRtaStatusPayload(item, requestsByCorrelationId[correlationId]);
+            var statusPayloadJson = statusPayload.ToJsonString();
+            await TryRecordHistoryAsync(
+                () => requestHistoryStore.RecordRtaStatusPayloadAsync(
+                    batchId,
+                    [correlationId],
+                    [statusPayloadJson],
+                    cancellationToken),
+                "RTA status payload");
             var written = await appApiClient.WriteStatusAsync(
                 correlationId,
-                statusPayload.ToJsonString(),
+                statusPayloadJson,
                 cancellationToken);
 
             if (!written)

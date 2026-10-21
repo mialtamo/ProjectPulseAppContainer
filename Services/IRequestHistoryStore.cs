@@ -24,6 +24,12 @@ public interface IRequestHistoryStore
         DateTimeOffset completedAtUtc,
         CancellationToken cancellationToken);
 
+    Task RecordRtaStatusPayloadAsync(
+        string batchId,
+        IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string> payloads,
+        CancellationToken cancellationToken);
+
     Task RecordServiceBusAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,

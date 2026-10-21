@@ -143,6 +143,58 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
     }
 
+    public async Task RecordRtaStatusPayloadAsync(
+        string batchId,
+        IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string> payloads,
+        CancellationToken cancellationToken)
+    {
+        if (uniqueIds.Count != payloads.Count)
+        {
+            throw new ArgumentException("The RTA status payload count must match the request count.", nameof(payloads));
+        }
+
+        await EnsureInitializedAsync(cancellationToken);
+        for (var i = 0; i < uniqueIds.Count; i++)
+        {
+            var blobName = await SavePayloadAsync(
+                batchId,
+                $"rta-status-{i + 1:D3}.json",
+                payloads[i],
+                cancellationToken);
+            if (blobName is null)
+            {
+                continue;
+            }
+
+            var rowKey = BuildRowKey(batchId, i);
+            RequestHistoryEntity entity;
+            try
+            {
+                entity = (await _table.GetEntityAsync<RequestHistoryEntity>(
+                    PartitionKeyValue,
+                    rowKey,
+                    cancellationToken: cancellationToken)).Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                entity = new RequestHistoryEntity
+                {
+                    PartitionKey = PartitionKeyValue,
+                    RowKey = rowKey,
+                    BatchId = batchId,
+                    UniqueId = uniqueIds[i],
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                };
+            }
+
+            entity.RtaStatusPayloadBlob = blobName;
+            entity.PayloadLoggingEnabled = _options.ShouldLogPollPayloads();
+            await _table.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
+        }
+    }
+
     public async Task RecordServiceBusAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
@@ -212,7 +264,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         return results
             .OrderByDescending(x => x.UpdatedAtUtc)
             .Take(Math.Clamp(limit, 1, 1000))
-            .Select(x => Map(x, null, null, null))
+            .Select(x => Map(x, null, null, null, null))
             .ToArray();
     }
 
@@ -238,6 +290,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         string? requestPayload = null;
         string? responsePayload = null;
         IReadOnlyList<string>? rtaResponsePayloads = null;
+        string? rtaStatusPayload = null;
 
         if (_options.ShouldLogPollPayloads())
         {
@@ -246,16 +299,18 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             rtaResponsePayloads = await ReadRtaResponsePayloadsAsync(
                 entity.RtaResponsePayloadBlobs,
                 cancellationToken);
+            rtaStatusPayload = await ReadPayloadAsync(entity.RtaStatusPayloadBlob, cancellationToken);
         }
 
-        return Map(entity, requestPayload, responsePayload, rtaResponsePayloads);
+        return Map(entity, requestPayload, responsePayload, rtaResponsePayloads, rtaStatusPayload);
     }
 
     private RequestHistoryItem Map(
         RequestHistoryEntity entity,
         string? requestPayload,
         string? responsePayload,
-        IReadOnlyList<string>? rtaResponsePayloads) =>
+        IReadOnlyList<string>? rtaResponsePayloads,
+        string? rtaStatusPayload) =>
         new(
             entity.RowKey,
             entity.BatchId,
@@ -273,7 +328,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             _options.ShouldLogPollPayloads(),
             requestPayload,
             responsePayload,
-            rtaResponsePayloads);
+            rtaResponsePayloads,
+            rtaStatusPayload);
 
     private async Task<string?> SaveRtaResponsePayloadsAsync(
         string batchId,
@@ -410,6 +466,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public string? RequestPayloadBlob { get; set; }
         public string? ResponsePayloadBlob { get; set; }
         public string? RtaResponsePayloadBlobs { get; set; }
+        public string? RtaStatusPayloadBlob { get; set; }
     }
 }
 
