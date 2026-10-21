@@ -470,6 +470,10 @@ async function toggleDetail(rowId,recordId){
   const writebackFailure=x.Status==='WritebackFailed'
     ? '<div class="payload-note"><strong>Writeback failed:</strong> '+esc(writebackReasonText(x.Reason))+'</div><br>'
     : '';
+  const rtaPayloads=x.RtaResponsePayloads||[];
+  const rtaPayloadPanels=rtaPayloads.length
+    ? rtaPayloads.map((payload,index)=>'<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):'')+'</div><pre>'+esc(payload)+'</pre></div>').join('')
+    : '<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA</div><pre><span class="muted">No payload recorded</span></pre></div>';
   row.querySelector('td').innerHTML=
     validationFailure+
     writebackFailure+
@@ -481,7 +485,7 @@ async function toggleDetail(rowId,recordId){
       '<div class="card"><div class="label">Service Bus</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
     '</div>'+
     (x.PayloadLoggingEnabled
-      ? '<div class="payload-grid"><div class="payload-panel"><div class="payload-title">JSON sent to APIM</div><pre>'+syntaxHighlight(x.ApimRequestPayload)+'</pre></div><div class="payload-panel"><div class="payload-title">JSON received from APIM</div><pre>'+syntaxHighlight(x.ApimResponsePayload)+'</pre></div></div>'
+      ? '<div class="payload-grid">'+rtaPayloadPanels+'<div class="payload-panel"><div class="payload-title">JSON sent to APIM</div><pre>'+syntaxHighlight(x.ApimRequestPayload)+'</pre></div><div class="payload-panel"><div class="payload-title">JSON received from APIM</div><pre>'+syntaxHighlight(x.ApimResponsePayload)+'</pre></div></div>'
       : '<div class="payload-note">Payload display is disabled because LOG_POLL_PAYLOADS=false.</div>');
 }
 async function load(){
@@ -496,3 +500,4 @@ load(); setInterval(load,30000);
 </html>
 """;
 }
+

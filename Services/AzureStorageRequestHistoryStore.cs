@@ -1,6 +1,7 @@
 using Azure;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
+using System.Text.Json;
 using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Options;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     public async Task RecordApimAttemptAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string> rtaResponsePayloads,
         string requestPayload,
         DateTimeOffset sentAtUtc,
         CancellationToken cancellationToken)
@@ -48,6 +50,10 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             batchId,
             "request.json",
             requestPayload,
+            cancellationToken);
+        var rtaResponseBlobs = await SaveRtaResponsePayloadsAsync(
+            batchId,
+            rtaResponsePayloads,
             cancellationToken);
 
         for (var i = 0; i < uniqueIds.Count; i++)
@@ -64,6 +70,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 Destination = "APIM",
                 SentToApimAtUtc = sentAtUtc,
                 RequestPayloadBlob = requestBlob,
+                RtaResponsePayloadBlobs = rtaResponseBlobs,
                 PayloadLoggingEnabled = _options.ShouldLogPollPayloads()
             };
 
@@ -139,11 +146,16 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     public async Task RecordServiceBusAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string> rtaResponsePayloads,
         string reason,
         DateTimeOffset bufferedAtUtc,
         CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
+        var rtaResponseBlobs = await SaveRtaResponsePayloadsAsync(
+            batchId,
+            rtaResponsePayloads,
+            cancellationToken);
 
         for (var i = 0; i < uniqueIds.Count; i++)
         {
@@ -174,6 +186,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.Destination = "ServiceBus";
             entity.Reason = reason;
             entity.BufferedToServiceBusAtUtc = bufferedAtUtc;
+            entity.RtaResponsePayloadBlobs = rtaResponseBlobs;
             entity.PayloadLoggingEnabled = _options.ShouldLogPollPayloads();
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
@@ -199,7 +212,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         return results
             .OrderByDescending(x => x.UpdatedAtUtc)
             .Take(Math.Clamp(limit, 1, 1000))
-            .Select(x => Map(x, null, null))
+            .Select(x => Map(x, null, null, null))
             .ToArray();
     }
 
@@ -224,20 +237,25 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         string? requestPayload = null;
         string? responsePayload = null;
+        IReadOnlyList<string>? rtaResponsePayloads = null;
 
         if (_options.ShouldLogPollPayloads())
         {
             requestPayload = await ReadPayloadAsync(entity.RequestPayloadBlob, cancellationToken);
             responsePayload = await ReadPayloadAsync(entity.ResponsePayloadBlob, cancellationToken);
+            rtaResponsePayloads = await ReadRtaResponsePayloadsAsync(
+                entity.RtaResponsePayloadBlobs,
+                cancellationToken);
         }
 
-        return Map(entity, requestPayload, responsePayload);
+        return Map(entity, requestPayload, responsePayload, rtaResponsePayloads);
     }
 
     private RequestHistoryItem Map(
         RequestHistoryEntity entity,
         string? requestPayload,
-        string? responsePayload) =>
+        string? responsePayload,
+        IReadOnlyList<string>? rtaResponsePayloads) =>
         new(
             entity.RowKey,
             entity.BatchId,
@@ -254,7 +272,50 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.BufferedToServiceBusAtUtc,
             _options.ShouldLogPollPayloads(),
             requestPayload,
-            responsePayload);
+            responsePayload,
+            rtaResponsePayloads);
+
+    private async Task<string?> SaveRtaResponsePayloadsAsync(
+        string batchId,
+        IReadOnlyList<string> payloads,
+        CancellationToken cancellationToken)
+    {
+        if (!_options.ShouldLogPollPayloads() || payloads.Count == 0)
+        {
+            return null;
+        }
+
+        var blobNames = new List<string>(payloads.Count);
+        for (var i = 0; i < payloads.Count; i++)
+        {
+            var blobName = await SavePayloadAsync(
+                batchId,
+                $"rta-response-{i + 1:D3}.json",
+                payloads[i],
+                cancellationToken);
+            if (blobName is not null)
+            {
+                blobNames.Add(blobName);
+            }
+        }
+
+        return blobNames.Count == 0 ? null : JsonSerializer.Serialize(blobNames);
+    }
+
+    private async Task<IReadOnlyList<string>?> ReadRtaResponsePayloadsAsync(
+        string? blobNamesJson,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(blobNamesJson))
+        {
+            return null;
+        }
+
+        var blobNames = JsonSerializer.Deserialize<string[]>(blobNamesJson) ?? [];
+        var payloads = await Task.WhenAll(blobNames.Select(
+            blobName => ReadPayloadAsync(blobName, cancellationToken)));
+        return payloads.Where(payload => payload is not null).Select(payload => payload!).ToArray();
+    }
 
     private async Task<string?> SavePayloadAsync(
         string batchId,
@@ -348,5 +409,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public bool PayloadLoggingEnabled { get; set; }
         public string? RequestPayloadBlob { get; set; }
         public string? ResponsePayloadBlob { get; set; }
+        public string? RtaResponsePayloadBlobs { get; set; }
     }
 }
+

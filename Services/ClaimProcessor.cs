@@ -32,6 +32,7 @@ public sealed class ClaimProcessor(
     public async Task<IReadOnlyList<ClaimProcessingResult>> BufferBatchAsync(
         IReadOnlyList<JsonElement> claims,
         string reason,
+        IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken)
     {
         if (claims.Count == 0)
@@ -57,6 +58,7 @@ public sealed class ClaimProcessor(
             () => requestHistoryStore.RecordServiceBusAsync(
                 batchId,
                 ids,
+                rtaResponsePayloads,
                 reason,
                 DateTimeOffset.UtcNow,
                 cancellationToken),
@@ -78,6 +80,7 @@ public sealed class ClaimProcessor(
 
     public async Task<IReadOnlyList<ClaimProcessingResult>> ProcessBatchAsync(
         IReadOnlyList<JsonElement> claims,
+        IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken)
     {
         if (claims.Count == 0)
@@ -110,6 +113,7 @@ public sealed class ClaimProcessor(
                 () => requestHistoryStore.RecordServiceBusAsync(
                     batchId,
                     correlationIds,
+                    rtaResponsePayloads,
                     "OutboundCircuitOpen",
                     DateTimeOffset.UtcNow,
                     cancellationToken),
@@ -135,6 +139,7 @@ public sealed class ClaimProcessor(
             () => requestHistoryStore.RecordApimAttemptAsync(
                 batchId,
                 correlationIds,
+                rtaResponsePayloads,
                 outboundPayloadJson,
                 DateTimeOffset.UtcNow,
                 cancellationToken),
@@ -778,3 +783,4 @@ public sealed class ClaimProcessor(
         request.Duration = TimeSpan.FromMilliseconds(elapsedMilliseconds);
     }
 }
+
