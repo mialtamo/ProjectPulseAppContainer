@@ -334,7 +334,9 @@ td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:260px
 .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
 .payload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .payload-panel{min-width:0}
-.payload-title{font-size:12px;font-weight:700;margin:0 0 7px;color:#c7d9f2}
+.payload-title{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;font-weight:700;margin:0 0 7px;color:#c7d9f2}
+.copy-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:4px;border:1px solid #24405a;border-radius:5px;background:#0b1520;color:#9fb4cf;cursor:pointer;flex:none}
+.copy-button:hover{border-color:var(--cyan);color:var(--cyan)}.copy-button.copied{color:var(--green);border-color:var(--green)}.copy-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;border:1px solid var(--border);padding:12px;border-radius:7px;max-height:420px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 .json-key{color:var(--blue)}.json-string{color:var(--green)}.json-number{color:var(--amber)}.json-boolean{color:var(--purple)}.json-null{color:var(--red)}
 .payload-note{color:var(--amber);font-size:12px;padding:10px;border:1px dashed #6d5728;border-radius:7px}
@@ -411,6 +413,40 @@ function syntaxHighlight(value){
     if(nul) return '<span class="json-null">'+nul+'</span>';
     return '<span class="json-number">'+m+'</span>';
   });
+}
+function payloadPanel(title,payload){
+  const hasPayload=payload!==null&&payload!==undefined&&payload!=='';
+  const copyButton=hasPayload
+    ? '<button type="button" class="copy-button" aria-label="Copy JSON" title="Copy JSON" onclick="event.stopPropagation();copyPayload(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button>'
+    : '';
+  return '<div class="payload-panel"><div class="payload-title"><span>'+esc(title)+'</span>'+copyButton+'</div><pre>'+syntaxHighlight(payload)+'</pre></div>';
+}
+async function copyPayload(button){
+  const pre=button.closest('.payload-panel')?.querySelector('pre');
+  const text=pre?.textContent||'';
+  if(!text.trim()||text.trim()==='No payload recorded')return;
+  try{
+    if(navigator.clipboard&&window.isSecureContext){
+      await navigator.clipboard.writeText(text);
+    }else{
+      const temporary=document.createElement('textarea');
+      temporary.value=text;
+      temporary.style.position='fixed';
+      temporary.style.opacity='0';
+      document.body.appendChild(temporary);
+      temporary.select();
+      const copied=document.execCommand('copy');
+      temporary.remove();
+      if(!copied)throw new Error('Clipboard copy failed');
+    }
+    button.classList.add('copied');
+    button.title='Copied';
+    button.setAttribute('aria-label','Copied');
+    setTimeout(()=>{button.classList.remove('copied');button.title='Copy JSON';button.setAttribute('aria-label','Copy JSON')},1200);
+  }catch{
+    button.title='Copy failed';
+    button.setAttribute('aria-label','Copy failed');
+  }
 }
 function compare(a,b){
   let av=a?.[sortKey], bv=b?.[sortKey];
@@ -501,11 +537,9 @@ async function renderDetail(row,recordId){
     : '';
   const rtaPayloads=x.RtaResponsePayloads||[];
   const rtaPayloadPanels=rtaPayloads.length
-    ? rtaPayloads.map((payload,index)=>'<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):'')+'</div><pre>'+syntaxHighlight(payload)+'</pre></div>').join('')
-    : '<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA</div><pre><span class="muted">No payload recorded</span></pre></div>';
-  const rtaStatusPayloadPanel=x.RtaStatusPayload
-    ? '<div class="payload-panel"><div class="payload-title">JSON sent back to RTA</div><pre>'+syntaxHighlight(x.RtaStatusPayload)+'</pre></div>'
-    : '<div class="payload-panel"><div class="payload-title">JSON sent back to RTA</div><pre><span class="muted">No payload recorded</span></pre></div>';
+    ? rtaPayloads.map((payload,index)=>payloadPanel('Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):''),payload)).join('')
+    : payloadPanel('Raw JSON received from RTA',null);
+  const rtaStatusPayloadPanel=payloadPanel('JSON sent back to RTA',x.RtaStatusPayload);
   row.querySelector('td').innerHTML=
     validationFailure+
     writebackFailure+
@@ -517,7 +551,7 @@ async function renderDetail(row,recordId){
       '<div class="card"><div class="label">Service Bus</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
     '</div>'+
     (x.PayloadLoggingEnabled
-      ? '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+'<div class="payload-panel"><div class="payload-title">JSON sent to APIM</div><pre>'+syntaxHighlight(x.ApimRequestPayload)+'</pre></div><div class="payload-panel"><div class="payload-title">JSON received from APIM</div><pre>'+syntaxHighlight(x.ApimResponsePayload)+'</pre></div></div>'
+      ? '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+payloadPanel('JSON sent to APIM',x.ApimRequestPayload)+payloadPanel('JSON received from APIM',x.ApimResponsePayload)+'</div>'
       : '<div class="payload-note">Payload display is disabled because LOG_POLL_PAYLOADS=false.</div>');
 }
 async function load(){
