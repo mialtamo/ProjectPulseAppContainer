@@ -472,7 +472,7 @@ async function toggleDetail(rowId,recordId){
     : '';
   const rtaPayloads=x.RtaResponsePayloads||[];
   const rtaPayloadPanels=rtaPayloads.length
-    ? rtaPayloads.map((payload,index)=>'<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):'')+'</div><pre>'+esc(payload)+'</pre></div>').join('')
+    ? rtaPayloads.map((payload,index)=>'<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):'')+'</div><pre>'+syntaxHighlight(payload)+'</pre></div>').join('')
     : '<div class="payload-panel"><div class="payload-title">Raw JSON received from RTA</div><pre><span class="muted">No payload recorded</span></pre></div>';
   row.querySelector('td').innerHTML=
     validationFailure+
