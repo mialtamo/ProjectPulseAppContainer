@@ -36,6 +36,11 @@ builder.Services.AddHttpClient("Apim", (sp, client) =>
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
 
+builder.Services.AddHttpClient("HealthCheck", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+
 builder.Services.AddSingleton(sp =>
 {
     var options = sp.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value;
@@ -83,14 +88,17 @@ app.MapGet("/", (HttpContext context) =>
 
 app.MapGet("/pulse", () => Results.Redirect("/"));
 
-app.MapGet("/pulse-health", async (IConfiguration configuration) =>
+app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFactory httpClientFactory) =>
 {
-    static async Task<bool> CheckHttpAsync(string? baseUrl, string path)
+    static async Task<bool> CheckHttpAsync(
+        IHttpClientFactory clientFactory,
+        string? baseUrl,
+        string path)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(baseUrl)) return false;
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            using var client = clientFactory.CreateClient("HealthCheck");
             using var response = await client.GetAsync($"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}");
             return response.IsSuccessStatusCode;
         }
@@ -111,10 +119,12 @@ app.MapGet("/pulse-health", async (IConfiguration configuration) =>
     }
 
     var appApi = await CheckHttpAsync(
+        httpClientFactory,
         configuration["AppApiBaseUrl"],
         configuration["RtaHealthPath"] ?? configuration["AppApiHealthPath"] ?? "/health");
 
     var apim = await CheckHttpAsync(
+        httpClientFactory,
         configuration["ApimBaseUrl"],
         configuration["ApimHealthPath"] ?? "/health");
 
