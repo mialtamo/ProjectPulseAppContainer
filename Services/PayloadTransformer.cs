@@ -1,11 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ProjectPulse.Processor.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ProjectPulse.Processor.Services;
 
-public sealed class PayloadTransformer(IOptions<ClaimProcessorOptions> options)
+public sealed class PayloadTransformer(
+    IOptions<ClaimProcessorOptions> options,
+    ILogger<PayloadTransformer> logger)
 {
     private readonly ClaimProcessorOptions _options = options.Value;
 
@@ -16,13 +19,37 @@ public sealed class PayloadTransformer(IOptions<ClaimProcessorOptions> options)
             : null;
         var mapping = _options.GetApimFieldMapping(requestType);
         var output = new JsonObject();
+        var mappedTargets = new List<string>();
+        var missingSources = new List<string>();
 
         foreach (var (targetField, sourcePath) in mapping)
         {
             if (TryGetValue(source, sourcePath, out var value) && IsPresent(value))
             {
                 SetTargetValue(output, targetField, JsonNode.Parse(value.GetRawText()));
+                mappedTargets.Add(targetField);
             }
+            else
+            {
+                missingSources.Add(sourcePath);
+            }
+        }
+
+        if (missingSources.Count > 0)
+        {
+            logger.LogWarning(
+                "APIM mapping diagnostic: RequestType={RequestType}; MappingTargets={MappingTargets}; MappedTargets={MappedTargets}; MissingSourcePaths={MissingSourcePaths}",
+                requestType ?? "(unknown)",
+                string.Join(",", mapping.Keys),
+                string.Join(",", mappedTargets),
+                string.Join(",", missingSources));
+        }
+        else
+        {
+            logger.LogDebug(
+                "APIM mapping diagnostic: RequestType={RequestType}; MappedTargets={MappedTargets}",
+                requestType ?? "(unknown)",
+                string.Join(",", mappedTargets));
         }
 
         if (string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase) &&
@@ -67,8 +94,27 @@ public sealed class PayloadTransformer(IOptions<ClaimProcessorOptions> options)
 
         foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (value.ValueKind != JsonValueKind.Object ||
-                !value.TryGetProperty(segment, out var next))
+            if (value.ValueKind != JsonValueKind.Object)
+            {
+                value = default;
+                return false;
+            }
+
+            JsonElement next = default;
+            var found = false;
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, segment, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                next = property.Value;
+                found = true;
+                break;
+            }
+
+            if (!found)
             {
                 value = default;
                 return false;
