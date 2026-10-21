@@ -178,7 +178,7 @@ public sealed class ClaimProcessor(
         var idempotencyKey = TryGetScalar(claims[0], "IDEMPOTENCY_KEY", out var claimIdempotencyKey)
             ? claimIdempotencyKey
             : batchId;
-        request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        request.Headers.TryAddWithoutValidation("idempotencyKey", idempotencyKey);
         request.Headers.TryAddWithoutValidation("X-Pulse-Record-Count", "1");
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
 

@@ -22,12 +22,20 @@ public sealed class PayloadTransformer(
         var mappedTargets = new List<string>();
         var missingSources = new List<string>();
 
+        var isInitialRequest = string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase);
+
         foreach (var (targetField, sourcePath) in mapping)
         {
+            var wireTargetField = GetWireTargetField(targetField, isInitialRequest);
+            if (wireTargetField is null)
+            {
+                continue;
+            }
+
             if (TryGetValue(source, sourcePath, out var value) && IsPresent(value))
             {
-                SetTargetValue(output, targetField, JsonNode.Parse(value.GetRawText()));
-                mappedTargets.Add(targetField);
+                SetTargetValue(output, wireTargetField, JsonNode.Parse(value.GetRawText()));
+                mappedTargets.Add(wireTargetField);
             }
             else
             {
@@ -52,13 +60,41 @@ public sealed class PayloadTransformer(
                 string.Join(",", mappedTargets));
         }
 
-        if (string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase) &&
-            !output.ContainsKey("program"))
+        if (isInitialRequest && !output.ContainsKey("program"))
         {
             output["program"] = "CHAMPVA";
         }
 
         return output;
+    }
+
+    private static string? GetWireTargetField(string targetField, bool isInitialRequest)
+    {
+        if (!isInitialRequest)
+        {
+            return targetField;
+        }
+
+        if (string.Equals(targetField, "idempotencyKey", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(targetField, "Idempotency-Key", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return targetField.ToLowerInvariant() switch
+        {
+            "correlationid" => "correlationId",
+            "requestid" => "requestId",
+            "requesttype" => "requestType",
+            "patienticn" => "patientIcn",
+            "sponsoricn" => "sponsorIcn",
+            "startdateofservice" => "startDateOfService",
+            "enddateofservice" => "endDateOfService",
+            "program" => "program",
+            "includedetails" => "includeDetails",
+            "includeadjustmentdetails" => "includeDetails",
+            _ => targetField
+        };
     }
 
     private static bool IsPresent(JsonElement value) =>
