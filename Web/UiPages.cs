@@ -375,7 +375,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
   </div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; const detailCache=new Map();
 
 function groupByBatch(source){
   const groups=new Map();
@@ -429,7 +429,7 @@ function renderSummary(list){
 function render(){
   const list=filtered(); renderSummary(list);
   const tbody=document.getElementById('rows');
-  if(!list.length){tbody.innerHTML='<tr><td colspan="8" class="empty">No matching requests</td></tr>';return}
+  if(!list.length){expandedRecordId=null;tbody.innerHTML='<tr><td colspan="8" class="empty">No matching requests</td></tr>';return}
   tbody.innerHTML=list.map((x,i)=>{
     const key='row-'+i+'-'+esc(x.RecordId);
     return '<tr class="data-row" onclick="toggleDetail(\''+key+'\',\''+esc(x.RecordId)+'\')">'+
@@ -441,8 +441,17 @@ function render(){
       '<td>'+esc(x.HttpStatusCode??'')+'</td>'+
       '<td>'+esc(x.BusinessResponseCode??'')+'</td>'+
       '<td>'+esc(x.Reason??'')+'</td></tr>'+
-      '<tr id="'+key+'" class="expand-row"><td colspan="8" class="expand-cell"><div class="muted">Loading details...</div></td></tr>';
+      '<tr id="'+key+'" class="expand-row" data-record-id="'+esc(x.RecordId)+'"><td colspan="8" class="expand-cell"><div class="muted">Loading details...</div></td></tr>';
   }).join('');
+  if(expandedRecordId){
+    const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.recordId===expandedRecordId);
+    if(expandedRow){
+      expandedRow.classList.add('open');
+      void renderDetail(expandedRow,expandedRecordId);
+    }else{
+      expandedRecordId=null;
+    }
+  }
 }
 function writebackReasonText(reason){
   const messages={
@@ -461,9 +470,19 @@ function writebackReasonText(reason){
 async function toggleDetail(rowId,recordId){
   const row=document.getElementById(rowId); const opening=!row.classList.contains('open');
   document.querySelectorAll('.expand-row.open').forEach(r=>r.classList.remove('open'));
-  if(!opening)return; row.classList.add('open');
+  if(!opening){if(expandedRecordId===recordId)expandedRecordId=null;return}
+  expandedRecordId=recordId;
+  row.classList.add('open');
+  await renderDetail(row,recordId);
+}
+async function renderDetail(row,recordId){
   let x=detailCache.get(recordId);
-  if(!x){const r=await fetch('/requests/'+encodeURIComponent(recordId),{cache:'no-store'});if(!r.ok){row.querySelector('td').innerHTML='<div class="payload-note">Could not load request details.</div>';return}x=await r.json();detailCache.set(recordId,x)}
+  if(!x){
+    row.querySelector('td').innerHTML='<div class="muted">Loading details...</div>';
+    const r=await fetch('/requests/'+encodeURIComponent(recordId),{cache:'no-store'});
+    if(!r.ok){row.querySelector('td').innerHTML='<div class="payload-note">Could not load request details.</div>';return}
+    x=await r.json();detailCache.set(recordId,x);
+  }
   const validationFailure=x.Status==='Rejected'&&x.Reason==='InvalidApimResponseToken'
     ? '<div class="payload-note"><strong>APIM response rejected:</strong> response-token validation failed. The response was not processed and no RTA writeback was attempted.</div><br>'
     : '';
