@@ -151,19 +151,56 @@ public sealed class AppApiClient(
 
     private static IReadOnlyList<JsonElement> ParseRecords(JsonElement root)
     {
+        var records = new List<JsonElement>();
+
         if (root.ValueKind == JsonValueKind.Array)
         {
-            return root.EnumerateArray().Select(item => item.Clone()).ToArray();
+            foreach (var item in root.EnumerateArray())
+            {
+                AddRecords(item, records);
+            }
+
+            return records;
         }
 
         if (root.ValueKind == JsonValueKind.Object &&
-            root.TryGetProperty("Items", out var items) &&
-            items.ValueKind == JsonValueKind.Array)
+            TryGetItemsArray(root, out var items))
         {
             return items.EnumerateArray().Select(item => item.Clone()).ToArray();
         }
 
         throw new JsonException("App API response was not an array and did not contain an Items array.");
+    }
+
+    private static void AddRecords(JsonElement item, ICollection<JsonElement> records)
+    {
+        if (item.ValueKind == JsonValueKind.Object &&
+            TryGetItemsArray(item, out var items))
+        {
+            records.AddRange(items.EnumerateArray().Select(record => record.Clone()));
+            return;
+        }
+
+        records.Add(item.Clone());
+    }
+
+    private static bool TryGetItemsArray(JsonElement element, out JsonElement items)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "Items", StringComparison.OrdinalIgnoreCase) &&
+                    property.Value.ValueKind == JsonValueKind.Array)
+                {
+                    items = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        items = default;
+        return false;
     }
 
     public async Task<bool> WriteStatusAsync(string correlationId, string responseJson, CancellationToken cancellationToken)
