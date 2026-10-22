@@ -236,9 +236,21 @@ public sealed class ClaimProcessor(
                     {
                         await QueueAllAsync(claims, transformedClaims, $"Http{statusCode}", cancellationToken);
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         outageTracker.RecordBufferFailure();
+                        await RecordBufferFailureHistoryAsync(
+                            batchId,
+                            correlationIds,
+                            statusCode,
+                            null,
+                            responseJson,
+                            $"ServiceBusBufferFailed:Http{statusCode}");
+                        logger.LogError(
+                            ex,
+                            "APIM returned HTTP {StatusCode} for batch {BatchId}, but retry buffering failed. The APIM response was saved in request history.",
+                            statusCode,
+                            batchId);
                         throw;
                     }
 
@@ -294,9 +306,21 @@ public sealed class ClaimProcessor(
                 {
                     await QueueAllAsync(claims, transformedClaims, $"JsonCode:{businessCode}", cancellationToken);
                 }
-                catch
+                catch (Exception ex)
                 {
                     outageTracker.RecordBufferFailure();
+                    await RecordBufferFailureHistoryAsync(
+                        batchId,
+                        correlationIds,
+                        statusCode,
+                        businessCode,
+                        responseJson,
+                        $"ServiceBusBufferFailed:JsonCode:{businessCode}");
+                    logger.LogError(
+                        ex,
+                        "APIM response for batch {BatchId} had retryable business code {BusinessCode}, but retry buffering failed. The APIM response was saved in request history.",
+                        batchId,
+                        businessCode);
                     throw;
                 }
 
@@ -472,6 +496,29 @@ public sealed class ClaimProcessor(
             CompleteTelemetry(operation.Telemetry, false, "InvalidJson", stopwatch.ElapsedMilliseconds);
             return BuildResults(correlationIds, ClaimProcessingDisposition.Alerted, "InvalidJsonResponse");
         }
+    }
+
+    private async Task RecordBufferFailureHistoryAsync(
+        string batchId,
+        IReadOnlyList<string> correlationIds,
+        int? httpStatusCode,
+        string? businessCode,
+        string? responseJson,
+        string reason)
+    {
+        await TryRecordHistoryAsync(
+            () => requestHistoryStore.RecordApimResultAsync(
+                batchId,
+                correlationIds,
+                "BufferFailed",
+                httpStatusCode,
+                businessCode,
+                responseJson,
+                reason,
+                false,
+                DateTimeOffset.UtcNow,
+                CancellationToken.None),
+            "APIM response after Service Bus buffering failure");
     }
 
     private async Task TryRecordHistoryAsync(Func<Task> action, string operation)
