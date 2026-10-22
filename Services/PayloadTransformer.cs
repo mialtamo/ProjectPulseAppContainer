@@ -75,17 +75,8 @@ public sealed class PayloadTransformer(
             return targetField;
         }
 
-        if (string.Equals(targetField, "idempotencyKey", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(targetField, "Idempotency-Key", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
         return targetField.ToLowerInvariant() switch
         {
-            "correlationid" => "correlationId",
-            "requestid" => "requestId",
-            "requesttype" => "requestType",
             "patienticn" => "patientIcn",
             "sponsoricn" => "sponsorIcn",
             "startdateofservice" => "startDateOfService",
@@ -93,7 +84,7 @@ public sealed class PayloadTransformer(
             "program" => "program",
             "includedetails" => "includeDetails",
             "includeadjustmentdetails" => "includeDetails",
-            _ => targetField
+            _ => null
         };
     }
 

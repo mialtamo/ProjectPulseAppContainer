@@ -60,9 +60,6 @@ public sealed class ClaimProcessorOptions
 
     public string ApimInitialRequestFieldMapping { get; init; } = """
     {
-      "correlationId": "CORRELATION_ID",
-      "requestId": "REQUEST_ID",
-      "requestType": "REQUEST_TYPE",
       "patientIcn": "METADATA.PATIENT_ICN",
       "sponsorIcn": "METADATA.SPONSOR_ICN",
       "startDateOfService": "METADATA.START_DATE_OF_SERVICE",

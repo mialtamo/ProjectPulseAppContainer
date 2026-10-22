@@ -174,7 +174,6 @@ public sealed class ClaimProcessor(
             ? claimIdempotencyKey
             : batchId;
         request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
-        request.Headers.TryAddWithoutValidation("X-Pulse-Record-Count", "1");
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
