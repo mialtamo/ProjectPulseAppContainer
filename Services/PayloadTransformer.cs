@@ -32,7 +32,9 @@ public sealed class PayloadTransformer(
                 continue;
             }
 
-            if (TryGetValue(source, sourcePath, out var value) && IsPresent(value))
+            var sourceFound = TryGetValue(source, sourcePath, out var value);
+
+            if (sourceFound && IsPresent(value))
             {
                 SetTargetValue(output, wireTargetField, JsonNode.Parse(value.GetRawText()));
                 mappedTargets.Add(wireTargetField);

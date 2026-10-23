@@ -44,9 +44,11 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 
 ## Response translation and writeback
 
-The APIM/DOCMP response remains available as the original response JSON string in `PAYLOAD_RESPONSE`. The source RTA item associated with the processed claim is retained as `PAYLOAD_REQUEST`; a multi-item polling envelope is not used as the per-record request payload.
+For `INITIAL_REQUEST`, Project Pulse translates the APIM/DOCMP response into `INITIAL_REQUEST_RESPONSE` and sets `UPDATE_REQUEST_RESPONSE` to null. It sends the RTA PUT envelope with the request type, success status, null substatus, and process timestamp.
 
-Project Pulse also maps response fields to the RTA PUT shape, including status, response code, process timestamp, identifiers, and the response object for the applicable request type. Translation and successful APIM response receipt do not guarantee that an RTA PUT succeeds; the target environment's endpoint and contract must be validated.
+The envelope includes an application-created `API_CALL_HISTORY` object. It copies `REQUEST_ID`, `CORRELATION_ID`, and `IDEMPOTENCY_KEY` from the individual RTA item; leaves `EXTERNAL_CORRELATION_ID`, endpoint, query parameters, and error fields null; and records the APIM POST method, resolved APIM URL, response headers, raw individual RTA item as `REQUEST_BODY`, HTTP status, raw APIM response as `RESPONSE_BODY`, and the APIM round-trip duration. The configured APIM response-token header is redacted in the recorded header string.
+
+A multi-item polling envelope is not used as the per-record request payload. Translation and successful APIM response receipt do not guarantee that an RTA PUT succeeds; the target environment's endpoint and contract must be validated.
 
 ## History, timings, and UI
 

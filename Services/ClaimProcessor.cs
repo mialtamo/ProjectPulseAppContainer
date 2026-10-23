@@ -380,7 +380,17 @@ public sealed class ClaimProcessor(
             if (_options.RtaStatusWritebackEnabled)
             {
                 var writebackStopwatch = Stopwatch.StartNew();
-                var writebackResult = await WriteBatchResultsAsync(responseJson, statusCode, apimResponseReceivedAtUtc, batchId, claims, correlationIds, cancellationToken);
+                var writebackResult = await WriteBatchResultsAsync(
+                    responseJson,
+                    statusCode,
+                    apimResponseReceivedAtUtc,
+                    apimRoundTripStopwatch.ElapsedMilliseconds,
+                    request.RequestUri?.ToString() ?? new Uri(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
+                    SerializeApimResponseHeaders(response),
+                    batchId,
+                    claims,
+                    correlationIds,
+                    cancellationToken);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                 await TryRecordHistoryAsync(
@@ -728,10 +738,30 @@ public sealed class ClaimProcessor(
         return true;
     }
 
+    private string SerializeApimResponseHeaders(HttpResponseMessage response)
+    {
+        var headers = response.Headers.Concat(response.Content.Headers);
+        return string.Join(
+            "\r\n",
+            headers.Select(header =>
+            {
+                var value = string.Equals(
+                    header.Key,
+                    _options.ApimResponseHeaderName,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "********"
+                    : string.Join(", ", header.Value);
+                return $"{header.Key}: {value}";
+            }));
+    }
+
     private async Task<(bool Success, string Reason)> WriteBatchResultsAsync(
         string responseJson,
         int apimStatusCode,
         DateTimeOffset apimResponseReceivedAtUtc,
+        long apimResponseTimeMs,
+        string apimRequestUrl,
+        string apimResponseHeaders,
         string batchId,
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
@@ -830,7 +860,10 @@ public sealed class ClaimProcessor(
                     originatingRequest,
                     responseJson,
                     apimStatusCode,
-                    apimResponseReceivedAtUtc)
+                    apimResponseReceivedAtUtc,
+                    apimResponseTimeMs,
+                    apimRequestUrl,
+                    apimResponseHeaders)
                 : BuildLegacyRtaStatusPayload(item, originatingRequest);
             var statusPayloadJson = statusPayload.ToJsonString();
 
@@ -863,21 +896,37 @@ public sealed class ClaimProcessor(
         JsonElement originatingRequest,
         string rawApimResponse,
         int apimStatusCode,
-        DateTimeOffset apimResponseReceivedAtUtc)
+        DateTimeOffset apimResponseReceivedAtUtc,
+        long apimResponseTimeMs,
+        string apimRequestUrl,
+        string apimResponseHeaders)
     {
         var payload = new JsonObject();
-        CopyJsonProperty(originatingRequest, payload, "REQUEST_ID");
-        CopyJsonProperty(originatingRequest, payload, "CORRELATION_ID");
-        CopyJsonProperty(originatingRequest, payload, "IDEMPOTENCY_KEY");
         CopyJsonProperty(originatingRequest, payload, "REQUEST_TYPE");
-
         payload["STATUS"] = apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
-        payload["RESPONSE_CODE"] = apimStatusCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        payload["SUBSTATUS"] = null;
         payload["PROCESS_DT"] = apimResponseReceivedAtUtc
             .ToUniversalTime()
             .ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
-        payload["PAYLOAD_REQUEST"] = originatingRequest.GetRawText();
-        payload["PAYLOAD_RESPONSE"] = rawApimResponse;
+
+        var apiCallHistory = new JsonObject();
+        CopyJsonProperty(originatingRequest, apiCallHistory, "REQUEST_ID");
+        CopyJsonProperty(originatingRequest, apiCallHistory, "IDEMPOTENCY_KEY");
+        apiCallHistory["EXTERNAL_CORRELATION_ID"] = null;
+        CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
+        apiCallHistory["IDENTIFIER"] = "initial-accum-request";
+        apiCallHistory["HTTP_METHOD"] = "POST";
+        apiCallHistory["API_URL"] = apimRequestUrl;
+        apiCallHistory["API_ENDPOINT"] = null;
+        apiCallHistory["REQUEST_HEADERS"] = apimResponseHeaders;
+        apiCallHistory["REQUEST_QUERY_PARAMETER"] = null;
+        apiCallHistory["REQUEST_BODY"] = originatingRequest.GetRawText();
+        apiCallHistory["RESPONSE_HTTP_STATUS_CODE"] = apimStatusCode;
+        apiCallHistory["RESPONSE_BODY"] = rawApimResponse;
+        apiCallHistory["RESPONSE_TIME_MS"] = apimResponseTimeMs;
+        apiCallHistory["ERROR_MESSAGE"] = null;
+        apiCallHistory["ERROR_STACK"] = null;
+        payload["API_CALL_HISTORY"] = apiCallHistory;
 
         var initialResponse = new JsonObject();
         SetResponseValue(initialResponse, "PATIENT_ICN", apimResponse, "patientIcn");
