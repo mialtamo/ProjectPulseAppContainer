@@ -345,6 +345,8 @@ main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text);padding:9px 11px;border-radius:7px}
+.load-more-wrap{display:flex;justify-content:center;padding:14px 0}
+.load-more-wrap button[hidden]{display:none}
 button{cursor:pointer}.muted{color:var(--muted)}
 .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
 .pill{padding:5px 9px;border:1px solid var(--border);border-radius:999px;background:#09111a;font-size:12px;color:var(--muted)}
@@ -425,9 +427,10 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
       <tbody id="rows"></tbody>
     </table>
   </div>
+  <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let nextPageToken=null; let loading=false; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -616,9 +619,29 @@ async function renderDetail(row,recordId){
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
 async function load(){
-  document.getElementById('status').textContent='Loading...'; detailCache.clear();
-  const r=await fetch('/requests',{cache:'no-store'}); items=await r.json();
-  document.getElementById('status').textContent=groupByBatch(items).length+' batch(es) loaded from '+items.length+' claim record(s)'; render();
+  if(loading)return; loading=true;
+  const status=document.getElementById('status');
+  status.textContent='Loading recent activity...'; detailCache.clear(); nextPageToken=null;
+  try{
+    const r=await fetch('/requests?limit=100',{cache:'no-store'});
+    if(!r.ok)throw new Error('Request history returned HTTP '+r.status);
+    items=await r.json(); nextPageToken=r.headers.get('X-Next-Page-Token');
+    status.textContent=groupByBatch(items).length+' recent batch(es), '+items.length+' claim record(s) loaded';
+    render();
+  }catch(error){status.textContent='Could not load request history: '+error.message}
+  finally{loading=false;document.getElementById('loadMoreButton').hidden=!nextPageToken}
+}
+async function loadMore(){
+  if(loading||!nextPageToken)return; loading=true;
+  const button=document.getElementById('loadMoreButton'); button.disabled=true; button.textContent='Loading...';
+  try{
+    const r=await fetch('/requests?limit=100&pageToken='+encodeURIComponent(nextPageToken),{cache:'no-store'});
+    if(!r.ok)throw new Error('Request history returned HTTP '+r.status);
+    const more=await r.json(); items=items.concat(more); nextPageToken=r.headers.get('X-Next-Page-Token');
+    document.getElementById('status').textContent=groupByBatch(items).length+' batch(es), '+items.length+' claim record(s) loaded';
+    render();
+  }catch(error){document.getElementById('status').textContent='Could not load more history: '+error.message}
+  finally{loading=false;button.disabled=false;button.textContent='Load more';button.hidden=!nextPageToken}
 }
 document.querySelectorAll('th[data-key]').forEach(th=>th.addEventListener('click',()=>{const k=th.dataset.key;if(sortKey===k)sortDir=sortDir==='asc'?'desc':'asc';else{sortKey=k;sortDir='asc'}render()}));
 function setRefreshRate(){

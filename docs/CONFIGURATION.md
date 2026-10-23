@@ -29,7 +29,7 @@ Do not store the token directly in source control or in `environment.example.jso
 
 ### RequestHistoryStorageConnectionString
 
-`RequestHistoryStorageConnectionString` is the Azure Storage connection string used by the request-history implementation for its Azure Table metadata and Blob payload storage.
+`RequestHistoryStorageConnectionString` is the Azure Storage connection string used by the request-history implementation for its Azure Table metadata and Blob payload storage. The recent-history index uses the same configured table and requires no additional environment variable. After the index feature is first deployed, the first request-history list call backfills the index from existing table rows; later list calls read only the requested page.
 
 Store it as a Container Apps secret and expose it to the container as:
 

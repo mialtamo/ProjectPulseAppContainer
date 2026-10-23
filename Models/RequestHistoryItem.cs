@@ -26,3 +26,7 @@ public sealed record RequestHistoryItem(
     long? RtaWritebackDurationMs = null,
     long? EndToEndDurationMs = null);
 
+public sealed record RequestHistoryPage(
+    IReadOnlyList<RequestHistoryItem> Items,
+    string? NextPageToken);
+

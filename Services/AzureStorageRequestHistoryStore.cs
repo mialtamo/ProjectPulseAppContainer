@@ -12,13 +12,18 @@ namespace ProjectPulse.Processor.Services;
 public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 {
     private const string PartitionKeyValue = "requests";
+    private const string RecentPartitionKeyValue = "!recent";
+    private const string IndexMetadataPartitionKey = "!index";
+    private const string IndexVersionRowKey = "recent-v1";
 
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
     private readonly ClaimProcessorOptions _options;
     private readonly ILogger<AzureStorageRequestHistoryStore> _logger;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
+    private readonly SemaphoreSlim _recentIndexInitializeLock = new(1, 1);
     private bool _initialized;
+    private bool _recentIndexInitialized;
 
     public AzureStorageRequestHistoryStore(
         IOptions<ClaimProcessorOptions> options,
@@ -80,7 +85,21 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads()
             };
 
+            string? previousIndexRowKey = null;
+            try
+            {
+                var existing = (await _table.GetEntityAsync<RequestHistoryEntity>(
+                    PartitionKeyValue,
+                    entity.RowKey,
+                    cancellationToken: cancellationToken)).Value;
+                previousIndexRowKey = BuildRecentIndexRowKey(existing.UpdatedAtUtc, existing.RowKey);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+            }
+
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
+            await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
         }
     }
 
@@ -112,6 +131,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         {
             var rowKey = BuildRowKey(batchId, i);
             RequestHistoryEntity entity;
+            string? previousIndexRowKey;
 
             try
             {
@@ -119,9 +139,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                     PartitionKeyValue,
                     rowKey,
                     cancellationToken: cancellationToken)).Value;
+                previousIndexRowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey);
             }
             catch (RequestFailedException ex) when (ex.Status == 404)
             {
+                previousIndexRowKey = null;
                 entity = new RequestHistoryEntity
                 {
                     PartitionKey = PartitionKeyValue,
@@ -131,7 +153,6 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                     CreatedAtUtc = completedAtUtc
                 };
             }
-
             entity.UpdatedAtUtc = completedAtUtc;
             entity.Status = status;
             entity.Destination = sentToServiceBus ? "ServiceBus" : "APIM";
@@ -164,6 +185,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+            await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
         }
     }
 
@@ -199,7 +221,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 entity.EndToEndDurationMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
             }
 
+            var previousIndexRowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey);
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+            await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
         }
     }
 
@@ -273,6 +297,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         {
             var rowKey = BuildRowKey(batchId, i);
             RequestHistoryEntity entity;
+            string? previousIndexRowKey;
 
             try
             {
@@ -280,9 +305,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                     PartitionKeyValue,
                     rowKey,
                     cancellationToken: cancellationToken)).Value;
+                previousIndexRowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey);
             }
             catch (RequestFailedException ex) when (ex.Status == 404)
             {
+                previousIndexRowKey = null;
                 entity = new RequestHistoryEntity
                 {
                     PartitionKey = PartitionKeyValue,
@@ -302,30 +329,55 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+            await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
         }
     }
 
-    public async Task<IReadOnlyList<RequestHistoryItem>> ListAsync(
+    public async Task<RequestHistoryPage> ListAsync(
         int limit,
+        string? continuationToken,
         CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
+        await EnsureRecentIndexReadyAsync(cancellationToken);
 
-        var results = new List<RequestHistoryEntity>();
-
-        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
-            x => x.PartitionKey == PartitionKeyValue,
-            maxPerPage: 1000,
-            cancellationToken: cancellationToken))
+        var pageSize = Math.Clamp(limit, 1, 1000);
+        var lastRowKey = DecodeContinuationToken(continuationToken);
+        var filter = $"PartitionKey eq '{RecentPartitionKeyValue}'";
+        if (lastRowKey is not null)
         {
-            results.Add(entity);
+            filter += $" and RowKey gt '{lastRowKey}'";
         }
 
-        return results
-            .OrderByDescending(x => x.UpdatedAtUtc)
-            .Take(Math.Clamp(limit, 1, 1000))
-            .Select(x => Map(x, null, null, null, null))
-            .ToArray();
+        var items = new List<RequestHistoryItem>(pageSize);
+        var seenRecordIds = new HashSet<string>(StringComparer.Ordinal);
+        string? lastExaminedRowKey = null;
+        var hasMore = false;
+
+        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+            filter,
+            maxPerPage: pageSize,
+            cancellationToken: cancellationToken))
+        {
+            lastExaminedRowKey = entity.RowKey;
+            var recordId = entity.PrimaryRecordId;
+            if (string.IsNullOrWhiteSpace(recordId) || !seenRecordIds.Add(recordId))
+            {
+                continue;
+            }
+
+            items.Add(Map(entity, null, null, null, null));
+            if (items.Count == pageSize)
+            {
+                hasMore = true;
+                break;
+            }
+        }
+
+        var nextPageToken = hasMore && lastExaminedRowKey is not null
+            ? EncodeContinuationToken(lastExaminedRowKey)
+            : null;
+        return new RequestHistoryPage(items, nextPageToken);
     }
 
     public async Task<RequestHistoryItem?> GetAsync(
@@ -372,7 +424,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         IReadOnlyList<string>? rtaResponsePayloads,
         string? rtaStatusPayload) =>
         new(
-            entity.RowKey,
+            entity.PrimaryRecordId ?? entity.RowKey,
             entity.BatchId,
             entity.UniqueId,
             entity.CreatedAtUtc,
@@ -483,6 +535,151 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
     }
 
+    private async Task EnsureRecentIndexReadyAsync(CancellationToken cancellationToken)
+    {
+        if (_recentIndexInitialized)
+        {
+            return;
+        }
+
+        await _recentIndexInitializeLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_recentIndexInitialized)
+            {
+                return;
+            }
+
+            var marker = await _table.GetEntityIfExistsAsync<TableEntity>(
+                IndexMetadataPartitionKey,
+                IndexVersionRowKey,
+                cancellationToken: cancellationToken);
+            if (marker.HasValue)
+            {
+                _recentIndexInitialized = true;
+                return;
+            }
+
+            var batch = new List<TableTransactionAction>(100);
+            await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+                x => x.PartitionKey == PartitionKeyValue,
+                maxPerPage: 1000,
+                cancellationToken: cancellationToken))
+            {
+                batch.Add(new TableTransactionAction(
+                    TableTransactionActionType.UpsertReplace,
+                    ToRecentIndexEntity(entity)));
+                if (batch.Count == 100)
+                {
+                    await _table.SubmitTransactionAsync(batch, cancellationToken);
+                    batch.Clear();
+                }
+            }
+
+            if (batch.Count > 0)
+            {
+                await _table.SubmitTransactionAsync(batch, cancellationToken);
+            }
+
+            await _table.UpsertEntityAsync(
+                new TableEntity(IndexMetadataPartitionKey, IndexVersionRowKey)
+                {
+                    ["CreatedAtUtc"] = DateTimeOffset.UtcNow
+                },
+                TableUpdateMode.Replace,
+                cancellationToken);
+            _recentIndexInitialized = true;
+        }
+        finally
+        {
+            _recentIndexInitializeLock.Release();
+        }
+    }
+
+    private async Task UpsertRecentIndexAsync(
+        RequestHistoryEntity entity,
+        string? previousIndexRowKey,
+        CancellationToken cancellationToken)
+    {
+        var indexEntity = ToRecentIndexEntity(entity);
+        await _table.UpsertEntityAsync(indexEntity, TableUpdateMode.Replace, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(previousIndexRowKey)
+            && !string.Equals(previousIndexRowKey, indexEntity.RowKey, StringComparison.Ordinal))
+        {
+            try
+            {
+                await _table.DeleteEntityAsync(
+                    RecentPartitionKeyValue,
+                    previousIndexRowKey,
+                    ETag.All,
+                    cancellationToken);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                // The index may still be backfilling older rows; the current entry is already written.
+            }
+        }
+    }
+
+    private static RequestHistoryEntity ToRecentIndexEntity(RequestHistoryEntity entity) =>
+        new()
+        {
+            PartitionKey = RecentPartitionKeyValue,
+            RowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey),
+            PrimaryRecordId = entity.RowKey,
+            BatchId = entity.BatchId,
+            UniqueId = entity.UniqueId,
+            CreatedAtUtc = entity.CreatedAtUtc,
+            UpdatedAtUtc = entity.UpdatedAtUtc,
+            Status = entity.Status,
+            Destination = entity.Destination,
+            HttpStatusCode = entity.HttpStatusCode,
+            BusinessResponseCode = entity.BusinessResponseCode,
+            Reason = entity.Reason,
+            SentToApimAtUtc = entity.SentToApimAtUtc,
+            ApimResponseAtUtc = entity.ApimResponseAtUtc,
+            BufferedToServiceBusAtUtc = entity.BufferedToServiceBusAtUtc,
+            RtaPullDurationMs = entity.RtaPullDurationMs,
+            TranslationDurationMs = entity.TranslationDurationMs,
+            ApimRoundTripDurationMs = entity.ApimRoundTripDurationMs,
+            RtaWritebackDurationMs = entity.RtaWritebackDurationMs,
+            EndToEndDurationMs = entity.EndToEndDurationMs,
+            PayloadLoggingEnabled = entity.PayloadLoggingEnabled
+        };
+
+    private static string BuildRecentIndexRowKey(DateTimeOffset updatedAtUtc, string recordId)
+    {
+        var reverseTicks = DateTime.MaxValue.Ticks - updatedAtUtc.UtcDateTime.Ticks;
+        return $"{reverseTicks:D19}-{recordId}";
+    }
+
+    private static string? DecodeContinuationToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        try
+        {
+            var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(token));
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                decoded,
+                @"^\d{19}-[A-Za-z0-9-]+$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+                ? decoded
+                : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    private static string EncodeContinuationToken(string rowKey) =>
+        Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(rowKey));
+
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_initialized)
@@ -541,6 +738,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public string? ResponsePayloadBlob { get; set; }
         public string? RtaResponsePayloadBlobs { get; set; }
         public string? RtaStatusPayloadBlob { get; set; }
+        public string? PrimaryRecordId { get; set; }
     }
 }
 

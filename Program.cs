@@ -151,8 +151,19 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
     if (authorization is not null) return authorization;
 
     context.Response.Headers.CacheControl = "no-store";
-    var items = await store.ListAsync(1000, cancellationToken);
-    return Results.Json(items, historyJsonOptions);
+    var limit = int.TryParse(context.Request.Query["limit"], out var requestedLimit)
+        ? Math.Clamp(requestedLimit, 1, 1000)
+        : 100;
+    var page = await store.ListAsync(
+        limit,
+        context.Request.Query["pageToken"].FirstOrDefault(),
+        cancellationToken);
+    if (page.NextPageToken is not null)
+    {
+        context.Response.Headers["X-Next-Page-Token"] = page.NextPageToken;
+    }
+
+    return Results.Json(page.Items, historyJsonOptions);
 });
 
 app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>

@@ -50,8 +50,9 @@ public interface IRequestHistoryStore
         DateTimeOffset bufferedAtUtc,
         CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<RequestHistoryItem>> ListAsync(
+    Task<RequestHistoryPage> ListAsync(
         int limit,
+        string? continuationToken,
         CancellationToken cancellationToken);
 
     Task<RequestHistoryItem?> GetAsync(
