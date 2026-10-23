@@ -938,8 +938,8 @@ public sealed class ClaimProcessor(
         SetResponseValue(initialResponse, "PROGRAM", docmpMetadata, "program");
 
         var benefitPeriod = new JsonObject();
-        SetResponseValue(benefitPeriod, "START_DT", GetJsonProperty(docmpMetadata, "benefitPeriod"), "startDate");
-        SetResponseValue(benefitPeriod, "END_DT", GetJsonProperty(docmpMetadata, "benefitPeriod"), "endDate");
+        SetResponseValue(benefitPeriod, "START_DT", docmpMetadata["benefitPeriod"], "startDate");
+        SetResponseValue(benefitPeriod, "END_DT", docmpMetadata["benefitPeriod"], "endDate");
         initialResponse["BENEFIT_PERIOD"] = benefitPeriod;
 
         initialResponse["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(docmpMetadata, "individualDeductible");
