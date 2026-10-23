@@ -63,12 +63,12 @@ public sealed class ClaimProcessorOptions
 
     public string ApimInitialRequestFieldMapping { get; init; } = """
     {
-      "patientIcn": "METADATA.PATIENT_ICN",
-      "sponsorIcn": "METADATA.SPONSOR_ICN",
-      "startDateOfService": "METADATA.START_DATE_OF_SERVICE",
-      "endDateOfService": "METADATA.END_DATE_OF_SERVICE",
-      "program": "METADATA.PROGRAM",
-      "includeDetails": "METADATA.INCLUDE_ADJUSTMENT_DETAILS"
+      "patientIcn": "INITIAL_REQUEST_METADATA.PATIENT_ICN",
+      "sponsorIcn": "INITIAL_REQUEST_METADATA.SPONSOR_ICN",
+      "startDateOfService": "INITIAL_REQUEST_METADATA.START_DATE_OF_SERVICE",
+      "endDateOfService": "INITIAL_REQUEST_METADATA.END_DATE_OF_SERVICE",
+      "program": "INITIAL_REQUEST_METADATA.PROGRAM",
+      "includeDetails": "INITIAL_REQUEST_METADATA.INCLUDE_ADJUSTMENT_DETAILS"
     }
     """;
 
