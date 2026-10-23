@@ -928,29 +928,33 @@ public sealed class ClaimProcessor(
         apiCallHistory["ERROR_STACK"] = null;
         payload["API_CALL_HISTORY"] = apiCallHistory;
 
+        // DOCMP returns the business response fields inside METADATA. This is distinct
+        // from INITIAL_REQUEST_METADATA, which is the RTA request-side source shape.
+        var docmpMetadata = GetJsonProperty(apimResponse, "METADATA") as JsonObject ?? new JsonObject();
+
         var initialResponse = new JsonObject();
-        SetResponseValue(initialResponse, "PATIENT_ICN", apimResponse, "patientIcn");
-        SetResponseValue(initialResponse, "SPONSOR_ICN", apimResponse, "sponsorIcn");
-        SetResponseValue(initialResponse, "PROGRAM", apimResponse, "program");
+        SetResponseValue(initialResponse, "PATIENT_ICN", docmpMetadata, "patientIcn");
+        SetResponseValue(initialResponse, "SPONSOR_ICN", docmpMetadata, "sponsorIcn");
+        SetResponseValue(initialResponse, "PROGRAM", docmpMetadata, "program");
 
         var benefitPeriod = new JsonObject();
-        SetResponseValue(benefitPeriod, "START_DT", GetJsonProperty(apimResponse, "benefitPeriod"), "startDate");
-        SetResponseValue(benefitPeriod, "END_DT", GetJsonProperty(apimResponse, "benefitPeriod"), "endDate");
+        SetResponseValue(benefitPeriod, "START_DT", GetJsonProperty(docmpMetadata, "benefitPeriod"), "startDate");
+        SetResponseValue(benefitPeriod, "END_DT", GetJsonProperty(docmpMetadata, "benefitPeriod"), "endDate");
         initialResponse["BENEFIT_PERIOD"] = benefitPeriod;
 
-        initialResponse["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(apimResponse, "individualDeductible");
-        initialResponse["FAMILY_DEDUCTIBLE"] = MapAccumulator(apimResponse, "familyDeductible");
-        initialResponse["OUT_OF_POCKET_MAX"] = MapAccumulator(apimResponse, "outOfPocketMax");
+        initialResponse["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(docmpMetadata, "individualDeductible");
+        initialResponse["FAMILY_DEDUCTIBLE"] = MapAccumulator(docmpMetadata, "familyDeductible");
+        initialResponse["OUT_OF_POCKET_MAX"] = MapAccumulator(docmpMetadata, "outOfPocketMax");
 
         payload["INITIAL_REQUEST_RESPONSE"] = initialResponse;
         payload["UPDATE_REQUEST_RESPONSE"] = null;
         return payload;
     }
 
-    private static JsonObject MapAccumulator(JsonElement source, string propertyName)
+    private static JsonObject MapAccumulator(JsonObject source, string propertyName)
     {
         var accumulator = new JsonObject();
-        var sourceObject = GetJsonProperty(source, propertyName);
+        var sourceObject = source[propertyName];
         SetResponseValue(accumulator, "CURRENT", sourceObject, "current");
         SetResponseValue(accumulator, "MAX", sourceObject, "max");
         return accumulator;
