@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using System.Net.Sockets;
 using Azure.Core;
 using Azure.Identity;
@@ -172,7 +173,53 @@ app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStor
     if (authorization is not null) return authorization;
 
     context.Response.Headers.CacheControl = "no-store";
-    var averages = await store.GetTimingAveragesAsync(cancellationToken);
+    var range = context.Request.Query["range"].FirstOrDefault() ?? "all";
+    var nowUtc = DateTimeOffset.UtcNow;
+    DateTimeOffset? fromUtc = null;
+    DateTimeOffset? toUtc = null;
+    var cacheKey = range;
+
+    switch (range)
+    {
+        case "all":
+            break;
+        case "7d":
+            fromUtc = nowUtc.AddDays(-7);
+            toUtc = nowUtc;
+            break;
+        case "30d":
+            fromUtc = nowUtc.AddDays(-30);
+            toUtc = nowUtc;
+            break;
+        case "365d":
+            fromUtc = nowUtc.AddDays(-365);
+            toUtc = nowUtc;
+            break;
+        case "custom":
+            if (!DateTimeOffset.TryParse(
+                    context.Request.Query["fromUtc"].FirstOrDefault(),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var customFromUtc) ||
+                !DateTimeOffset.TryParse(
+                    context.Request.Query["toUtc"].FirstOrDefault(),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var customToUtc) ||
+                customFromUtc > customToUtc)
+            {
+                return Results.BadRequest(new { error = "A valid custom date/time range is required." });
+            }
+
+            fromUtc = customFromUtc;
+            toUtc = customToUtc;
+            cacheKey = $"custom:{customFromUtc.UtcTicks}:{customToUtc.UtcTicks}";
+            break;
+        default:
+            return Results.BadRequest(new { error = "Unsupported timing range." });
+    }
+
+    var averages = await store.GetTimingAveragesAsync(fromUtc, toUtc, cacheKey, cancellationToken);
     return Results.Json(averages, historyJsonOptions);
 });
 
