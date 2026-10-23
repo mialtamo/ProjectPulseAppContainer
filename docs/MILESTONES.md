@@ -1,248 +1,65 @@
 # Project Pulse Milestones
 
-## M0 - Baseline and Development Framework
+Statuses reflect the repository and POC evidence reviewed on 2026-10-22. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
 
-Goal: establish source-of-truth documentation and milestone-driven development without changing runtime behavior.
+## M0 - Baseline and development framework — Complete
 
-Deliverables:
+The repository has product, architecture, security, milestone, current-state, and development documentation. Current behavior and known limitations are recorded.
 
-- PRODUCT-SPEC.md
-- ARCHITECTURE.md
-- SECURITY.md
-- MILESTONES.md
-- CURRENT-STATE.md
-- DEVELOPMENT-PROMPT.md
+## M1 - APIM/DOCMP request and response path — Complete for POC
 
-Acceptance:
+Project Pulse transforms and submits claim requests, validates the configured response token, processes the APIM response, and records the request/response. A successful POC response has been observed. APIM policy and environment configuration remain external to this repository.
 
-- current behavior is documented,
-- known limitations are documented,
-- milestone boundaries are defined,
-- no application behavior changes.
+## M2 - RTA writeback — In progress
 
-## M1 - APIM Mock Adjudication
+The response translation and configurable RTA writeback path are implemented. The request payload is the individual source item; the APIM response is preserved as raw JSON; mapped response fields are written in the RTA response contract.
 
-Goal: use APIM as the real intermediary while returning a fake adjudication result.
+Remaining: verify successful PUT and expected status transitions in each target environment, including failure/retry behavior. A successful APIM response is not sufficient acceptance evidence.
 
-Deliverables:
+## M3 - Failure handling and Service Bus — In progress
 
-- APIM `/health`,
-- APIM `/claims/adjudicate`,
-- dynamic mock response based on incoming claims,
-- APIM policies stored in source control,
-- POC settings documented.
+Configured APIM outage handling can buffer work; the Service Bus runtime role can receive and reprocess retry envelopes. Health gating and failure logging are implemented.
 
-Acceptance:
+Remaining: exercise and document the full failure/recovery matrix in the target environment, including Service Bus TLS/configuration, APIM timeout/429/5xx, buffering failure, and recovery. Confirm no claim is silently lost.
 
-- Pulse sees APIM healthy,
-- Pulse retrieves and transforms a claim,
-- APIM receives the batch,
-- APIM returns a fake success response,
-- no Service Bus fallback occurs during the healthy path.
+## M4 - Idempotency and duplicate protection — In progress
 
-## M2 - Complete Success Path and RTA Writeback
+Correlation and idempotency values are propagated through the processing path.
 
-Goal: complete the claim lifecycle.
+Remaining: establish and validate duplicate behavior across redelivery, Service Bus replay, process restarts, and RTA polling. Propagating an idempotency key alone does not prove end-to-end duplicate prevention.
 
-Flow:
+## M5 - Retry processing — In progress
 
-```text
-RTA -> Pulse -> APIM -> fake adjudication -> Pulse -> RTA writeback
-```
+A Service Bus consumer role exists in the same application/image; the older plan for a separate Function/App is not the current implementation.
 
-Deliverables:
+Remaining: verify retry scheduling, poison/dead-letter handling, operational recovery, and behavior under dependency outages. Decide whether a separate deployment is needed based on operational evidence.
 
-- final POC APIM response contract,
-- per-claim response parsing,
-- RTA status mapping,
-- writeback enabled,
-- mock API records updated after processing,
-- completed claims no longer returned as pending.
+## M6 - Security and payload controls — In progress
 
-Acceptance:
+Entra authentication and the `ProjectPulse.Admin` app role are implemented for request-history access. `REQUEST_HISTORY_PAYLOAD_MODE` supports FULL, PARTIAL, and OFF for new records.
 
-- a claim is exposed once,
-- successfully adjudicated,
-- written back,
-- reaches a terminal success state,
-- does not reappear on the next poll.
+Remaining: production security review, least-privilege identity/access checks, networking/TLS review, and confirmation of sensitive-data handling. PARTIAL masking is not a complete de-identification guarantee; changing to OFF does not delete existing stored payloads.
 
-## M3 - Failure Handling and Service Bus
+## M7 - Observability and operations — In progress
 
-Goal: validate the complete failure-state matrix.
+Request history, per-batch stage timings, selectable average windows, status-aware delay hints, Application Insights telemetry, and UI navigation are present.
 
-Scenarios:
+Remaining: validate metrics and explanations against real environment logs, define actionable alerts and retention, and complete operational runbooks. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
 
-- RTA down,
-- APIM down under threshold,
-- APIM down beyond threshold,
-- APIM recovery,
-- APIM down plus Service Bus send failure,
-- APIM timeout,
-- 429,
-- 5xx,
-- 419 alert-only behavior.
+## M8 - Durable state and scale-out safety — Planned
 
-Deliverables:
+Outage/circuit state is currently in process memory and resets on restart. The POC uses one replica.
 
-- automated tests,
-- APIM test policies or switches for synthetic failures,
-- outage/recovery telemetry.
+Deliverables: durable state if required, restart/recovery validation, concurrency analysis, and safe multi-replica processing.
 
-Acceptance:
+## M9 - Performance and scale — In progress
 
-- every tested condition produces the intended state transition,
-- no claim is silently discarded.
+Azure Container Apps with a continuous worker is the selected POC execution model. The UI includes timing averages and configurable date ranges.
 
-## M4 - Idempotency and Duplicate Protection
+Remaining: load and soak testing, throughput/bottleneck analysis, scale behavior, and a production sizing decision.
 
-Goal: prevent duplicate business transactions.
+## M10 - Production readiness — Planned
 
-Define the roles of:
+Deliverables: regression and integration evidence, environment validation, security and dependency review, deployment/rollback procedure, disaster-recovery considerations, retention policy, alerts, and operational runbooks.
 
-- CORRELATION_ID,
-- IDEMPOTENCY_KEY,
-- REQUEST_ID,
-- Service Bus MessageId,
-- APIM Idempotency-Key.
-
-Deliverables:
-
-- documented idempotency strategy,
-- duplicate claim protections,
-- Service Bus duplicate strategy,
-- repeated-delivery tests,
-- source-side claim reservation/claiming strategy if available.
-
-Acceptance:
-
-- repeat delivery cannot accidentally create two adjudication transactions.
-
-## M5 - Service Bus Recovery Processor
-
-Goal: add a separate retry/recovery component.
-
-Flow:
-
-```text
-Project Pulse -> Service Bus -> Recovery Processor -> APIM -> RTA
-```
-
-Deliverables:
-
-- separate Function/App,
-- Service Bus receiver,
-- retry/backoff,
-- dependency checks,
-- poison-message handling,
-- DLQ handling,
-- APIM replay,
-- RTA writeback.
-
-Acceptance:
-
-- a buffered claim survives an outage and completes after recovery,
-- Project Pulse itself remains write-only to the retry queue.
-
-## M6 - Security Hardening
-
-Goal: harden production data handling and access.
-
-Deliverables:
-
-- payload logging disabled outside approved POC/dev environments,
-- final decision on retry payload vs identifier-only design,
-- protected health endpoint,
-- least-privilege RBAC,
-- private networking,
-- TLS enforcement,
-- Key Vault integration for unavoidable secrets,
-- PHI-safe telemetry.
-
-Acceptance:
-
-- no claim body appears in production telemetry,
-- access is least privilege,
-- sensitive data locations are documented and controlled.
-
-## M7 - Observability and Operations
-
-Goal: make every claim traceable end-to-end.
-
-Deliverables:
-
-- consistent correlation across RTA, Pulse, APIM, Service Bus, recovery,
-- dashboards,
-- alerts,
-- latency/failure/queue metrics,
-- better Service Bus health validation,
-- operational runbook inputs.
-
-Acceptance:
-
-- operations can trace a claim by correlation ID,
-- major failure modes generate actionable telemetry.
-
-## M8 - Resiliency and Durable State
-
-Goal: make outage behavior survive restarts and scaling.
-
-Deliverables:
-
-- durable APIM outage timestamp,
-- durable circuit state if retained,
-- recycle/restart tests,
-- safe multi-instance behavior,
-- concurrency/race analysis.
-
-Acceptance:
-
-- host recycle or scaling does not reset outage rules in an unsafe way or cause duplicate processing.
-
-## M9 - Performance and Scale
-
-Goal: validate production throughput and choose the long-term execution model.
-
-Test targets where practical:
-
-- 100 claims/sec,
-- 300 claims/sec,
-- 1,000 claims/sec,
-- 3,000+ claims/sec.
-
-Deliverables:
-
-- batch-size testing,
-- paging testing,
-- APIM latency testing,
-- Service Bus throughput testing,
-- Function CPU/memory testing,
-- architecture decision: continuous polling worker vs Container Apps worker vs Service Bus-first distribution.
-
-Acceptance:
-
-- sustainable throughput and bottlenecks are documented,
-- production execution model is selected.
-
-## M10 - Production Readiness
-
-Goal: final production gate.
-
-Deliverables:
-
-- CI regression tests,
-- dependency/vulnerability scanning,
-- environment validation,
-- deployment strategy,
-- rollback procedure,
-- DR considerations,
-- operational runbook,
-- final security review,
-- final architecture documentation.
-
-Acceptance:
-
-- automated build and regression suite pass,
-- production configuration is validated,
-- failure/recovery tests pass,
-- accepted limitations are explicitly documented.
+Acceptance requires documented production configuration and successful failure/recovery validation, not merely a successful POC APIM call.

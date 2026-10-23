@@ -2,104 +2,79 @@
 
 ## Purpose
 
-Project Pulse orchestrates near-real-time claim adjudication. It retrieves queued claim work from an internal RTA/App API, transforms requests into the APIM contract, submits them for adjudication, writes successful results back to the source system when enabled, and buffers work to Azure Service Bus during defined downstream failures.
+Project Pulse moves queued claim requests from RTA through APIM/DOCMP, translates the response, and writes the result back to RTA. It records operational history and timing, and can buffer eligible work in Azure Service Bus during configured downstream failures.
 
-## Primary goals
+This specification describes the current Container Apps implementation and its POC boundaries, not a production-readiness claim.
 
-- Keep Facets/RTA users from waiting on batch-oriented processing.
-- Poll the source API on a predictable cadence.
-- Support batches of up to 300 records per poll through paging.
-- Keep RTA polling health-aware.
-- Preserve correlation and idempotency metadata.
-- Continue short-term intake during APIM outages by buffering to Service Bus.
-- Stop taking new work when downstream failure exceeds the configured outage threshold.
-- Resume automatically after dependency recovery.
-- Keep behavior configuration-driven.
-- Use Managed Identity wherever possible.
+## Runtime and deployment model
 
-## Current POC flow
+Project Pulse is a .NET 10 ASP.NET Core container. One codebase/image supports two runtime roles selected by `PROJECT_PULSE_ROLE`:
 
-1. Timer trigger executes once per configured schedule.
-2. Project Pulse checks RTA API health, RTA DB/App health, and APIM/backend health.
-3. If RTA is unhealthy, the run stops.
-4. If APIM is healthy, Project Pulse polls RTA/App API, transforms the returned records, and posts one batch to APIM.
-5. If APIM is unavailable and outage policy allows buffering, Project Pulse still polls the source and writes each claim to Service Bus.
-6. If APIM remains unavailable beyond the configured threshold, source polling stops.
-7. If Service Bus buffering fails while APIM is unavailable, polling stops immediately.
-8. When APIM becomes healthy again, normal processing resumes.
+- **RTA role:** continuously polls the configured source API.
+- **Service Bus role:** receives buffered retry work and reprocesses it through the shared processing flow.
 
-## Supported source modes
+The POC is configured for one replica. There is no Azure Functions TimerTrigger, `host.json`, or `POLL_SCHEDULE` execution model in this application.
 
-### RTA mode
+## Request flow
 
-`APP_API_MODE=RTA`
+1. The RTA role checks configured dependency health and polls the source.
+2. In RTA mode, it requests paged data. In mock mode, the configured mock endpoint may use `maxRecords`; that parameter is not the RTA paging contract.
+3. Each RTA item is translated to the APIM/DOCMP JSON contract and processed as an individual claim request.
+4. Project Pulse sends the request with correlation/idempotency information and validates the configured APIM response-token header.
+5. It records the HTTP response body and translates a successful response into the RTA writeback contract.
+6. When enabled and configured, it sends the writeback to RTA. Writeback failure is recorded and may be retried according to configured behavior.
+7. Under configured APIM outage conditions, eligible work can be placed on Service Bus. The Service Bus role can consume and replay buffered work.
 
-Expected queue endpoint:
+The source item, APIM request, APIM response, mapped RTA response, status, and timing values are captured according to request-history settings.
 
-`GET /requests/queued?page=N&limit=N`
+## Configuration and integrations
 
-Expected response contains an `Items` array plus paging metadata.
+- `APP_API_MODE`: source behavior, including `RTA` and `MOCK`.
+- `PROJECT_PULSE_ROLE`: polling or Service Bus runtime role.
+- `POLL_INTERVAL_SECONDS`: RTA polling cadence, subject to application bounds.
+- RTA paging settings control page size and number of pages; mock-mode `maxRecords` is separate.
+- APIM endpoint, credentials/token validation, and response mapping are configured independently.
+- RTA writeback is controlled by its writeback setting and target API configuration.
+- Azure Table Storage stores searchable history metadata; Blob Storage holds captured payload bodies.
+- `REQUEST_HISTORY_PAYLOAD_MODE` controls capture of new payloads:
+  - `FULL`: retain complete captured payloads.
+  - `PARTIAL`: mask selected sensitive fields while retaining diagnostic structure. This is targeted masking, not a guarantee of complete de-identification.
+  - `OFF`: retain transaction metadata without payload bodies. Existing stored bodies are not deleted by changing the mode.
+- Microsoft Entra authentication protects the request-history UI. Access is intended for users assigned the `ProjectPulse.Admin` app role, currently assigned through `PROJECT_PULSE_ADMINS`.
 
-### Mock mode
+## Response translation and writeback
 
-`APP_API_MODE=MOCK`
+The APIM/DOCMP response remains available as the original response JSON string in `PAYLOAD_RESPONSE`. The source RTA item associated with the processed claim is retained as `PAYLOAD_REQUEST`; a multi-item polling envelope is not used as the per-record request payload.
 
-Expected queue endpoint for the current POC:
+Project Pulse also maps response fields to the RTA PUT shape, including status, response code, process timestamp, identifiers, and the response object for the applicable request type. Translation and successful APIM response receipt do not guarantee that an RTA PUT succeeds; the target environment's endpoint and contract must be validated.
 
-`GET /claims/pending?maxRecords=N`
+## History, timings, and UI
 
-The mock response can be a raw array or an object containing an `Items` array.
+The secured request-history pages show transaction status, destination, HTTP/business details when available, payload panels according to the selected payload mode, and per-batch durations for:
 
-## APIM behavior
+- RTA pull
+- Translation
+- APIM round trip
+- RTA writeback
+- End-to-end processing
 
-Project Pulse posts transformed claims to the configured APIM adjudication path.
+The averages view supports preset and custom time ranges. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
 
-The current intended POC progression is:
+## Resilience and operational boundaries
 
-- APIM health endpoint.
-- APIM mock adjudication policy.
-- Dynamic fake success response based on incoming claim IDs.
-- Later replacement of the fake backend with the real adjudication backend.
+- Service Bus buffering is for configured outage cases; it is not a guarantee that every failure is buffered.
+- Outage/circuit tracking is process-local and is reset by restart.
+- The POC's single-replica setting avoids some coordination concerns but does not establish scale-out safety.
+- `/pulse-health` reports application health and is not a full proof of every downstream authentication or send operation.
+- Service Bus TLS trust and RTA client-certificate requirements are separate integration concerns.
+- Payload-mode changes do not purge existing history. Retention and deletion need a separate operational policy.
+- APIM POC success, RTA writeback success, and Service Bus recovery success must be measured independently per environment.
 
-## Service Bus behavior
+## Product goals
 
-Project Pulse is write-only to the retry queue.
-
-Current retry messages contain:
-
-- UniqueId
-- RequestId
-- IdempotencyKey
-- Reason
-- QueuedAtUtc
-- OriginalPayload
-- TransformedPayload
-
-A separate retry/recovery application will consume and replay buffered work in a later milestone.
-
-## Current success criteria
-
-A healthy-path POC is successful when:
-
-- the mock RTA/App API exposes a queued claim,
-- Project Pulse retrieves it,
-- Project Pulse transforms it,
-- APIM accepts it,
-- APIM returns a fake adjudication result,
-- Project Pulse processes the response,
-- result writeback can be enabled once the response contract is finalized,
-- the completed claim is no longer exposed as pending.
-
-## Non-goals for the current baseline
-
-The current baseline does not yet guarantee:
-
-- durable outage state across Function restarts,
-- complete duplicate prevention,
-- production-grade retry replay,
-- production PHI handling controls,
-- multi-instance coordination,
-- final APIM response/writeback contracts,
-- sustained high-throughput production performance.
-
-Those items are handled by later milestones.
+- Process queued claims predictably and preserve correlation/idempotency context.
+- Make each translation and external request observable.
+- Return the appropriate translated result to RTA when writeback is enabled.
+- Retain useful operational history while allowing payload capture to be reduced or disabled.
+- Provide authorized operators with transaction and latency visibility.
+- Validate durable recovery, retention, security, and scale before production use.
