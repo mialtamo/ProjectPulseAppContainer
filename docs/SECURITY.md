@@ -38,17 +38,17 @@ Production controls should include:
 - auditing and monitoring,
 - explicit handling of dead-lettered messages.
 
-## Logging
+## Request-history payload logging
 
-`LOG_POLL_PAYLOADS=true` logs incoming and transformed claim payloads.
+Use `REQUEST_HISTORY_PAYLOAD_MODE`:
 
-This setting is for fake POC data only.
+- `OFF` (default): do not store or emit payload bodies; transaction metadata remains available.
+- `PARTIAL`: mask common ICN, SSN, date-of-birth, member/claimant ID, and personal-name fields before logging or storage. Unparseable payloads are masked completely.
+- `FULL`: retain and emit unredacted payload bodies. Use only with synthetic POC data.
 
-Production and real claim environments must use:
+Partial masking is targeted and should not be treated as a complete de-identification guarantee. Use `OFF` for real claim data unless an approved data-protection review authorizes a different mode. Existing payload blobs are hidden in `OFF` mode and read with masking in `PARTIAL` mode; switching modes does not delete old blobs.
 
-`LOG_POLL_PAYLOADS=false`
-
-Future hardening should prevent this setting from being enabled outside approved non-production environments.
+The deprecated `LOG_POLL_PAYLOADS` setting is used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset (`true` maps to `FULL`, `false` to `OFF`).
 
 ## Health endpoint
 

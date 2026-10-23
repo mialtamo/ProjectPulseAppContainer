@@ -77,7 +77,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 TranslationDurationMs = translationDurationMs,
                 RequestPayloadBlob = requestBlob,
                 RtaResponsePayloadBlobs = rtaResponseBlobs,
-                PayloadLoggingEnabled = _options.ShouldLogPollPayloads()
+                PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads()
             };
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
@@ -156,7 +156,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             entity.ResponsePayloadBlob = responseBlob;
-            entity.PayloadLoggingEnabled = _options.ShouldLogPollPayloads();
+            entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
 
             if (sentToServiceBus)
             {
@@ -250,7 +250,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             entity.RtaStatusPayloadBlob = blobName;
-            entity.PayloadLoggingEnabled = _options.ShouldLogPollPayloads();
+            entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
         }
     }
@@ -299,7 +299,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.Reason = reason;
             entity.BufferedToServiceBusAtUtc = bufferedAtUtc;
             entity.RtaResponsePayloadBlobs = rtaResponseBlobs;
-            entity.PayloadLoggingEnabled = _options.ShouldLogPollPayloads();
+            entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
         }
@@ -352,7 +352,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         IReadOnlyList<string>? rtaResponsePayloads = null;
         string? rtaStatusPayload = null;
 
-        if (_options.ShouldLogPollPayloads())
+        if (_options.ShouldCaptureRequestHistoryPayloads())
         {
             requestPayload = await ReadPayloadAsync(entity.RequestPayloadBlob, cancellationToken);
             responsePayload = await ReadPayloadAsync(entity.ResponsePayloadBlob, cancellationToken);
@@ -385,7 +385,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.SentToApimAtUtc,
             entity.ApimResponseAtUtc,
             entity.BufferedToServiceBusAtUtc,
-            _options.ShouldLogPollPayloads(),
+            _options.ShouldCaptureRequestHistoryPayloads(),
+            _options.GetRequestHistoryPayloadMode(),
             requestPayload,
             responsePayload,
             rtaResponsePayloads,
@@ -401,7 +402,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         IReadOnlyList<string> payloads,
         CancellationToken cancellationToken)
     {
-        if (!_options.ShouldLogPollPayloads() || payloads.Count == 0)
+        if (!_options.ShouldCaptureRequestHistoryPayloads() || payloads.Count == 0)
         {
             return null;
         }
@@ -444,7 +445,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         string payload,
         CancellationToken cancellationToken)
     {
-        if (!_options.ShouldLogPollPayloads())
+        if (!_options.ShouldCaptureRequestHistoryPayloads())
         {
             return null;
         }
@@ -452,7 +453,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         var blobName = $"{batchId}/{fileName}";
         var blob = _container.GetBlobClient(blobName);
 
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payload));
+        var payloadToStore = _options.RedactRequestHistoryPayload(payload);
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(payloadToStore));
         await blob.UploadAsync(stream, overwrite: true, cancellationToken);
         return blobName;
     }
@@ -472,7 +474,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 .GetBlobClient(blobName)
                 .DownloadContentAsync(cancellationToken);
 
-            return response.Value.Content.ToString();
+            var payload = response.Value.Content.ToString();
+            return _options.RedactRequestHistoryPayload(payload);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

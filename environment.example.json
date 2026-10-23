@@ -42,7 +42,7 @@
   "RequestHistoryStorageConnectionString": "",
   "RequestHistoryTableName": "ProjectPulseRequestHistory",
   "RequestHistoryBlobContainerName": "projectpulse-history-payloads",
-  "LOG_POLL_PAYLOADS": "false",
+  "REQUEST_HISTORY_PAYLOAD_MODE": "OFF",
   "ApimInitialRequestFieldMapping": "{\"patientIcn\":\"METADATA.PATIENT_ICN\",\"sponsorIcn\":\"METADATA.SPONSOR_ICN\",\"startDateOfService\":\"METADATA.START_DATE_OF_SERVICE\",\"endDateOfService\":\"METADATA.END_DATE_OF_SERVICE\",\"program\":\"METADATA.PROGRAM\",\"includeDetails\":\"METADATA.INCLUDE_ADJUSTMENT_DETAILS\"}",
   "ApimUpdateRequestFieldMapping": "{\"correlationId\":\"CORRELATION_ID\",\"requestId\":\"REQUEST_ID\",\"requestType\":\"REQUEST_TYPE\",\"patientIcn\":\"METADATA.PATIENT_ICN\",\"sponsorIcn\":\"METADATA.SPONSOR_ICN\",\"startDateOfService\":\"METADATA.START_DATE_OF_SERVICE\",\"endDateOfService\":\"METADATA.END_DATE_OF_SERVICE\",\"program\":\"METADATA.PROGRAM\",\"claimNumber\":\"METADATA.CLAIM_NUMBER\",\"RTA\":\"METADATA.RTA\",\"notes\":\"METADATA.NOTES\",\"adjustments.individual.delta\":\"METADATA.ADJ_IND_DEDUCTIBLE\",\"adjustments.family.delta\":\"METADATA.ADJ_FAM_DEDUCTIBLE\",\"adjustments.outOfPocket.delta\":\"METADATA.ADJ_OUT_OF_POCKET\"}"
 }

@@ -63,9 +63,9 @@ public sealed class AppApiClient(
                 response.StatusCode);
         }
 
-        if (_options.ShouldLogPollPayloads())
+        if (_options.ShouldCaptureRequestHistoryPayloads())
         {
-            logger.LogInformation("App API mock payload: {Payload}", responseText);
+            logger.LogInformation("App API mock payload: {Payload}", _options.RedactRequestHistoryPayload(responseText));
         }
 
         if (string.IsNullOrWhiteSpace(responseText))
@@ -117,9 +117,9 @@ public sealed class AppApiClient(
                     response.StatusCode);
             }
 
-            if (_options.ShouldLogPollPayloads())
+            if (_options.ShouldCaptureRequestHistoryPayloads())
             {
-                logger.LogInformation("RTA queued page {Page} payload: {Payload}", page, responseText);
+                logger.LogInformation("RTA queued page {Page} payload: {Payload}", page, _options.RedactRequestHistoryPayload(responseText));
             }
 
             if (string.IsNullOrWhiteSpace(responseText))

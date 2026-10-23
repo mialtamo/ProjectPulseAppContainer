@@ -229,7 +229,18 @@ ApimResponseHeaderName=X-Pulse-Response-Token
 ApimResponseToken=<secret reference>
 
 RequestHistoryStorageConnectionString=<secret reference>
+REQUEST_HISTORY_PAYLOAD_MODE=OFF
 ```
+
+### Request-history payload capture
+
+Set `REQUEST_HISTORY_PAYLOAD_MODE` to control payload logging and request-history details:
+
+- `FULL`: store and log complete payloads. Use only with synthetic POC data.
+- `PARTIAL`: store and log payloads after masking common ICN, SSN, date-of-birth, member/claimant ID, and personal-name fields. Unparseable payloads are fully masked.
+- `OFF`: do not store or emit payload bodies. Transaction metadata remains in Azure Table Storage, and the request-history page still shows transactions without JSON details.
+
+The legacy `LOG_POLL_PAYLOADS` setting is honored only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset (`true` maps to `FULL`; `false` maps to `OFF`). Set the new variable explicitly to avoid ambiguity. Switching to `OFF` hides existing payloads but does not delete existing blobs; `PARTIAL` masks payloads when they are saved and when older blobs are read.
 
 ### Required secret references
 

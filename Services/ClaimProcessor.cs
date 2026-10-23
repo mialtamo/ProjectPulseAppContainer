@@ -170,12 +170,12 @@ public sealed class ClaimProcessor(
                 cancellationToken),
             "APIM request");
 
-        if (_options.ShouldLogPollPayloads())
+        if (_options.ShouldCaptureRequestHistoryPayloads())
         {
             logger.LogInformation(
                 "APIM outbound batch {BatchId} payload: {Payload}",
                 batchId,
-                outboundPayloadJson);
+                _options.RedactRequestHistoryPayload(outboundPayloadJson));
         }
 
         var client = httpClientFactory.CreateClient("Apim");
@@ -239,13 +239,13 @@ public sealed class ClaimProcessor(
                     statusCode);
             }
 
-            if (_options.ShouldLogPollPayloads())
+            if (_options.ShouldCaptureRequestHistoryPayloads())
             {
                 logger.LogInformation(
                     "APIM batch {BatchId} response. Status={StatusCode} Payload={Payload}",
                     batchId,
                     statusCode,
-                    responseJson);
+                    _options.RedactRequestHistoryPayload(responseJson));
             }
 
             if (!response.IsSuccessStatusCode)

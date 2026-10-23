@@ -15,6 +15,7 @@ public sealed record RequestHistoryItem(
     DateTimeOffset? ApimResponseAtUtc,
     DateTimeOffset? BufferedToServiceBusAtUtc,
     bool PayloadLoggingEnabled,
+    string PayloadMode,
     string? ApimRequestPayload,
     string? ApimResponsePayload,
     IReadOnlyList<string>? RtaResponsePayloads,

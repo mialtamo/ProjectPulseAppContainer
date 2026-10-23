@@ -93,7 +93,8 @@ For `INITIAL_REQUEST`, Project Pulse sends one APIM request per RTA record. The 
 | `RequestHistoryStorageConnectionString` | Both | Required for history | secret | **Yes** | Storage connection string used for request-history Table and Blob data. Use a Container Apps secret reference. |
 | `RequestHistoryTableName` | Both | No | `ProjectPulseRequestHistory` | No | Azure Table name for request-history metadata. |
 | `RequestHistoryBlobContainerName` | Both | No | `projectpulse-history-payloads` | No | Blob container for request/response payload history. |
-| `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Logs polled claim payloads when true. Keep false for real sensitive/production data unless explicitly required. |
+| `REQUEST_HISTORY_PAYLOAD_MODE` | Both | No | `OFF` (when unset, falls back to legacy setting) | No | `OFF` suppresses payload bodies while preserving transaction metadata; `PARTIAL` masks common identifiers and personal-name fields; `FULL` captures unredacted payloads for synthetic POC data only. |
+| `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Deprecated compatibility setting. Used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset; `true` maps to `FULL`, `false` maps to `OFF`. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Both | Recommended | Azure-provided value | **Yes** | Standard Application Insights connection string consumed by ASP.NET Core Application Insights telemetry. |
 
 ## POC RTA settings currently used

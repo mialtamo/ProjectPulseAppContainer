@@ -609,8 +609,9 @@ async function renderDetail(row,recordId){
       '<div class="card"><div class="label">Total</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
     '</div>'+
     (x.PayloadLoggingEnabled
-      ? '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+payloadPanel('JSON sent to APIM',x.ApimRequestPayload)+payloadPanel('JSON received from APIM',x.ApimResponsePayload)+'</div>'
-      : '<div class="payload-note">Payload display is disabled because LOG_POLL_PAYLOADS=false.</div>');
+      ? (x.PayloadMode==='PARTIAL' ? '<div class="payload-note">Partial payload mode: common identifiers and personal-name fields are masked.</div>' : '')+
+        '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+payloadPanel('JSON sent to APIM',x.ApimRequestPayload)+payloadPanel('JSON received from APIM',x.ApimResponsePayload)+'</div>'
+      : '<div class="payload-note">Payload capture and display are disabled because REQUEST_HISTORY_PAYLOAD_MODE=OFF.</div>');
   requestAnimationFrame(()=>syncCopyButtonOffsets(row));
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());

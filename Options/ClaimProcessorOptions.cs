@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace ProjectPulse.Processor.Options;
 
@@ -27,6 +29,7 @@ public sealed class ClaimProcessorOptions
     public bool RtaStatusWritebackEnabled { get; init; } = false;
     public string AppApiMode { get; init; } = "RTA";
     public bool LogPollPayloads { get; init; } = false;
+    public string RequestHistoryPayloadMode { get; init; } = string.Empty;
     public string RequestHistoryTableName { get; init; } = "ProjectPulseRequestHistory";
     public string RequestHistoryBlobContainerName { get; init; } = "projectpulse-history-payloads";
 
@@ -120,12 +123,156 @@ public sealed class ClaimProcessorOptions
             "MOCK",
             StringComparison.OrdinalIgnoreCase);
 
-    public bool ShouldLogPollPayloads() =>
-        bool.TryParse(
+    public string GetRequestHistoryPayloadMode()
+    {
+        var configuredMode =
+            Environment.GetEnvironmentVariable("REQUEST_HISTORY_PAYLOAD_MODE")
+            ?? RequestHistoryPayloadMode;
+
+        if (!string.IsNullOrWhiteSpace(configuredMode))
+        {
+            var normalizedMode = configuredMode.Trim().ToUpperInvariant();
+            return normalizedMode is "OFF" or "PARTIAL" or "FULL" ? normalizedMode : "OFF";
+        }
+
+        var legacyEnabled = bool.TryParse(
             Environment.GetEnvironmentVariable("LOG_POLL_PAYLOADS"),
             out var envValue)
             ? envValue
             : LogPollPayloads;
+
+        return legacyEnabled ? "FULL" : "OFF";
+    }
+
+    public bool ShouldCaptureRequestHistoryPayloads() =>
+        GetRequestHistoryPayloadMode() != "OFF";
+
+    public string RedactRequestHistoryPayload(string payload)
+    {
+        if (GetRequestHistoryPayloadMode() != "PARTIAL")
+        {
+            return payload;
+        }
+
+        try
+        {
+            var parsed = JsonNode.Parse(payload);
+            return parsed is null
+                ? "\"********\""
+                : RedactNode(parsed).ToJsonString();
+        }
+        catch (JsonException)
+        {
+            // A malformed payload cannot be safely inspected, so do not expose it in PARTIAL mode.
+            return "\"********\"";
+        }
+    }
+
+    private static JsonNode RedactNode(JsonNode node)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            foreach (var property in jsonObject.ToList())
+            {
+                if (IsSensitivePayloadField(property.Key))
+                {
+                    jsonObject[property.Key] = "********";
+                }
+                else if (property.Value is JsonValue valueNode
+                    && valueNode.TryGetValue<string>(out var stringValue))
+                {
+                    if (TryRedactNestedJson(stringValue, out var redactedNestedJson))
+                    {
+                        jsonObject[property.Key] = JsonValue.Create(redactedNestedJson);
+                    }
+                    else if (RedactText(stringValue) is { } redactedText && redactedText != stringValue)
+                    {
+                        jsonObject[property.Key] = JsonValue.Create(redactedText);
+                    }
+                }
+                else if (property.Value is not null)
+                {
+                    RedactNode(property.Value);
+                }
+            }
+
+            return jsonObject;
+        }
+
+        if (node is JsonArray jsonArray)
+        {
+            for (var index = 0; index < jsonArray.Count; index++)
+            {
+                if (jsonArray[index] is JsonValue valueNode
+                    && valueNode.TryGetValue<string>(out var stringValue))
+                {
+                    if (TryRedactNestedJson(stringValue, out var redactedNestedJson))
+                    {
+                        jsonArray[index] = JsonValue.Create(redactedNestedJson);
+                    }
+                    else if (RedactText(stringValue) is { } redactedText && redactedText != stringValue)
+                    {
+                        jsonArray[index] = JsonValue.Create(redactedText);
+                    }
+                }
+                else if (jsonArray[index] is not null)
+                {
+                    RedactNode(jsonArray[index]!);
+                }
+            }
+        }
+
+        return node;
+    }
+
+    private static string RedactText(string value)
+    {
+        var redacted = Regex.Replace(value, @"\b\d{10}V\d{6}\b", "********", RegexOptions.IgnoreCase);
+        return Regex.Replace(redacted, @"\b\d{3}-?\d{2}-?\d{4}\b", "********");
+    }
+
+    private static bool TryRedactNestedJson(string value, out string redacted)
+    {
+        redacted = value;
+        var trimmed = value.TrimStart();
+        if (trimmed.Length == 0 || (trimmed[0] != '{' && trimmed[0] != '['))
+        {
+            return false;
+        }
+
+        try
+        {
+            var parsed = JsonNode.Parse(value);
+            if (parsed is null)
+            {
+                return false;
+            }
+
+            redacted = RedactNode(parsed).ToJsonString();
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSensitivePayloadField(string fieldName)
+    {
+        var normalized = fieldName
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .ToLowerInvariant();
+
+        return normalized.Contains("icn", StringComparison.Ordinal)
+            || normalized.Contains("ssn", StringComparison.Ordinal)
+            || normalized is "dob" or "birthdate" or "dateofbirth"
+            || normalized.Contains("memberid", StringComparison.Ordinal)
+            || normalized.Contains("claimantid", StringComparison.Ordinal)
+            || normalized.Contains("patientname", StringComparison.Ordinal)
+            || normalized.Contains("sponsorname", StringComparison.Ordinal)
+            || normalized is "firstname" or "middlename" or "lastname" or "membername";
+    }
 
     public int GetApimOutagePollStopSeconds() =>
         int.TryParse(

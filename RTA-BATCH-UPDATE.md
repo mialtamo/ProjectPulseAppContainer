@@ -29,7 +29,7 @@ For the current Project Pulse API POC:
 - `RtaHealthPath=/health`
 - `RtaDbHealthPath=/health`
 
-Set `LOG_POLL_PAYLOADS=true` only for fake/POC data. Disable it before processing real claim data.
+Set `REQUEST_HISTORY_PAYLOAD_MODE=FULL` only for fake/POC data. Use `PARTIAL` for masked diagnostics or `OFF` for no payload bodies. Transaction metadata remains available in request history. `LOG_POLL_PAYLOADS` is a deprecated compatibility fallback used only when the new setting is unset.
 
 ## Service Bus retry envelope
 
