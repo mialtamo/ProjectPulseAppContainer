@@ -32,10 +32,7 @@ public sealed class PayloadTransformer(
                 continue;
             }
 
-            JsonElement value;
-            var sourceFound = isInitialRequest
-                ? TryGetInitialRequestValue(source, sourcePath, out value)
-                : TryGetValue(source, sourcePath, out value);
+            var sourceFound = TryGetValue(source, sourcePath, out var value);
 
             if (sourceFound && IsPresent(value))
             {
@@ -118,32 +115,6 @@ public sealed class PayloadTransformer(
         }
 
         target[segments[^1]] = value;
-    }
-
-    private static bool TryGetInitialRequestValue(JsonElement root, string path, out JsonElement value)
-    {
-        if (TryGetValue(root, path, out value) && IsPresent(value))
-        {
-            return true;
-        }
-
-        const string legacyPrefix = "METADATA.";
-        const string currentPrefix = "INITIAL_REQUEST_METADATA.";
-
-        if (path.StartsWith(legacyPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var compatiblePath = currentPrefix + path[legacyPrefix.Length..];
-            return TryGetValue(root, compatiblePath, out value);
-        }
-
-        if (path.StartsWith(currentPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var compatiblePath = legacyPrefix + path[currentPrefix.Length..];
-            return TryGetValue(root, compatiblePath, out value);
-        }
-
-        value = default;
-        return false;
     }
 
     private static bool TryGetValue(JsonElement root, string path, out JsonElement value)
