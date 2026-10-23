@@ -111,6 +111,64 @@ Container Apps ingress target port:
 8080
 ```
 
+## Entra authentication for request history
+
+The request-history UI and APIs require the Microsoft Entra app role `ProjectPulse.Admin`. Azure Container Apps authentication handles the Entra sign-in and supplies the authenticated principal to the application. Project Pulse checks that principal and role in the application; it does not query Microsoft Graph to authorize each request.
+
+### Entra app registration
+
+Create or use a **single-tenant workforce** app registration for Project Pulse. The Container Apps Authentication setup can create the registration and configure its callback URI, or you can select an existing registration. If configuring an existing registration, make sure its Web redirect URI includes:
+
+```text
+https://<container-app-fqdn>/.auth/login/aad/callback
+```
+
+In **App registrations → Project-Pulse → App roles**, add this role:
+
+| Setting | Value |
+| --- | --- |
+| Display name | `ProjectPulse.Admin` |
+| Allowed member types | Users/Groups |
+| Value | `ProjectPulse.Admin` |
+| Enabled | Yes |
+
+The role **Value** must be `ProjectPulse.Admin`; Project Pulse authorizes against that value in the role claim.
+
+The Container Apps Microsoft identity provider may request the delegated Microsoft Graph `User.Read` permission for basic sign-in profile information. The application does not use Microsoft Graph for its role check, so it does not need Graph group-read permissions.
+
+### Assign the admin group
+
+In **Enterprise applications → Project-Pulse → Users and groups**:
+
+1. Select **Add user/group**.
+2. Select the `PROJECT_PULSE_ADMINS` security group.
+3. Select the `ProjectPulse.Admin` role and save the assignment.
+
+Assign the app role to the group on the Enterprise Application (service principal), not an Entra directory administrator role. Users receive the app role through their group membership. After adding a user or changing a role assignment, have them sign out and sign in again so their session receives an updated role claim.
+
+### Configure Container Apps authentication
+
+In the Container App, open **Authentication → Add identity provider → Microsoft** and select the Project-Pulse registration.
+
+- Use the workforce/single-tenant configuration for your directory.
+- Confirm the issuer is for your tenant and the allowed token audience matches the app registration's Application (client) ID or configured Application ID URI. Keep these values consistent with the registration and provider configuration.
+- Allow requests from the application itself and allow identities to sign in; the `ProjectPulse.Admin` role is the authorization gate.
+- Set **Restrict access** to **Allow unauthenticated access**. This lets public health and landing routes continue to work while the application enforces authorization on the request-history routes below. Do not set the platform-wide option to **Require authentication** if those other routes need to remain public.
+- Keep the provider's generated client secret in the Container Apps authentication configuration and rotate it before it expires. Do not put it in source control or add it as an application environment variable.
+
+Container Apps authentication exposes authenticated identity information in the `X-MS-CLIENT-PRINCIPAL` request header. Project Pulse uses that header for the role check. Keep the Container App behind its configured Container Apps ingress/authentication path so callers cannot bypass that identity handling.
+
+### Routes and expected access behavior
+
+| Route | Behavior |
+| --- | --- |
+| `/requests.html` | Redirects unauthenticated browsers to the Entra sign-in page; requires the `ProjectPulse.Admin` role after sign-in. |
+| `/requests` | Returns `401` without an authenticated principal and `403` when the caller lacks `ProjectPulse.Admin`. |
+| `/requests/{id}` | Same authorization behavior as `/requests`. |
+| `/`, `/pulse`, `/pulse-health`, `/live` | Not restricted by the application role check in the current implementation. |
+
+For details, see Microsoft's documentation on [Container Apps authentication](https://learn.microsoft.com/azure/container-apps/authentication), [Microsoft Entra authentication for Container Apps](https://learn.microsoft.com/azure/container-apps/authentication-entra), [app roles](https://learn.microsoft.com/entra/identity-platform/howto-add-app-roles-in-apps), and [assigning users and groups to an enterprise application](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal).
+
 ## Docker
 
 The Dockerfile is at:
