@@ -380,7 +380,7 @@ public sealed class ClaimProcessor(
             if (_options.RtaStatusWritebackEnabled)
             {
                 var writebackStopwatch = Stopwatch.StartNew();
-                var writebackResult = await WriteBatchResultsAsync(responseJson, batchId, claims, correlationIds, cancellationToken);
+                var writebackResult = await WriteBatchResultsAsync(responseJson, statusCode, apimResponseReceivedAtUtc, batchId, claims, correlationIds, cancellationToken);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                 await TryRecordHistoryAsync(
@@ -730,6 +730,8 @@ public sealed class ClaimProcessor(
 
     private async Task<(bool Success, string Reason)> WriteBatchResultsAsync(
         string responseJson,
+        int apimStatusCode,
+        DateTimeOffset apimResponseReceivedAtUtc,
         string batchId,
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
@@ -746,8 +748,8 @@ public sealed class ClaimProcessor(
         JsonElement[] responseItems = root.ValueKind switch
         {
             JsonValueKind.Array => root.EnumerateArray().ToArray(),
-            JsonValueKind.Object when correlationIds.Count == 1 => new[] { root },
-            _ => Array.Empty<JsonElement>()
+            JsonValueKind.Object when correlationIds.Count == 1 => [root],
+            _ => []
         };
 
         if (responseItems.Length == 0)
@@ -773,30 +775,42 @@ public sealed class ClaimProcessor(
             StringComparer.OrdinalIgnoreCase);
         var expectedCorrelationIds = correlationIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var responseCorrelationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var matchedResponses = new List<(JsonElement Response, string CorrelationId)>(responseItems.Length);
 
         foreach (var item in responseItems)
         {
-            if (!TryGetResponseCorrelationId(item, out var correlationId))
+            if (TryGetResponseCorrelationId(item, out var responseCorrelationId))
+            {
+                if (!expectedCorrelationIds.Contains(responseCorrelationId))
+                {
+                    logger.LogError(
+                        "APIM response contained unexpected correlation ID {CorrelationId}. Writeback rejected.",
+                        responseCorrelationId);
+                    return (false, "UnexpectedCorrelationId");
+                }
+
+                if (!responseCorrelationIds.Add(responseCorrelationId))
+                {
+                    logger.LogError(
+                        "APIM response contained duplicate correlation ID {CorrelationId}. Writeback rejected.",
+                        responseCorrelationId);
+                    return (false, "DuplicateCorrelationId");
+                }
+
+                matchedResponses.Add((item, responseCorrelationId));
+                continue;
+            }
+
+            // DOCMP returns a single business response without RTA correlation fields.
+            // The one-to-one request flow provides the association in that case.
+            if (responseItems.Length != 1 || correlationIds.Count != 1)
             {
                 logger.LogWarning("APIM response item did not contain a correlation ID. Writeback rejected.");
                 return (false, "MissingCorrelationId");
             }
 
-            if (!expectedCorrelationIds.Contains(correlationId))
-            {
-                logger.LogError(
-                    "APIM response contained unexpected correlation ID {CorrelationId}. Writeback rejected.",
-                    correlationId);
-                return (false, "UnexpectedCorrelationId");
-            }
-
-            if (!responseCorrelationIds.Add(correlationId))
-            {
-                logger.LogError(
-                    "APIM response contained duplicate correlation ID {CorrelationId}. Writeback rejected.",
-                    correlationId);
-                return (false, "DuplicateCorrelationId");
-            }
+            matchedResponses.Add((item, correlationIds[0]));
+            responseCorrelationIds.Add(correlationIds[0]);
         }
 
         if (!expectedCorrelationIds.SetEquals(responseCorrelationIds))
@@ -805,11 +819,21 @@ public sealed class ClaimProcessor(
             return (false, "CorrelationIdSetMismatch");
         }
 
-        foreach (var item in responseItems)
+        foreach (var (item, correlationId) in matchedResponses)
         {
-            TryGetResponseCorrelationId(item, out var correlationId);
-            var statusPayload = BuildRtaStatusPayload(item, requestsByCorrelationId[correlationId]);
+            var originatingRequest = requestsByCorrelationId[correlationId];
+            var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
+            var isInitialRequest = string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase);
+            var statusPayload = isInitialRequest
+                ? BuildInitialRtaStatusPayload(
+                    item,
+                    originatingRequest,
+                    responseJson,
+                    apimStatusCode,
+                    apimResponseReceivedAtUtc)
+                : BuildLegacyRtaStatusPayload(item, originatingRequest);
             var statusPayloadJson = statusPayload.ToJsonString();
+
             await TryRecordHistoryAsync(
                 () => requestHistoryStore.RecordRtaStatusPayloadAsync(
                     batchId,
@@ -834,7 +858,81 @@ public sealed class ClaimProcessor(
         return (true, "WritebackCompleted");
     }
 
-    private static JsonObject BuildRtaStatusPayload(JsonElement apimResponse, JsonElement originatingRequest)
+    private static JsonObject BuildInitialRtaStatusPayload(
+        JsonElement apimResponse,
+        JsonElement originatingRequest,
+        string rawApimResponse,
+        int apimStatusCode,
+        DateTimeOffset apimResponseReceivedAtUtc)
+    {
+        var payload = new JsonObject();
+        CopyJsonProperty(originatingRequest, payload, "REQUEST_ID");
+        CopyJsonProperty(originatingRequest, payload, "CORRELATION_ID");
+        CopyJsonProperty(originatingRequest, payload, "IDEMPOTENCY_KEY");
+        CopyJsonProperty(originatingRequest, payload, "REQUEST_TYPE");
+
+        payload["STATUS"] = apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
+        payload["RESPONSE_CODE"] = apimStatusCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        payload["PROCESS_DT"] = apimResponseReceivedAtUtc
+            .ToUniversalTime()
+            .ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        payload["PAYLOAD_REQUEST"] = originatingRequest.GetRawText();
+        payload["PAYLOAD_RESPONSE"] = rawApimResponse;
+
+        var initialResponse = new JsonObject();
+        SetResponseValue(initialResponse, "PATIENT_ICN", apimResponse, "patientIcn");
+        SetResponseValue(initialResponse, "SPONSOR_ICN", apimResponse, "sponsorIcn");
+        SetResponseValue(initialResponse, "PROGRAM", apimResponse, "program");
+
+        var benefitPeriod = new JsonObject();
+        SetResponseValue(benefitPeriod, "START_DT", GetJsonProperty(apimResponse, "benefitPeriod"), "startDate");
+        SetResponseValue(benefitPeriod, "END_DT", GetJsonProperty(apimResponse, "benefitPeriod"), "endDate");
+        initialResponse["BENEFIT_PERIOD"] = benefitPeriod;
+
+        initialResponse["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(apimResponse, "individualDeductible");
+        initialResponse["FAMILY_DEDUCTIBLE"] = MapAccumulator(apimResponse, "familyDeductible");
+        initialResponse["OUT_OF_POCKET_MAX"] = MapAccumulator(apimResponse, "outOfPocketMax");
+
+        payload["INITIAL_REQUEST_RESPONSE"] = initialResponse;
+        payload["UPDATE_REQUEST_RESPONSE"] = null;
+        return payload;
+    }
+
+    private static JsonObject MapAccumulator(JsonElement source, string propertyName)
+    {
+        var accumulator = new JsonObject();
+        var sourceObject = GetJsonProperty(source, propertyName);
+        SetResponseValue(accumulator, "CURRENT", sourceObject, "current");
+        SetResponseValue(accumulator, "MAX", sourceObject, "max");
+        return accumulator;
+    }
+
+    private static void SetResponseValue(JsonObject target, string targetName, JsonNode? sourceObject, string sourceName)
+    {
+        if (sourceObject is JsonObject jsonObject &&
+            jsonObject.TryGetPropertyValue(sourceName, out var value) &&
+            value is not null)
+        {
+            target[targetName] = value.DeepClone();
+            return;
+        }
+
+        target[targetName] = null;
+    }
+
+    private static void SetResponseValue(JsonObject target, string targetName, JsonElement source, string sourceName)
+    {
+        if (TryGetPropertyIgnoreCase(source, sourceName, out var value) &&
+            value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+        {
+            target[targetName] = JsonNode.Parse(value.GetRawText());
+            return;
+        }
+
+        target[targetName] = null;
+    }
+
+    private static JsonObject BuildLegacyRtaStatusPayload(JsonElement apimResponse, JsonElement originatingRequest)
     {
         var payload = new JsonObject();
         CopyJsonProperty(originatingRequest, payload, "REQUEST_ID");
@@ -873,6 +971,34 @@ public sealed class ClaimProcessor(
         return payload;
     }
 
+    private static JsonNode? GetJsonProperty(JsonElement source, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(source, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return JsonNode.Parse(value.GetRawText());
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement source, string propertyName, out JsonElement value)
+    {
+        if (source.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in source.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
     private static void SetFromResponse(
         JsonObject target,
         JsonElement source,
@@ -897,17 +1023,6 @@ public sealed class ClaimProcessor(
         {
             target[propertyName] = value;
         }
-    }
-
-    private static JsonNode? GetJsonProperty(JsonElement source, string propertyName)
-    {
-        if (source.ValueKind != JsonValueKind.Object ||
-            !source.TryGetProperty(propertyName, out var value))
-        {
-            return null;
-        }
-
-        return JsonNode.Parse(value.GetRawText());
     }
 
     private static string? GetScalar(JsonElement source, string propertyName)
