@@ -42,6 +42,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         IReadOnlyList<string> uniqueIds,
         IReadOnlyList<string> rtaResponsePayloads,
         string requestPayload,
+        DateTimeOffset? pipelineStartedAtUtc,
+        long? rtaPullDurationMs,
+        long translationDurationMs,
         DateTimeOffset sentAtUtc,
         CancellationToken cancellationToken)
     {
@@ -69,6 +72,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 Status = "SentToApim",
                 Destination = "APIM",
                 SentToApimAtUtc = sentAtUtc,
+                PipelineStartedAtUtc = pipelineStartedAtUtc,
+                RtaPullDurationMs = rtaPullDurationMs,
+                TranslationDurationMs = translationDurationMs,
                 RequestPayloadBlob = requestBlob,
                 RtaResponsePayloadBlobs = rtaResponseBlobs,
                 PayloadLoggingEnabled = _options.ShouldLogPollPayloads()
@@ -88,7 +94,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         string? reason,
         bool sentToServiceBus,
         DateTimeOffset completedAtUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTimeOffset? apimResponseAtUtc = null,
+        long? apimRoundTripDurationMs = null)
     {
         await EnsureInitializedAsync(cancellationToken);
 
@@ -130,13 +138,65 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.HttpStatusCode = httpStatusCode;
             entity.BusinessResponseCode = businessResponseCode;
             entity.Reason = reason;
-            entity.ApimResponseAtUtc = completedAtUtc;
+            var responseAtUtc = apimResponseAtUtc ?? completedAtUtc;
+            entity.ApimResponseAtUtc = apimResponseAtUtc;
+            if (apimRoundTripDurationMs is { } roundTripDurationMs)
+            {
+                entity.ApimRoundTripDurationMs = Math.Max(0, roundTripDurationMs);
+                entity.SentToApimAtUtc = responseAtUtc.AddMilliseconds(-entity.ApimRoundTripDurationMs.Value);
+            }
+            else if (apimResponseAtUtc is not null && entity.SentToApimAtUtc is { } sentToApimAtUtc)
+            {
+                entity.ApimRoundTripDurationMs = Math.Max(0, (long)(responseAtUtc - sentToApimAtUtc).TotalMilliseconds);
+            }
+
+            if (entity.PipelineStartedAtUtc is { } pipelineStartedAtUtc)
+            {
+                entity.EndToEndDurationMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
+            }
+
             entity.ResponsePayloadBlob = responseBlob;
             entity.PayloadLoggingEnabled = _options.ShouldLogPollPayloads();
 
             if (sentToServiceBus)
             {
                 entity.BufferedToServiceBusAtUtc = completedAtUtc;
+            }
+
+            await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+        }
+    }
+
+    public async Task RecordWritebackTimingAsync(
+        string batchId,
+        IReadOnlyList<string> uniqueIds,
+        long writebackDurationMs,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+
+        for (var i = 0; i < uniqueIds.Count; i++)
+        {
+            var rowKey = BuildRowKey(batchId, i);
+            RequestHistoryEntity entity;
+
+            try
+            {
+                entity = (await _table.GetEntityAsync<RequestHistoryEntity>(
+                    PartitionKeyValue,
+                    rowKey,
+                    cancellationToken: cancellationToken)).Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                continue;
+            }
+
+            entity.RtaWritebackDurationMs = Math.Max(0, writebackDurationMs);
+            if (entity.PipelineStartedAtUtc is { } pipelineStartedAtUtc)
+            {
+                entity.EndToEndDurationMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
             }
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
@@ -329,7 +389,12 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             requestPayload,
             responsePayload,
             rtaResponsePayloads,
-            rtaStatusPayload);
+            rtaStatusPayload,
+            entity.RtaPullDurationMs,
+            entity.TranslationDurationMs,
+            entity.ApimRoundTripDurationMs,
+            entity.RtaWritebackDurationMs,
+            entity.EndToEndDurationMs);
 
     private async Task<string?> SaveRtaResponsePayloadsAsync(
         string batchId,
@@ -462,6 +527,12 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public DateTimeOffset? SentToApimAtUtc { get; set; }
         public DateTimeOffset? ApimResponseAtUtc { get; set; }
         public DateTimeOffset? BufferedToServiceBusAtUtc { get; set; }
+        public DateTimeOffset? PipelineStartedAtUtc { get; set; }
+        public long? RtaPullDurationMs { get; set; }
+        public long? TranslationDurationMs { get; set; }
+        public long? ApimRoundTripDurationMs { get; set; }
+        public long? RtaWritebackDurationMs { get; set; }
+        public long? EndToEndDurationMs { get; set; }
         public bool PayloadLoggingEnabled { get; set; }
         public string? RequestPayloadBlob { get; set; }
         public string? ResponsePayloadBlob { get; set; }

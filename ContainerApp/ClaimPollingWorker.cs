@@ -148,7 +148,12 @@ public sealed class ClaimPollingWorker(
         {
             results = outageDecision.Action == ApimOutageAction.BufferToServiceBus
                 ? await claimProcessor.BufferBatchAsync(claims, outageDecision.Reason, pollResult.RtaResponsePayloads, cancellationToken)
-                : await claimProcessor.ProcessBatchAsync(claims, pollResult.RtaResponsePayloads, cancellationToken);
+                : await claimProcessor.ProcessBatchAsync(
+                    claims,
+                    pollResult.RtaResponsePayloads,
+                    cancellationToken,
+                    pollResult.PollStartedAtUtc,
+                    pollResult.RtaPullDurationMs);
         }
         catch (Exception ex)
         {

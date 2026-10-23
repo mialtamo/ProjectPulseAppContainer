@@ -8,7 +8,9 @@ public interface IClaimProcessor
     Task<IReadOnlyList<ClaimProcessingResult>> ProcessBatchAsync(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> rtaResponsePayloads,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        DateTimeOffset? pollStartedAtUtc = null,
+        long? rtaPullDurationMs = null);
 
     Task<IReadOnlyList<ClaimProcessingResult>> BufferBatchAsync(
         IReadOnlyList<JsonElement> claims,

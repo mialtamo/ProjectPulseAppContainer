@@ -81,12 +81,19 @@ public sealed class ClaimProcessor(
     public async Task<IReadOnlyList<ClaimProcessingResult>> ProcessBatchAsync(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> rtaResponsePayloads,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTimeOffset? pollStartedAtUtc = null,
+        long? rtaPullDurationMs = null)
     {
         var results = new List<ClaimProcessingResult>(claims.Count);
         foreach (var claim in claims)
         {
-            var result = await ProcessSingleClaimAsync([claim], rtaResponsePayloads, cancellationToken);
+            var result = await ProcessSingleClaimAsync(
+                [claim],
+                rtaResponsePayloads,
+                cancellationToken,
+                pollStartedAtUtc,
+                rtaPullDurationMs);
             results.AddRange(result);
         }
 
@@ -96,15 +103,20 @@ public sealed class ClaimProcessor(
     private async Task<IReadOnlyList<ClaimProcessingResult>> ProcessSingleClaimAsync(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> rtaResponsePayloads,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTimeOffset? pollStartedAtUtc,
+        long? rtaPullDurationMs)
     {
         if (claims.Count == 0)
         {
             return [];
         }
 
+        var pipelineStartedAtUtc = pollStartedAtUtc ?? DateTimeOffset.UtcNow;
         var correlationIds = claims.Select(GetCorrelationId).ToArray();
+        var translationStopwatch = Stopwatch.StartNew();
         var transformedClaims = TransformClaims(claims);
+        translationStopwatch.Stop();
         var batchId = Guid.NewGuid().ToString("N");
 
         using var operation = telemetry.StartOperation<Microsoft.ApplicationInsights.DataContracts.RequestTelemetry>("ClaimBatchAdjudication");
@@ -151,6 +163,9 @@ public sealed class ClaimProcessor(
                 correlationIds,
                 rtaResponsePayloads,
                 outboundPayloadJson,
+                pipelineStartedAtUtc,
+                rtaPullDurationMs,
+                translationStopwatch.ElapsedMilliseconds,
                 DateTimeOffset.UtcNow,
                 cancellationToken),
             "APIM request");
@@ -179,10 +194,14 @@ public sealed class ClaimProcessor(
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ApimRequestTimeoutSeconds));
 
+        var apimRoundTripStopwatch = new Stopwatch();
         try
         {
+            apimRoundTripStopwatch.Start();
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, timeoutCts.Token);
             var responseJson = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+            apimRoundTripStopwatch.Stop();
+            var apimResponseReceivedAtUtc = DateTimeOffset.UtcNow;
             var statusCode = (int)response.StatusCode;
 
             if (!ValidateApimResponseToken(response, batchId))
@@ -198,7 +217,11 @@ public sealed class ClaimProcessor(
                         "InvalidApimResponseToken",
                         false,
                         DateTimeOffset.UtcNow,
-                        cancellationToken),
+                        cancellationToken,
+
+                        apimResponseReceivedAtUtc,
+
+                        apimRoundTripStopwatch.ElapsedMilliseconds),
                     "APIM response-token rejection");
 
                 telemetry.TrackEvent("ApimResponseValidationFailed", new Dictionary<string, string>
@@ -265,7 +288,11 @@ public sealed class ClaimProcessor(
                             $"Http{statusCode}",
                             true,
                             DateTimeOffset.UtcNow,
-                            cancellationToken),
+                            cancellationToken,
+
+                            apimResponseReceivedAtUtc,
+
+                            apimRoundTripStopwatch.ElapsedMilliseconds),
                         "retryable HTTP response");
 
                     CompleteTelemetry(operation.Telemetry, false, $"HTTP {statusCode}", stopwatch.ElapsedMilliseconds);
@@ -289,7 +316,11 @@ public sealed class ClaimProcessor(
                         $"Http{statusCode}",
                         false,
                         DateTimeOffset.UtcNow,
-                        cancellationToken),
+                        cancellationToken,
+
+                        apimResponseReceivedAtUtc,
+
+                        apimRoundTripStopwatch.ElapsedMilliseconds),
                     "non-retry HTTP response");
 
                 CompleteTelemetry(operation.Telemetry, false, $"HTTP {statusCode}", stopwatch.ElapsedMilliseconds);
@@ -335,7 +366,11 @@ public sealed class ClaimProcessor(
                         $"JsonCode:{businessCode}",
                         true,
                         DateTimeOffset.UtcNow,
-                        cancellationToken),
+                        cancellationToken,
+
+                        apimResponseReceivedAtUtc,
+
+                        apimRoundTripStopwatch.ElapsedMilliseconds),
                     "JSON retry response");
 
                 CompleteTelemetry(operation.Telemetry, false, $"JSON {businessCode}", stopwatch.ElapsedMilliseconds);
@@ -344,7 +379,19 @@ public sealed class ClaimProcessor(
 
             if (_options.RtaStatusWritebackEnabled)
             {
+                var writebackStopwatch = Stopwatch.StartNew();
                 var writebackResult = await WriteBatchResultsAsync(responseJson, batchId, claims, correlationIds, cancellationToken);
+                writebackStopwatch.Stop();
+                var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
+                await TryRecordHistoryAsync(
+                    () => requestHistoryStore.RecordWritebackTimingAsync(
+                        batchId,
+                        correlationIds,
+                        writebackStopwatch.ElapsedMilliseconds,
+                        writebackCompletedAtUtc,
+                        cancellationToken),
+                    "RTA writeback timing");
+
                 if (!writebackResult.Success)
                 {
                     await TryRecordHistoryAsync(
@@ -358,7 +405,11 @@ public sealed class ClaimProcessor(
                             writebackResult.Reason,
                             false,
                             DateTimeOffset.UtcNow,
-                            cancellationToken),
+                            cancellationToken,
+
+                            apimResponseReceivedAtUtc,
+
+                            apimRoundTripStopwatch.ElapsedMilliseconds),
                         "writeback failure");
 
                     CompleteTelemetry(operation.Telemetry, false, writebackResult.Reason, stopwatch.ElapsedMilliseconds);
@@ -399,7 +450,11 @@ public sealed class ClaimProcessor(
                         "JsonAlertCode",
                         false,
                         DateTimeOffset.UtcNow,
-                        cancellationToken),
+                        cancellationToken,
+
+                        apimResponseReceivedAtUtc,
+
+                        apimRoundTripStopwatch.ElapsedMilliseconds),
                     "JSON alert response");
 
                 CompleteTelemetry(operation.Telemetry, true, $"JSON alert {businessCode}", stopwatch.ElapsedMilliseconds);
@@ -417,7 +472,11 @@ public sealed class ClaimProcessor(
                     "BatchCompleted",
                     false,
                     DateTimeOffset.UtcNow,
-                    cancellationToken),
+                    cancellationToken,
+
+                    apimResponseReceivedAtUtc,
+
+                    apimRoundTripStopwatch.ElapsedMilliseconds),
                 "successful APIM response");
 
             CompleteTelemetry(operation.Telemetry, true, "Completed", stopwatch.ElapsedMilliseconds);
@@ -449,7 +508,9 @@ public sealed class ClaimProcessor(
                     "ApimTimeout",
                     true,
                     DateTimeOffset.UtcNow,
-                    cancellationToken),
+                    cancellationToken,
+                    null,
+                    apimRoundTripStopwatch.ElapsedMilliseconds),
                 "APIM timeout");
 
             CompleteTelemetry(operation.Telemetry, false, "Timeout", stopwatch.ElapsedMilliseconds);
@@ -482,7 +543,9 @@ public sealed class ClaimProcessor(
                     "NetworkFailure",
                     true,
                     DateTimeOffset.UtcNow,
-                    cancellationToken),
+                    cancellationToken,
+                    null,
+                    apimRoundTripStopwatch.ElapsedMilliseconds),
                 "APIM network failure");
 
             logger.LogWarning(ex, "Network failure while processing APIM batch {BatchId}", batchId);

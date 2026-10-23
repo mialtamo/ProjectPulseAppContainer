@@ -330,6 +330,7 @@ td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:260px
 .expand-row{display:none;background:#07101a}.expand-row.open{display:table-row}
 .expand-cell{padding:16px}
 .detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
+.timing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}
 .card{border:1px solid var(--border);padding:10px;background:#08111a;border-radius:7px}
 .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
 .payload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -392,6 +393,11 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
 <script>
 let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; const detailCache=new Map();
 
+function durationLabel(value){
+  if(value===null||value===undefined)return 'N/A';
+  const ms=Math.max(0,Number(value));
+  return ms>=1000?(ms/1000).toFixed(2)+' s':Math.round(ms)+' ms';
+}
 function groupByBatch(source){
   const groups=new Map();
   for(const item of source){
@@ -558,6 +564,13 @@ async function renderDetail(row,recordId){
       '<div class="card"><div class="label">Sent to APIM</div>'+(x.SentToApimAtUtc?new Date(x.SentToApimAtUtc).toLocaleString():'N/A')+'</div>'+
       '<div class="card"><div class="label">APIM Response</div>'+(x.ApimResponseAtUtc?new Date(x.ApimResponseAtUtc).toLocaleString():'N/A')+'</div>'+
       '<div class="card"><div class="label">Service Bus</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
+    '</div>'+
+    '<div class="timing-grid">'+
+      '<div class="card"><div class="label">RTA Pull</div>'+durationLabel(x.RtaPullDurationMs)+'</div>'+
+      '<div class="card"><div class="label">Translation</div>'+durationLabel(x.TranslationDurationMs)+'</div>'+
+      '<div class="card"><div class="label">DOCMP Round Trip</div>'+durationLabel(x.ApimRoundTripDurationMs)+'</div>'+
+      '<div class="card"><div class="label">RTA Writeback</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
+      '<div class="card"><div class="label">Total</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
     '</div>'+
     (x.PayloadLoggingEnabled
       ? '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+payloadPanel('JSON sent to APIM',x.ApimRequestPayload)+payloadPanel('JSON received from APIM',x.ApimResponsePayload)+'</div>'

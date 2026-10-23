@@ -9,6 +9,9 @@ public interface IRequestHistoryStore
         IReadOnlyList<string> uniqueIds,
         IReadOnlyList<string> rtaResponsePayloads,
         string requestPayload,
+        DateTimeOffset? pipelineStartedAtUtc,
+        long? rtaPullDurationMs,
+        long translationDurationMs,
         DateTimeOffset sentAtUtc,
         CancellationToken cancellationToken);
 
@@ -21,6 +24,15 @@ public interface IRequestHistoryStore
         string? responsePayload,
         string? reason,
         bool sentToServiceBus,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken,
+        DateTimeOffset? apimResponseAtUtc = null,
+        long? apimRoundTripDurationMs = null);
+
+    Task RecordWritebackTimingAsync(
+        string batchId,
+        IReadOnlyList<string> uniqueIds,
+        long writebackDurationMs,
         DateTimeOffset completedAtUtc,
         CancellationToken cancellationToken);
 

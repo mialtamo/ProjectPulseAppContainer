@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using ProjectPulse.Processor.Models;
@@ -20,9 +21,18 @@ public sealed class AppApiClient(
 
     public async Task<AppApiPollResult> GetPendingClaimsAsync(CancellationToken cancellationToken)
     {
-        return _options.IsMockApiMode()
+        var pollStartedAtUtc = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        var result = _options.IsMockApiMode()
             ? await GetMockPendingClaimsAsync(cancellationToken)
             : await GetRtaQueuedRequestsAsync(cancellationToken);
+        stopwatch.Stop();
+
+        return result with
+        {
+            PollStartedAtUtc = pollStartedAtUtc,
+            RtaPullDurationMs = stopwatch.ElapsedMilliseconds
+        };
     }
 
     private async Task<AppApiPollResult> GetMockPendingClaimsAsync(CancellationToken cancellationToken)

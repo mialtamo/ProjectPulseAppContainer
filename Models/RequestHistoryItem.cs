@@ -18,5 +18,10 @@ public sealed record RequestHistoryItem(
     string? ApimRequestPayload,
     string? ApimResponsePayload,
     IReadOnlyList<string>? RtaResponsePayloads,
-    string? RtaStatusPayload);
+    string? RtaStatusPayload,
+    long? RtaPullDurationMs = null,
+    long? TranslationDurationMs = null,
+    long? ApimRoundTripDurationMs = null,
+    long? RtaWritebackDurationMs = null,
+    long? EndToEndDurationMs = null);
 
