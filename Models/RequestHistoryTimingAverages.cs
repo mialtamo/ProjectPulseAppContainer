@@ -10,4 +10,5 @@ public sealed record RequestHistoryTimingAverages(
     RequestHistoryTimingAverage ApimRoundTrip,
     RequestHistoryTimingAverage RtaWriteback,
     RequestHistoryTimingAverage EndToEnd,
+    long RtaStatusPutFailureBatchCount,
     DateTimeOffset CalculatedAtUtc);

@@ -93,6 +93,10 @@ Project Pulse
 - Application Insights
 - HTTP port 8080
 
+## Request timing diagnostics
+
+The request-history page reports per-batch averages across stored history. When RTA writeback is enabled, its duration includes status PUT calls, retries, and configured backoff delays. Its summary also counts batches recorded with an `RtaStatusWritebackFailed` reason; that count identifies failed status PUT outcomes, not proof that every such batch retried. Project Pulse logs include correlation IDs, attempt counts, and the final observed HTTP status or exception category for exhausted writebacks. Match a batch's correlation ID in those logs to investigate the specific failure. APIM round-trip duration combines APIM, DOCMP/backend, and network time and cannot isolate those components.
+
 ## HTTP endpoints
 
 ```text

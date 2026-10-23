@@ -227,12 +227,15 @@ public sealed class AppApiClient(
         }
 
         var client = httpClientFactory.CreateClient("AppApi");
+        var maxAttempts = Math.Max(1, _options.ResultWriteMaxAttempts);
+        int? lastHttpStatusCode = null;
+        string? lastFailureKind = null;
         var path = _options.RtaStatusPathTemplate.Replace(
             "{correlationId}",
             Uri.EscapeDataString(correlationId),
             StringComparison.OrdinalIgnoreCase);
 
-        for (var attempt = 1; attempt <= Math.Max(1, _options.ResultWriteMaxAttempts); attempt++)
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
             {
@@ -245,6 +248,8 @@ public sealed class AppApiClient(
                 await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
 
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                lastHttpStatusCode = (int)response.StatusCode;
+                lastFailureKind = "HttpStatusCode";
                 if (response.IsSuccessStatusCode)
                 {
                     return true;
@@ -254,7 +259,7 @@ public sealed class AppApiClient(
                     "RTA status writeback failed for {CorrelationId}. Attempt {Attempt}/{MaxAttempts}, status {StatusCode}",
                     correlationId,
                     attempt,
-                    _options.ResultWriteMaxAttempts,
+                    maxAttempts,
                     (int)response.StatusCode);
 
                 if (!IsTransient(response.StatusCode))
@@ -264,19 +269,27 @@ public sealed class AppApiClient(
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
+                lastFailureKind = ex is TaskCanceledException ? "Timeout" : "NetworkException";
                 logger.LogWarning(
                     ex,
                     "RTA status writeback exception for {CorrelationId}. Attempt {Attempt}/{MaxAttempts}",
                     correlationId,
                     attempt,
-                    _options.ResultWriteMaxAttempts);
+                    maxAttempts);
             }
 
-            if (attempt < _options.ResultWriteMaxAttempts)
+            if (attempt < maxAttempts)
             {
                 await Task.Delay(_options.ResultWriteRetryDelayMilliseconds * attempt, cancellationToken);
             }
         }
+
+        logger.LogError(
+            "RTA status writeback exhausted its configured attempts for correlation ID {CorrelationId}. Attempts={Attempts}, LastHttpStatusCode={LastHttpStatusCode}, LastFailureKind={LastFailureKind}",
+            correlationId,
+            maxAttempts,
+            lastHttpStatusCode,
+            lastFailureKind ?? "Unknown");
 
         telemetry.TrackEvent("RtaStatusWritebackFailed", new Dictionary<string, string>
         {

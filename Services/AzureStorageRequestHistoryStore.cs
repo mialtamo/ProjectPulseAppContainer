@@ -423,6 +423,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 timings.ApimRoundTripMs ??= entity.ApimRoundTripDurationMs;
                 timings.RtaWritebackMs ??= entity.RtaWritebackDurationMs;
                 timings.EndToEndMs ??= entity.EndToEndDurationMs;
+                timings.RtaStatusPutFailed |=
+                    string.Equals(entity.Status, "WritebackFailed", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(entity.Reason, "RtaStatusWritebackFailed", StringComparison.OrdinalIgnoreCase);
             }
 
             var calculated = new RequestHistoryTimingAverages(
@@ -431,6 +434,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 Average(batches.Values.Select(x => x.ApimRoundTripMs)),
                 Average(batches.Values.Select(x => x.RtaWritebackMs)),
                 Average(batches.Values.Select(x => x.EndToEndMs)),
+                batches.Values.LongCount(x => x.RtaStatusPutFailed),
                 DateTimeOffset.UtcNow);
             _cachedTimingAverages = calculated;
             return calculated;
@@ -505,6 +509,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public long? ApimRoundTripMs { get; set; }
         public long? RtaWritebackMs { get; set; }
         public long? EndToEndMs { get; set; }
+        public bool RtaStatusPutFailed { get; set; }
     }
 
     private RequestHistoryItem Map(

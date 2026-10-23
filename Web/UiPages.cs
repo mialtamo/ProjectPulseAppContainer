@@ -370,6 +370,7 @@ button{cursor:pointer}.muted{color:var(--muted)}
 .timing-average-label{font-size:11px;color:var(--muted);margin-bottom:6px}
 .timing-average-value{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
 .timing-average-card.green .timing-average-value{color:var(--green)}
+.timing-diagnostic-note{margin-top:10px;padding:9px 11px;border:1px solid #344456;border-radius:8px;color:#b4c3d5;font-size:12px;line-height:1.45}
 .timing-average-card.yellow .timing-average-value{color:var(--amber)}
 .timing-average-card.red .timing-average-value{color:var(--red)}
 .timing-average-count,.timing-legend{font-size:10px;color:var(--muted);margin-top:5px}
@@ -457,13 +458,15 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
               <dt>RTA writeback</dt><dd>Time to translate the response and send the status/result PUT to RTA. RTA processing, network latency, and retries can add time.</dd>
               <dt>End-to-end</dt><dd>Elapsed time from the start of the RTA poll to the recorded outcome. It spans multiple steps and waiting between them, so it is not simply the sum of the other averages.</dd>
             </dl>
-            <p>High averages point to where to investigate, but don’t identify the root cause. Averages can also be pulled up by a few slow batches. Open individual batches and compare their timings with the Project Pulse, RTA, and APIM/DOCMP logs.</p>
+            <p>When RTA writeback is enabled, its timer includes the PUT calls, retries, and configured retry delays. The summary below counts batches recorded status PUT failures; that count does not prove retries occurred in every case.</p>
+            <p>Use the batch's correlation ID to find the writeback warning/error logs, which record the observed HTTP status or exception category and attempt count. Averages alone cannot identify the cause, and APIM round-trip time still combines APIM, DOCMP/backend, and network time.</p>
           </div>
         </details>
       </div>
       <span id="timingUpdated" class="muted">Calculating…</span>
     </div>
     <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
+    <div id="timingDiagnostics" class="timing-diagnostic-note">Loading diagnostic summary…</div>
     <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
   </section>
   <div class="table-wrap">
@@ -616,7 +619,7 @@ function writebackReasonText(reason){
     UnexpectedCorrelationId:'APIM returned a correlation ID that was not part of the submitted batch.',
     DuplicateCorrelationId:'APIM returned the same correlation ID more than once in the batch.',
     CorrelationIdSetMismatch:'The returned correlation-ID set did not exactly match the submitted batch.',
-    RtaStatusWritebackFailed:'The RTA status PUT failed after APIM response validation succeeded.',
+    RtaStatusWritebackFailed:'The RTA status PUT failed after APIM response validation succeeded. Project Pulse logs record each attempt and its observed HTTP status or exception, keyed by correlation ID.',
     ResultWritebackFailed:'RTA result writeback failed. This older record did not capture a more specific cause.'
   };
   return messages[reason]||('Writeback failed: '+(reason||'Unknown reason'));
@@ -704,9 +707,14 @@ async function loadAverages(){
         '<div class="timing-average-count">'+count.toLocaleString()+' batch'+(count===1?'':'es')+'</div>'+
       '</div>';
     }).join('');
+    const failedCount=Number(averages.RtaStatusPutFailureBatchCount||0);
+    document.getElementById('timingDiagnostics').textContent=failedCount
+      ? failedCount.toLocaleString()+' batch'+(failedCount===1?'':'es')+' in stored history ended with an RTA status PUT failure. The writeback average can include retries and backoff; correlate the batch ID in Project Pulse logs to see observed statuses or exceptions.'
+      : 'No batches in stored history are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
     updated.textContent='Calculated '+new Date(averages.CalculatedAtUtc).toLocaleTimeString();
   }catch(error){
     container.innerHTML='<span class="muted">Could not load averages: '+esc(error.message)+'</span>';
+    document.getElementById('timingDiagnostics').textContent='Diagnostic summary unavailable.';
     updated.textContent='Unavailable';
   }finally{averagesLoading=false}
 }
