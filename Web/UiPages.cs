@@ -350,8 +350,20 @@ input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text
 button{cursor:pointer}.muted{color:var(--muted)}
  .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
 .timing-summary{margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
-.timing-summary-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
+.timing-summary-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.timing-summary-title{display:flex;align-items:center;gap:8px;min-width:0;position:relative}
 .timing-summary-heading h2{font-size:14px;margin:0;color:#c7d9f2}
+.timing-help{position:relative;flex:none}
+.timing-help summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #314154;border-radius:50%;color:#9db1c7;cursor:pointer}
+.timing-help summary::-webkit-details-marker{display:none}
+.timing-help summary:hover,.timing-help summary:focus-visible,.timing-help[open] summary{border-color:var(--cyan);color:var(--cyan);outline:none}
+.timing-help summary svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.timing-help-popover{position:absolute;left:0;top:calc(100% + 9px);z-index:30;width:min(480px,calc(100vw - 56px));max-height:min(72vh,560px);overflow:auto;padding:14px 16px;border:1px solid #314154;border-radius:10px;background:#0b111a;box-shadow:0 18px 44px rgba(0,0,0,.5);color:var(--text);font-size:12px;line-height:1.5}
+.timing-help-popover h3{font-size:13px;margin:0 0 7px;color:#d9e7fa}
+.timing-help-popover p{margin:7px 0}
+.timing-help-popover dl{display:grid;grid-template-columns:110px 1fr;gap:7px 10px;margin:10px 0}
+.timing-help-popover dt{font-weight:700;color:#c7d9f2}
+.timing-help-popover dd{margin:0;color:#b4c3d5}
 .timing-averages{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px}
 .timing-average-card{border:1px solid var(--border);border-radius:8px;padding:10px;background:#08111a}
 .timing-average-card.green{border-color:#17613b}.timing-average-card.yellow{border-color:#806325}.timing-average-card.red{border-color:#743535}
@@ -428,7 +440,29 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
   </div>
   <div id="summary" class="summary"></div>
   <section class="timing-summary" aria-label="All-history average request timings">
-    <div class="timing-summary-heading"><h2>Average timings across all history</h2><span id="timingUpdated" class="muted">Calculating…</span></div>
+    <div class="timing-summary-heading">
+      <div class="timing-summary-title">
+        <h2>Average timings across all history</h2>
+        <details class="timing-help">
+          <summary aria-label="Explain the average timing metrics" title="What do these averages mean?">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><circle cx="12" cy="8" r=".7" fill="currentColor" stroke="none"></circle></svg>
+          </summary>
+          <div class="timing-help-popover" role="region" aria-label="Average timing explanations">
+            <h3>What the timing cards mean</h3>
+            <p>Each card averages batches across all stored history, not only the 100 requests currently displayed. Its count is the number of batches with a recorded value for that timing.</p>
+            <dl>
+              <dt>RTA pull</dt><dd>Time for Project Pulse to fetch pending requests from RTA and read/parse the response. RTA processing, network or TLS latency, and larger pages can add time.</dd>
+              <dt>Translation</dt><dd>Time to map the RTA item into the outbound DOCMP JSON. App CPU pressure or larger, more complex payloads can increase it.</dd>
+              <dt>APIM round trip</dt><dd>Time to send the request through APIM and read the response body. It includes APIM, DOCMP/backend, and network time, so this metric does not separate those parts.</dd>
+              <dt>RTA writeback</dt><dd>Time to translate the response and send the status/result PUT to RTA. RTA processing, network latency, and retries can add time.</dd>
+              <dt>End-to-end</dt><dd>Elapsed time from the start of the RTA poll to the recorded outcome. It spans multiple steps and waiting between them, so it is not simply the sum of the other averages.</dd>
+            </dl>
+            <p>High averages point to where to investigate, but don’t identify the root cause. Averages can also be pulled up by a few slow batches. Open individual batches and compare their timings with the Project Pulse, RTA, and APIM/DOCMP logs.</p>
+          </div>
+        </details>
+      </div>
+      <span id="timingUpdated" class="muted">Calculating…</span>
+    </div>
     <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
     <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
   </section>
