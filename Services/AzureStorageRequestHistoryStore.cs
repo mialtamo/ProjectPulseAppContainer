@@ -24,6 +24,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private readonly SemaphoreSlim _recentIndexInitializeLock = new(1, 1);
     private readonly SemaphoreSlim _timingAveragesLock = new(1, 1);
     private RequestHistoryTimingAverages? _cachedTimingAverages;
+    private string? _cachedTimingAveragesRangeKey;
     private bool _initialized;
     private bool _recentIndexInitialized;
 
@@ -383,24 +384,25 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     }
 
     public async Task<RequestHistoryTimingAverages> GetTimingAveragesAsync(
+        DateTimeOffset? fromUtc,
+        DateTimeOffset? toUtc,
+        string rangeKey,
         CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
         await EnsureRecentIndexReadyAsync(cancellationToken);
 
-        if (_cachedTimingAverages is { } cached
-            && DateTimeOffset.UtcNow - cached.CalculatedAtUtc < TimeSpan.FromMinutes(1))
+        if (IsTimingAverageCacheValid(rangeKey))
         {
-            return cached;
+            return _cachedTimingAverages!;
         }
 
         await _timingAveragesLock.WaitAsync(cancellationToken);
         try
         {
-            if (_cachedTimingAverages is { } cachedAfterLock
-                && DateTimeOffset.UtcNow - cachedAfterLock.CalculatedAtUtc < TimeSpan.FromMinutes(1))
+            if (IsTimingAverageCacheValid(rangeKey))
             {
-                return cachedAfterLock;
+                return _cachedTimingAverages!;
             }
 
             var batches = new Dictionary<string, BatchTimingValues>(StringComparer.Ordinal);
@@ -409,6 +411,17 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 maxPerPage: 1000,
                 cancellationToken: cancellationToken))
             {
+                var createdAtUtc = entity.CreatedAtUtc.ToUniversalTime();
+                if (fromUtc is { } start && createdAtUtc < start.ToUniversalTime())
+                {
+                    continue;
+                }
+
+                if (toUtc is { } end && createdAtUtc > end.ToUniversalTime())
+                {
+                    continue;
+                }
+
                 var batchId = string.IsNullOrWhiteSpace(entity.BatchId)
                     ? entity.PrimaryRecordId ?? entity.RowKey
                     : entity.BatchId;
@@ -437,6 +450,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 batches.Values.LongCount(x => x.RtaStatusPutFailed),
                 DateTimeOffset.UtcNow);
             _cachedTimingAverages = calculated;
+            _cachedTimingAveragesRangeKey = rangeKey;
             return calculated;
         }
         finally
@@ -444,6 +458,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             _timingAveragesLock.Release();
         }
     }
+
+    private bool IsTimingAverageCacheValid(string rangeKey) =>
+        _cachedTimingAverages is { } cached &&
+        string.Equals(_cachedTimingAveragesRangeKey, rangeKey, StringComparison.Ordinal) &&
+        DateTimeOffset.UtcNow - cached.CalculatedAtUtc < TimeSpan.FromMinutes(1);
 
     private static RequestHistoryTimingAverage Average(IEnumerable<long?> values)
     {
