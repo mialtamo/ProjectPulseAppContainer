@@ -22,6 +22,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private readonly ILogger<AzureStorageRequestHistoryStore> _logger;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private readonly SemaphoreSlim _recentIndexInitializeLock = new(1, 1);
+    private readonly SemaphoreSlim _timingAveragesLock = new(1, 1);
+    private RequestHistoryTimingAverages? _cachedTimingAverages;
     private bool _initialized;
     private bool _recentIndexInitialized;
 
@@ -380,6 +382,85 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         return new RequestHistoryPage(items, nextPageToken);
     }
 
+    public async Task<RequestHistoryTimingAverages> GetTimingAveragesAsync(
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        await EnsureRecentIndexReadyAsync(cancellationToken);
+
+        if (_cachedTimingAverages is { } cached
+            && DateTimeOffset.UtcNow - cached.CalculatedAtUtc < TimeSpan.FromMinutes(1))
+        {
+            return cached;
+        }
+
+        await _timingAveragesLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_cachedTimingAverages is { } cachedAfterLock
+                && DateTimeOffset.UtcNow - cachedAfterLock.CalculatedAtUtc < TimeSpan.FromMinutes(1))
+            {
+                return cachedAfterLock;
+            }
+
+            var batches = new Dictionary<string, BatchTimingValues>(StringComparer.Ordinal);
+            await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+                $"PartitionKey eq '{RecentPartitionKeyValue}'",
+                maxPerPage: 1000,
+                cancellationToken: cancellationToken))
+            {
+                var batchId = string.IsNullOrWhiteSpace(entity.BatchId)
+                    ? entity.PrimaryRecordId ?? entity.RowKey
+                    : entity.BatchId;
+                if (!batches.TryGetValue(batchId, out var timings))
+                {
+                    timings = new BatchTimingValues();
+                    batches.Add(batchId, timings);
+                }
+
+                timings.RtaPullMs ??= entity.RtaPullDurationMs;
+                timings.TranslationMs ??= entity.TranslationDurationMs;
+                timings.ApimRoundTripMs ??= entity.ApimRoundTripDurationMs;
+                timings.RtaWritebackMs ??= entity.RtaWritebackDurationMs;
+                timings.EndToEndMs ??= entity.EndToEndDurationMs;
+            }
+
+            var calculated = new RequestHistoryTimingAverages(
+                Average(batches.Values.Select(x => x.RtaPullMs)),
+                Average(batches.Values.Select(x => x.TranslationMs)),
+                Average(batches.Values.Select(x => x.ApimRoundTripMs)),
+                Average(batches.Values.Select(x => x.RtaWritebackMs)),
+                Average(batches.Values.Select(x => x.EndToEndMs)),
+                DateTimeOffset.UtcNow);
+            _cachedTimingAverages = calculated;
+            return calculated;
+        }
+        finally
+        {
+            _timingAveragesLock.Release();
+        }
+    }
+
+    private static RequestHistoryTimingAverage Average(IEnumerable<long?> values)
+    {
+        var sum = 0d;
+        long sampleCount = 0;
+        foreach (var value in values)
+        {
+            if (value is not { } milliseconds)
+            {
+                continue;
+            }
+
+            sum += milliseconds;
+            sampleCount++;
+        }
+
+        return new RequestHistoryTimingAverage(
+            sampleCount == 0 ? null : sum / sampleCount,
+            sampleCount);
+    }
+
     public async Task<RequestHistoryItem?> GetAsync(
         string recordId,
         CancellationToken cancellationToken)
@@ -415,6 +496,15 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
 
         return Map(entity, requestPayload, responsePayload, rtaResponsePayloads, rtaStatusPayload);
+    }
+
+    private sealed class BatchTimingValues
+    {
+        public long? RtaPullMs { get; set; }
+        public long? TranslationMs { get; set; }
+        public long? ApimRoundTripMs { get; set; }
+        public long? RtaWritebackMs { get; set; }
+        public long? EndToEndMs { get; set; }
     }
 
     private RequestHistoryItem Map(

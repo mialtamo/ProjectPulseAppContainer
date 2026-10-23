@@ -55,6 +55,8 @@ public interface IRequestHistoryStore
         string? continuationToken,
         CancellationToken cancellationToken);
 
+    Task<RequestHistoryTimingAverages> GetTimingAveragesAsync(CancellationToken cancellationToken);
+
     Task<RequestHistoryItem?> GetAsync(
         string recordId,
         CancellationToken cancellationToken);

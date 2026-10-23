@@ -100,6 +100,7 @@ Project Pulse
 /pulse
 /pulse-health
 /requests
+/requests/averages
 /requests/{id}
 /requests.html
 /live
@@ -164,8 +165,13 @@ Container Apps authentication exposes authenticated identity information in the 
 | --- | --- |
 | `/requests.html` | Redirects unauthenticated browsers to the Entra sign-in page; requires the `ProjectPulse.Admin` role after sign-in. |
 | `/requests` | Returns `401` without an authenticated principal and `403` when the caller lacks `ProjectPulse.Admin`. |
+| `/requests/averages` | Returns average timing metrics across all stored request batches; uses the same authorization behavior as `/requests`. |
 | `/requests/{id}` | Same authorization behavior as `/requests`. |
 | `/`, `/pulse`, `/pulse-health`, `/live` | Not restricted by the application role check in the current implementation. |
+
+The requests page shows all-history average RTA pull, translation, APIM round-trip, RTA writeback, and end-to-end durations. Each average is calculated once per batch and includes only batches with a recorded value for that timing; its sample count is shown with the average. The summary is fetched separately from the first 100 displayed records, so it does not slow the initial transaction list. Results are cached in memory for up to one minute per app instance.
+
+Initial color bands are operating signals, not configured SLAs: RTA pull, APIM round trip, and RTA writeback are green through 1 second, yellow through 5 seconds, and red above 5 seconds; translation is green through 100 ms, yellow through 500 ms, and red above 500 ms; end-to-end is green through 5 seconds, yellow through 15 seconds, and red above 15 seconds. Tune these thresholds once representative baselines are available.
 
 For details, see Microsoft's documentation on [Container Apps authentication](https://learn.microsoft.com/azure/container-apps/authentication), [Microsoft Entra authentication for Container Apps](https://learn.microsoft.com/azure/container-apps/authentication-entra), [app roles](https://learn.microsoft.com/entra/identity-platform/howto-add-app-roles-in-apps), and [assigning users and groups to an enterprise application](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal).
 

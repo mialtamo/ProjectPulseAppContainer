@@ -166,6 +166,16 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
     return Results.Json(page.Items, historyJsonOptions);
 });
 
+app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var averages = await store.GetTimingAveragesAsync(cancellationToken);
+    return Results.Json(averages, historyJsonOptions);
+});
+
 app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);

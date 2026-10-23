@@ -348,7 +348,20 @@ input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text
 .load-more-wrap{display:flex;justify-content:center;padding:14px 0}
 .load-more-wrap button[hidden]{display:none}
 button{cursor:pointer}.muted{color:var(--muted)}
-.summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+ .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.timing-summary{margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
+.timing-summary-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:10px}
+.timing-summary-heading h2{font-size:14px;margin:0;color:#c7d9f2}
+.timing-averages{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px}
+.timing-average-card{border:1px solid var(--border);border-radius:8px;padding:10px;background:#08111a}
+.timing-average-card.green{border-color:#17613b}.timing-average-card.yellow{border-color:#806325}.timing-average-card.red{border-color:#743535}
+.timing-average-label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.timing-average-value{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.timing-average-card.green .timing-average-value{color:var(--green)}
+.timing-average-card.yellow .timing-average-value{color:var(--amber)}
+.timing-average-card.red .timing-average-value{color:var(--red)}
+.timing-average-count,.timing-legend{font-size:10px;color:var(--muted);margin-top:5px}
+.timing-legend{margin-top:10px}
 .pill{padding:5px 9px;border:1px solid var(--border);border-radius:999px;background:#09111a;font-size:12px;color:var(--muted)}
 .table-wrap{border:1px solid var(--border);border-radius:10px;overflow:auto;background:var(--panel);box-shadow:0 18px 60px rgba(0,0,0,.25)}
 table{width:100%;border-collapse:collapse;min-width:1150px}
@@ -379,7 +392,9 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
 .json-key{color:var(--blue)}.json-string{color:var(--green)}.json-number{color:var(--amber)}.json-boolean{color:var(--purple)}.json-null{color:var(--red)}
 .payload-note{color:var(--amber);font-size:12px;padding:10px;border:1px dashed #6d5728;border-radius:7px}
 .empty{padding:28px;text-align:center;color:var(--muted)}
-@media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}}
+@media(max-width:1100px){.timing-averages{grid-template-columns:repeat(3,minmax(130px,1fr))}}
+@media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}.timing-averages{grid-template-columns:repeat(2,minmax(130px,1fr))}}
+@media(max-width:480px){.timing-averages{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -412,6 +427,11 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
     <span id="status" class="muted"></span>
   </div>
   <div id="summary" class="summary"></div>
+  <section class="timing-summary" aria-label="All-history average request timings">
+    <div class="timing-summary-heading"><h2>Average timings across all history</h2><span id="timingUpdated" class="muted">Calculating…</span></div>
+    <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
+    <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
+  </section>
   <div class="table-wrap">
     <table>
       <thead><tr>
@@ -430,7 +450,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let nextPageToken=null; let loading=false; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let nextPageToken=null; let loading=false; let averagesLoading=false; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -618,8 +638,47 @@ async function renderDetail(row,recordId){
   requestAnimationFrame(()=>syncCopyButtonOffsets(row));
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
+const timingThresholds={RtaPull:[1000,5000],Translation:[100,500],ApimRoundTrip:[1000,5000],RtaWriteback:[1000,5000],EndToEnd:[5000,15000]};
+function timingTone(key,averageMs){
+  if(averageMs===null||averageMs===undefined)return '';
+  const [green,yellow]=timingThresholds[key];
+  return averageMs<=green?'green':averageMs<=yellow?'yellow':'red';
+}
+function timingLabel(key){
+  return {RtaPull:'RTA pull',Translation:'Translation',ApimRoundTrip:'APIM round trip',RtaWriteback:'RTA writeback',EndToEnd:'End-to-end'}[key];
+}
+function formatAverage(ms){
+  if(ms===null||ms===undefined)return 'N/A';
+  return ms>=1000?(ms/1000).toFixed(2)+' s':Math.round(ms)+' ms';
+}
+async function loadAverages(){
+  if(averagesLoading)return;
+  averagesLoading=true;
+  const container=document.getElementById('timingAverages');
+  const updated=document.getElementById('timingUpdated');
+  try{
+    const response=await fetch('/requests/averages',{cache:'no-store'});
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    const averages=await response.json();
+    const keys=['RtaPull','Translation','ApimRoundTrip','RtaWriteback','EndToEnd'];
+    container.innerHTML=keys.map(key=>{
+      const metric=averages[key]||{};
+      const count=Number(metric.SampleCount||0);
+      return '<div class="timing-average-card '+timingTone(key,metric.AverageMs)+'">'+
+        '<div class="timing-average-label">'+timingLabel(key)+'</div>'+
+        '<div class="timing-average-value">'+formatAverage(metric.AverageMs)+'</div>'+
+        '<div class="timing-average-count">'+count.toLocaleString()+' batch'+(count===1?'':'es')+'</div>'+
+      '</div>';
+    }).join('');
+    updated.textContent='Calculated '+new Date(averages.CalculatedAtUtc).toLocaleTimeString();
+  }catch(error){
+    container.innerHTML='<span class="muted">Could not load averages: '+esc(error.message)+'</span>';
+    updated.textContent='Unavailable';
+  }finally{averagesLoading=false}
+}
 async function load(){
   if(loading)return; loading=true;
+  void loadAverages();
   const status=document.getElementById('status');
   status.textContent='Loading recent activity...'; detailCache.clear(); nextPageToken=null;
   try{
