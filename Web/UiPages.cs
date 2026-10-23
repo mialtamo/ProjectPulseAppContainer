@@ -395,15 +395,20 @@ td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:260px
 .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
 .payload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .payload-panel{min-width:0}
-.payload-title{font-size:12px;font-weight:700;margin:0 0 7px;color:#c7d9f2}
-.payload-code{position:relative;border-radius:12px}
+.payload-title{font-size:12px;font-weight:700;margin:0 0 10px;color:#c7d9f2}
+.payload-code{position:relative;overflow:hidden;border:1px solid var(--border);border-radius:12px;background:#020407}
 .payload-code.has-copy pre{padding-top:40px}
 .copy-button{position:absolute;top:8px;right:12px;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:5px;border:1px solid transparent;border-radius:6px;background:transparent;color:#aab8c8;cursor:pointer;transition:right .15s ease,background .15s ease,color .15s ease,border-color .15s ease}
 .payload-code.has-scroll .copy-button{right:40px}
 .copy-button:hover,.copy-button:focus-visible{border-color:#314154;background:#17202b;color:#f2f5f8;outline:none}.copy-button.copied{color:var(--green)}.copy-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
-pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;border:1px solid var(--border);padding:12px;border-radius:12px;max-height:420px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;background:transparent;border:0;padding:12px;border-radius:11px;max-height:420px;overflow:auto;scrollbar-color:#738195 #0b111a;scrollbar-width:thin;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+pre::-webkit-scrollbar{width:12px;height:12px}
+pre::-webkit-scrollbar-track{background:#0b111a}
+pre::-webkit-scrollbar-thumb{background:#738195;border:3px solid #0b111a;border-radius:9px}
+pre::-webkit-scrollbar-button{display:none;width:0;height:0}
+pre::-webkit-scrollbar-corner{background:#0b111a}
 .json-key{color:var(--blue)}.json-string{color:var(--green)}.json-number{color:var(--amber)}.json-boolean{color:var(--purple)}.json-null{color:var(--red)}
-.payload-note{color:var(--amber);font-size:12px;padding:10px;border:1px dashed #6d5728;border-radius:7px}
+.payload-note{color:var(--amber);font-size:12px;padding:10px;margin:0 0 12px;border:1px dashed #6d5728;border-radius:7px}
 .empty{padding:28px;text-align:center;color:var(--muted)}
 @media(max-width:1100px){.timing-averages{grid-template-columns:repeat(3,minmax(130px,1fr))}}
 @media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}.timing-averages{grid-template-columns:repeat(2,minmax(130px,1fr))}}
@@ -641,10 +646,10 @@ async function renderDetail(row,recordId){
     x=await r.json();detailCache.set(recordId,x);
   }
   const validationFailure=x.Status==='Rejected'&&x.Reason==='InvalidApimResponseToken'
-    ? '<div class="payload-note"><strong>APIM response rejected:</strong> response-token validation failed. The response was not processed and no RTA writeback was attempted.</div><br>'
+    ? '<div class="payload-note"><strong>APIM response rejected:</strong> response-token validation failed. The response was not processed and no RTA writeback was attempted.</div>'
     : '';
   const writebackFailure=x.Status==='WritebackFailed'
-    ? '<div class="payload-note"><strong>Writeback failed:</strong> '+esc(writebackReasonText(x.Reason))+'</div><br>'
+    ? '<div class="payload-note"><strong>Writeback failed:</strong> '+esc(writebackReasonText(x.Reason))+'</div>'
     : '';
   const rtaPayloads=x.RtaResponsePayloads||[];
   const rtaPayloadPanels=rtaPayloads.length
