@@ -350,6 +350,12 @@ input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text
 button{cursor:pointer}.muted{color:var(--muted)}
  .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
 .timing-summary{margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
+.timing-range-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 12px;color:var(--muted);font-size:12px}
+.timing-range-controls select,.timing-range-controls input,.timing-range-controls button{border:1px solid var(--border);border-radius:6px;background:#0a121c;color:var(--text);padding:7px 9px;font:inherit}
+.custom-timing-range{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.custom-timing-range[hidden]{display:none}
+.timing-range-error{color:#ff7b91}
+
 .timing-summary-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
 .timing-summary-title{display:flex;align-items:center;gap:8px;min-width:0;position:relative}
 .timing-summary-heading h2{font-size:14px;margin:0;color:#c7d9f2}
@@ -445,17 +451,17 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     <span id="status" class="muted"></span>
   </div>
   <div id="summary" class="summary"></div>
-  <section class="timing-summary" aria-label="All-history average request timings">
+  <section class="timing-summary" aria-label="Average request timings">
     <div class="timing-summary-heading">
       <div class="timing-summary-title">
-        <h2>Average timings across all history</h2>
+        <h2 id="timingTitle">Average timings — All time</h2>
         <details class="timing-help">
           <summary aria-label="Explain the average timing metrics" title="What do these averages mean?">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><circle cx="12" cy="8" r=".7" fill="currentColor" stroke="none"></circle></svg>
           </summary>
           <div class="timing-help-popover" role="region" aria-label="Average timing explanations">
             <h3>What the timing cards mean</h3>
-            <p>Each card averages batches across all stored history, not only the 100 requests currently displayed. Its count is the number of batches with a recorded value for that timing.</p>
+            <p>Each card averages batches created in the selected time window, not only the 100 requests currently displayed. Its count is the number of batches with a recorded value for that timing.</p>
             <dl>
               <dt>RTA pull</dt><dd>Time for Project Pulse to fetch pending requests from RTA and read/parse the response. RTA processing, network or TLS latency, and larger pages can add time.</dd>
               <dt>Translation</dt><dd>Time to map the RTA item into the outbound DOCMP JSON. App CPU pressure or larger, more complex payloads can increase it.</dd>
@@ -469,6 +475,22 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
         </details>
       </div>
       <span id="timingUpdated" class="muted">Calculating…</span>
+    </div>
+    <div class="timing-range-controls">
+      <label for="timingRange">Time range</label>
+      <select id="timingRange" onchange="onTimingRangeChange()">
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="365d">Last year</option>
+        <option value="all" selected>All time</option>
+        <option value="custom">Custom</option>
+      </select>
+      <div id="customTimingRange" class="custom-timing-range" hidden>
+        <label for="timingFrom">From</label><input id="timingFrom" type="datetime-local" />
+        <label for="timingTo">To</label><input id="timingTo" type="datetime-local" />
+        <button type="button" onclick="applyCustomTimingRange()">Apply</button>
+      </div>
+      <span id="timingRangeError" class="timing-range-error" role="status"></span>
     </div>
     <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
     <div id="timingDiagnostics" class="timing-diagnostic-note">Loading diagnostic summary…</div>
@@ -492,7 +514,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let nextPageToken=null; let loading=false; let averagesLoading=false; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let nextPageToken=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -693,15 +715,68 @@ function formatAverage(ms){
   if(ms===null||ms===undefined)return 'N/A';
   return ms>=1000?(ms/1000).toFixed(2)+' s':Math.round(ms)+' ms';
 }
+function setTimingTitle(label){
+  document.getElementById('timingTitle').textContent='Average timings — '+label;
+}
+function onTimingRangeChange(){
+  const range=document.getElementById('timingRange').value;
+  const custom=document.getElementById('customTimingRange');
+  const error=document.getElementById('timingRangeError');
+  error.textContent='';
+  custom.hidden=range!=='custom';
+  if(range==='custom'){
+    setTimingTitle('Custom range');
+    return;
+  }
+  const label={all:'All time','7d':'Last 7 days','30d':'Last 30 days','365d':'Last year'}[range];
+  setTimingTitle(label);
+  void loadAverages();
+}
+function applyCustomTimingRange(){
+  const fromValue=document.getElementById('timingFrom').value;
+  const toValue=document.getElementById('timingTo').value;
+  const error=document.getElementById('timingRangeError');
+  if(!fromValue||!toValue){
+    error.textContent='Choose both a start and end date/time.';
+    return;
+  }
+  const from=new Date(fromValue),to=new Date(toValue);
+  if(Number.isNaN(from.getTime())||Number.isNaN(to.getTime())||from>to){
+    error.textContent='The start date/time must be before the end date/time.';
+    return;
+  }
+  error.textContent='';
+  setTimingTitle(from.toLocaleString()+' – '+to.toLocaleString());
+  void loadAverages();
+}
+function timingAveragesUrl(){
+  const range=document.getElementById('timingRange').value;
+  if(range!=='custom')return '/requests/averages?range='+encodeURIComponent(range);
+  const from=document.getElementById('timingFrom').value;
+  const to=document.getElementById('timingTo').value;
+  if(!from||!to)return null;
+  const fromDate=new Date(from),toDate=new Date(to);
+  if(Number.isNaN(fromDate.getTime())||Number.isNaN(toDate.getTime())||fromDate>toDate)return null;
+  const query=new URLSearchParams({range:'custom',fromUtc:fromDate.toISOString(),toUtc:toDate.toISOString()});
+  return '/requests/averages?'+query.toString();
+}
 async function loadAverages(){
-  if(averagesLoading)return;
+  const url=timingAveragesUrl();
+  if(!url){
+    document.getElementById('timingAverages').innerHTML='<span class="muted">Choose a valid custom date/time range to calculate averages.</span>';
+    document.getElementById('timingDiagnostics').textContent='Select both dates and apply the custom range.';
+    document.getElementById('timingUpdated').textContent='Waiting for range';
+    return;
+  }
+  const requestId=++averagesRequestId;
   averagesLoading=true;
   const container=document.getElementById('timingAverages');
   const updated=document.getElementById('timingUpdated');
   try{
-    const response=await fetch('/requests/averages',{cache:'no-store'});
+    const response=await fetch(url,{cache:'no-store'});
     if(!response.ok)throw new Error('HTTP '+response.status);
     const averages=await response.json();
+    if(requestId!==averagesRequestId)return;
     const keys=['RtaPull','Translation','ApimRoundTrip','RtaWriteback','EndToEnd'];
     container.innerHTML=keys.map(key=>{
       const metric=averages[key]||{};
@@ -714,14 +789,17 @@ async function loadAverages(){
     }).join('');
     const failedCount=Number(averages.RtaStatusPutFailureBatchCount||0);
     document.getElementById('timingDiagnostics').textContent=failedCount
-      ? failedCount.toLocaleString()+' batch'+(failedCount===1?'':'es')+' in stored history ended with an RTA status PUT failure. The writeback average can include retries and backoff; correlate the batch ID in Project Pulse logs to see observed statuses or exceptions.'
-      : 'No batches in stored history are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
+      ? failedCount.toLocaleString()+' batch'+(failedCount===1?'':'es')+' in this time window ended with an RTA status PUT failure. The writeback average can include retries and backoff; correlate the batch ID in Project Pulse logs to see observed statuses or exceptions.'
+      : 'No batches in this time window are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
     updated.textContent='Calculated '+new Date(averages.CalculatedAtUtc).toLocaleTimeString();
   }catch(error){
+    if(requestId!==averagesRequestId)return;
     container.innerHTML='<span class="muted">Could not load averages: '+esc(error.message)+'</span>';
     document.getElementById('timingDiagnostics').textContent='Diagnostic summary unavailable.';
     updated.textContent='Unavailable';
-  }finally{averagesLoading=false}
+  }finally{
+    if(requestId===averagesRequestId)averagesLoading=false;
+  }
 }
 async function load(){
   if(loading)return; loading=true;
