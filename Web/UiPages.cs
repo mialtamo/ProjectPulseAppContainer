@@ -143,6 +143,26 @@ public static class UiPages
             font-size: 10px;
             letter-spacing: .08em;
         }
+        .requests-button {
+            display: flex;
+            justify-content: center;
+            margin-top: 14px;
+            padding: 9px 12px;
+            border: 1px solid rgba(25, 221, 255, .28);
+            border-radius: 6px;
+            background: rgba(25, 221, 255, .08);
+            color: #d7e6ff;
+            font: 700 11px/1.4 "Courier New", Consolas, monospace;
+            letter-spacing: .12em;
+            text-decoration: none;
+            text-transform: uppercase;
+            transition: background .15s ease, border-color .15s ease;
+        }
+        .requests-button:hover, .requests-button:focus-visible {
+            border-color: rgba(25, 221, 255, .65);
+            background: rgba(25, 221, 255, .16);
+            outline: none;
+        }
         .version {
             position: fixed;
             left: 24px;
@@ -228,6 +248,7 @@ public static class UiPages
             <span id="serviceBus" class="checking">&lt;CHECKING...&gt;</span>
         </div>
         <div class="last-check" id="lastCheck">LAST CHECK: awaiting first health probe</div>
+        <a class="requests-button" href="/requests.html">View request history</a>
     </div>
 
     <main class="shell">
@@ -290,7 +311,13 @@ public static class UiPages
 """;
     }
 
-    public const string RequestHistoryPage = """
+    public static string RequestHistoryPageFor(string? signedInUser)
+    {
+        var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
+        return RequestHistoryPage.Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal);
+    }
+
+    private const string RequestHistoryPage = """
 <!doctype html>
 <html lang="en">
 <head>
@@ -306,8 +333,13 @@ public static class UiPages
 }
 *{box-sizing:border-box}
 body{margin:0;background:linear-gradient(180deg,#05070b,#07101a 55%,#05070b);color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif}
-header{position:sticky;top:0;z-index:10;padding:18px 24px;border-bottom:1px solid var(--border);background:rgba(5,7,11,.92);backdrop-filter:blur(10px);display:flex;justify-content:space-between;align-items:center}
+header{position:sticky;top:0;z-index:10;padding:18px 24px;border-bottom:1px solid var(--border);background:rgba(5,7,11,.92);backdrop-filter:blur(10px);display:flex;justify-content:space-between;align-items:center;gap:16px}
 h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-size:12px;margin-top:4px}
+.header-actions{display:flex;align-items:center;justify-content:flex-end;gap:16px;flex-wrap:wrap}
+.signed-in-user{color:var(--muted);font-size:12px}
+.signed-in-user strong{color:var(--text);font-weight:600}
+.sign-out{padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--panel2)}
+.sign-out:hover,.sign-out:focus-visible{border-color:var(--cyan);outline:none}
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
@@ -351,7 +383,11 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#020407;borde
 <body>
 <header>
   <div><h1>PROJECT PULSE REQUESTS</h1><div class="sub">Recent APIM and Service Bus activity</div></div>
-  <a href="/">Home</a>
+  <div class="header-actions">
+    <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
+    <a class="sign-out" href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
+    <a href="/">Home</a>
+  </div>
 </header>
 <main>
   <div class="toolbar">

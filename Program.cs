@@ -178,7 +178,8 @@ app.MapGet("/requests.html", (HttpContext context) =>
     context.Response.Headers["Content-Security-Policy"] =
         "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
-    return Results.Content(UiPages.RequestHistoryPage, "text/html; charset=utf-8");
+    var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
+    return Results.Content(UiPages.RequestHistoryPageFor(signedInUser), "text/html; charset=utf-8");
 });
 
 app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRoleName }));
