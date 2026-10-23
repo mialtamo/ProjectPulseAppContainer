@@ -147,6 +147,9 @@ var historyJsonOptions = new JsonSerializerOptions
 
 app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
     context.Response.Headers.CacheControl = "no-store";
     var items = await store.ListAsync(1000, cancellationToken);
     return Results.Json(items, historyJsonOptions);
@@ -154,6 +157,9 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
 
 app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
     context.Response.Headers.CacheControl = "no-store";
     var item = await store.GetAsync(id, cancellationToken);
     return item is null
@@ -163,6 +169,9 @@ app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHist
 
 app.MapGet("/requests.html", (HttpContext context) =>
 {
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: true);
+    if (authorization is not null) return authorization;
+
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "DENY";
@@ -175,3 +184,64 @@ app.MapGet("/requests.html", (HttpContext context) =>
 app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRoleName }));
 
 app.Run();
+
+static IResult? RequireProjectPulseAdmin(HttpContext context, bool redirectToLogin)
+{
+    const string requiredRole = "ProjectPulse.Admin";
+    var principalHeader = context.Request.Headers["X-MS-CLIENT-PRINCIPAL"].ToString();
+
+    if (string.IsNullOrWhiteSpace(principalHeader))
+    {
+        if (!redirectToLogin)
+        {
+            return Results.Unauthorized();
+        }
+
+        var returnPath = $"{context.Request.PathBase}{context.Request.Path}{context.Request.QueryString}";
+        var loginUrl = "/.auth/login/aad?post_login_redirect_uri=" + Uri.EscapeDataString(returnPath);
+        return Results.Redirect(loginUrl);
+    }
+
+    try
+    {
+        var principalJson = Convert.FromBase64String(principalHeader);
+        using var principal = JsonDocument.Parse(principalJson);
+
+        if (!principal.RootElement.TryGetProperty("claims", out var claims) ||
+            claims.ValueKind != JsonValueKind.Array)
+        {
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        foreach (var claim in claims.EnumerateArray())
+        {
+            if (!claim.TryGetProperty("typ", out var type) ||
+                !claim.TryGetProperty("val", out var value) ||
+                !string.Equals(value.GetString(), requiredRole, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var claimType = type.GetString();
+            if (string.Equals(claimType, "roles", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(claimType, "role", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    claimType,
+                    "http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+        }
+
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+    catch (FormatException)
+    {
+        return Results.Unauthorized();
+    }
+    catch (JsonException)
+    {
+        return Results.Unauthorized();
+    }
+}
