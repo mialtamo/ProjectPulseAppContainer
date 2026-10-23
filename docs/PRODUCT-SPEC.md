@@ -44,7 +44,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 
 ## Response translation and writeback
 
-For `INITIAL_REQUEST`, Project Pulse translates the APIM/DOCMP response into `INITIAL_REQUEST_RESPONSE` and sets `UPDATE_REQUEST_RESPONSE` to null. It sends the RTA PUT envelope with the request type, success status, null substatus, and process timestamp.
+For `INITIAL_REQUEST`, Project Pulse reads RTA request fields from `INITIAL_REQUEST_METADATA`, then translates DOCMP response business fields from the response's `METADATA` object into `INITIAL_REQUEST_RESPONSE`. The RTA request-side field name does not apply to the DOCMP response. `UPDATE_REQUEST_RESPONSE` is set to null. Project Pulse sends the RTA PUT envelope with the request type, success status, null substatus, and process timestamp.
 
 The envelope includes an application-created `API_CALL_HISTORY` object. It copies `REQUEST_ID`, `CORRELATION_ID`, and `IDEMPOTENCY_KEY` from the individual RTA item; leaves `EXTERNAL_CORRELATION_ID`, endpoint, query parameters, and error fields null; and records the APIM POST method, resolved APIM URL, response headers, raw individual RTA item as `REQUEST_BODY`, HTTP status, raw APIM response as `RESPONSE_BODY`, and the APIM round-trip duration. The configured APIM response-token header is redacted in the recorded header string.
 
