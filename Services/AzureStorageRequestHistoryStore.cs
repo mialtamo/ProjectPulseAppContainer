@@ -85,7 +85,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 TranslationDurationMs = translationDurationMs,
                 RequestPayloadBlob = requestBlob,
                 RtaResponsePayloadBlobs = rtaResponseBlobs,
-                PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads()
+                PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads(),
+                RtaWritebackEnabled = _options.RtaStatusWritebackEnabled
             };
 
             string? previousIndexRowKey = null;
@@ -196,6 +197,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         string batchId,
         IReadOnlyList<string> uniqueIds,
         long writebackDurationMs,
+        RtaWritebackResult? writebackResult,
         DateTimeOffset completedAtUtc,
         CancellationToken cancellationToken)
     {
@@ -219,6 +221,16 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             entity.RtaWritebackDurationMs = Math.Max(0, writebackDurationMs);
+            if (writebackResult is not null)
+            {
+                entity.RtaWritebackAttempted = writebackResult.Attempted;
+                entity.RtaWritebackSucceeded = writebackResult.Succeeded;
+                entity.RtaWritebackHttpStatusCode = writebackResult.HttpStatusCode;
+                entity.RtaWritebackAttempts = writebackResult.Attempts;
+                entity.RtaWritebackFailureKind = writebackResult.FailureKind;
+                entity.RtaWritebackFailureMessage = TruncateDiagnostic(writebackResult.FailureMessage);
+            }
+
             if (entity.PipelineStartedAtUtc is { } pipelineStartedAtUtc)
             {
                 entity.EndToEndDurationMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
@@ -533,6 +545,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public bool RtaStatusPutFailed { get; set; }
     }
 
+    private static string? TruncateDiagnostic(string? message) =>
+        string.IsNullOrWhiteSpace(message) ? null : message.Length <= 1000 ? message : message[..1000];
+
     private RequestHistoryItem Map(
         RequestHistoryEntity entity,
         string? requestPayload,
@@ -563,7 +578,14 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.TranslationDurationMs,
             entity.ApimRoundTripDurationMs,
             entity.RtaWritebackDurationMs,
-            entity.EndToEndDurationMs);
+            entity.EndToEndDurationMs,
+            entity.RtaWritebackEnabled,
+            entity.RtaWritebackAttempted,
+            entity.RtaWritebackSucceeded,
+            entity.RtaWritebackHttpStatusCode,
+            entity.RtaWritebackAttempts,
+            entity.RtaWritebackFailureKind,
+            entity.RtaWritebackFailureMessage);
 
     private async Task<string?> SaveRtaResponsePayloadsAsync(
         string batchId,
@@ -763,6 +785,13 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             ApimRoundTripDurationMs = entity.ApimRoundTripDurationMs,
             RtaWritebackDurationMs = entity.RtaWritebackDurationMs,
             EndToEndDurationMs = entity.EndToEndDurationMs,
+            RtaWritebackEnabled = entity.RtaWritebackEnabled,
+            RtaWritebackAttempted = entity.RtaWritebackAttempted,
+            RtaWritebackSucceeded = entity.RtaWritebackSucceeded,
+            RtaWritebackHttpStatusCode = entity.RtaWritebackHttpStatusCode,
+            RtaWritebackAttempts = entity.RtaWritebackAttempts,
+            RtaWritebackFailureKind = entity.RtaWritebackFailureKind,
+            RtaWritebackFailureMessage = entity.RtaWritebackFailureMessage,
             PayloadLoggingEnabled = entity.PayloadLoggingEnabled
         };
 
@@ -851,6 +880,13 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public long? ApimRoundTripDurationMs { get; set; }
         public long? RtaWritebackDurationMs { get; set; }
         public long? EndToEndDurationMs { get; set; }
+        public bool? RtaWritebackEnabled { get; set; }
+        public bool? RtaWritebackAttempted { get; set; }
+        public bool? RtaWritebackSucceeded { get; set; }
+        public int? RtaWritebackHttpStatusCode { get; set; }
+        public int? RtaWritebackAttempts { get; set; }
+        public string? RtaWritebackFailureKind { get; set; }
+        public string? RtaWritebackFailureMessage { get; set; }
         public bool PayloadLoggingEnabled { get; set; }
         public string? RequestPayloadBlob { get; set; }
         public string? ResponsePayloadBlob { get; set; }
