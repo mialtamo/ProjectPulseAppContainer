@@ -862,7 +862,8 @@ public sealed class ClaimProcessor(
                     apimStatusCode,
                     apimResponseReceivedAtUtc,
                     apimResponseTimeMs,
-                    apimRequestUrl,
+                    _options.ApimBaseUrl,
+                    _options.ApimAdjudicationPath,
                     apimResponseHeaders)
                 : BuildLegacyRtaStatusPayload(item, originatingRequest);
             var statusPayloadJson = statusPayload.ToJsonString();
@@ -898,7 +899,8 @@ public sealed class ClaimProcessor(
         int apimStatusCode,
         DateTimeOffset apimResponseReceivedAtUtc,
         long apimResponseTimeMs,
-        string apimRequestUrl,
+        string apimBaseUrl,
+        string apimEndpoint,
         string apimResponseHeaders)
     {
         var payload = new JsonObject();
@@ -916,9 +918,9 @@ public sealed class ClaimProcessor(
         CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
         apiCallHistory["IDENTIFIER"] = "initial-accum-request";
         apiCallHistory["HTTP_METHOD"] = "POST";
-        apiCallHistory["API_URL"] = apimRequestUrl;
-        apiCallHistory["API_ENDPOINT"] = null;
-        apiCallHistory["REQUEST_HEADERS"] = apimResponseHeaders;
+        apiCallHistory["API_URL"] = $"{apimBaseUrl.TrimEnd('/')}/";
+        apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
+        apiCallHistory["REQUEST_HEADER"] = apimResponseHeaders;
         apiCallHistory["REQUEST_QUERY_PARAMETER"] = null;
         apiCallHistory["REQUEST_BODY"] = originatingRequest.GetRawText();
         apiCallHistory["RESPONSE_HTTP_STATUS_CODE"] = apimStatusCode;
