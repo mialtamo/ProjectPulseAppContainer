@@ -291,9 +291,10 @@ public sealed class AppApiClient(
         }
 
         logger.LogError(
-            "RTA status writeback exhausted its configured attempts for correlation ID {CorrelationId}. Attempts={Attempts}, LastHttpStatusCode={LastHttpStatusCode}, LastFailureKind={LastFailureKind}",
-            correlationId,
+            "RTA status writeback stopped after attempt {Attempts} of {MaxAttempts} for correlation ID {CorrelationId}. LastHttpStatusCode={LastHttpStatusCode}, LastFailureKind={LastFailureKind}",
+            attemptsMade,
             maxAttempts,
+            correlationId,
             lastHttpStatusCode,
             lastFailureKind ?? "Unknown");
 

@@ -691,6 +691,9 @@ function renderExchangeOutcomes(x){
       (x.RtaWritebackAttempts==null?'':' · '+esc(x.RtaWritebackAttempts)+' attempt(s)')+
       (x.RtaWritebackFailureKind?' · '+esc(x.RtaWritebackFailureKind):'')+
       (x.RtaWritebackFailureMessage?'<br>'+esc(x.RtaWritebackFailureMessage):'');
+  }else if(x.Status==='WritebackFailed'&&x.Reason==='RtaStatusWritebackFailed'){
+    writeState='Failed';writeTone='error';
+    writeBody='The RTA status PUT failed, but attempt-level details were not stored for this record. See the log stream for the observed HTTP status and attempt details.';
   }else if(!apimSent||tokenRejected||(x.HttpStatusCode!=null&&(x.HttpStatusCode<200||x.HttpStatusCode>=300))||(x.Status==='WritebackFailed'&&x.Reason!=='RtaStatusWritebackFailed')){
     writeState='Not attempted';writeTone='neutral';writeBody='The transaction did not proceed to an RTA status PUT.';
   }else if(x.RtaWritebackEnabled===true){
