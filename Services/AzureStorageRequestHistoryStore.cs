@@ -75,6 +75,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 RowKey = BuildRowKey(batchId, i),
                 BatchId = batchId,
                 UniqueId = uniqueIds[i],
+                InputSource = _options.IsMockApiMode() ? "MOCK" : "RTA",
                 CreatedAtUtc = sentAtUtc,
                 UpdatedAtUtc = sentAtUtc,
                 Status = "SentToApim",
@@ -558,6 +559,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.PrimaryRecordId ?? entity.RowKey,
             entity.BatchId,
             entity.UniqueId,
+            entity.InputSource,
             entity.CreatedAtUtc,
             entity.UpdatedAtUtc,
             entity.Status,
@@ -770,6 +772,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             PrimaryRecordId = entity.RowKey,
             BatchId = entity.BatchId,
             UniqueId = entity.UniqueId,
+            InputSource = entity.InputSource,
             CreatedAtUtc = entity.CreatedAtUtc,
             UpdatedAtUtc = entity.UpdatedAtUtc,
             Status = entity.Status,
@@ -864,6 +867,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         public string BatchId { get; set; } = string.Empty;
         public string UniqueId { get; set; } = string.Empty;
+        public string? InputSource { get; set; }
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset UpdatedAtUtc { get; set; }
         public string Status { get; set; } = string.Empty;
