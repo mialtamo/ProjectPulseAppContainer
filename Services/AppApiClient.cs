@@ -2,6 +2,7 @@ using System.Net;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Options;
 using Microsoft.ApplicationInsights;
@@ -253,19 +254,29 @@ public sealed class AppApiClient(
 
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 lastHttpStatusCode = (int)response.StatusCode;
-                lastFailureKind = "HttpStatusCode";
-                lastFailureMessage = $"RTA returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}".Trim();
                 if (response.IsSuccessStatusCode)
                 {
                     return new RtaWritebackResult(true, true, attempt, lastHttpStatusCode, null, null);
                 }
 
+                lastFailureKind = "HttpStatusCode";
+                var responseBody = _options.ShouldCaptureRequestHistoryPayloads()
+                    ? await response.Content.ReadAsStringAsync(cancellationToken)
+                    : null;
+                if (responseBody is not null)
+                {
+                    responseBody = _options.RedactRequestHistoryPayload(responseBody);
+                }
+
+                lastFailureMessage = BuildHttpFailureMessage(response.StatusCode, response.ReasonPhrase, responseBody);
+
                 logger.LogWarning(
-                    "RTA status writeback failed for {CorrelationId}. Attempt {Attempt}/{MaxAttempts}, status {StatusCode}",
+                    "RTA status writeback failed for {CorrelationId}. Attempt {Attempt}/{MaxAttempts}, status {StatusCode}. {FailureMessage}",
                     correlationId,
                     attempt,
                     maxAttempts,
-                    (int)response.StatusCode);
+                    (int)response.StatusCode,
+                    lastFailureMessage);
 
                 if (!IsTransient(response.StatusCode))
                 {
@@ -310,6 +321,103 @@ public sealed class AppApiClient(
             lastHttpStatusCode,
             lastFailureKind ?? "Unknown",
             lastFailureMessage);
+    }
+
+    private static string BuildHttpFailureMessage(
+        HttpStatusCode statusCode,
+        string? reasonPhrase,
+        string? responseBody)
+    {
+        var prefix = $"RTA returned HTTP {(int)statusCode} {reasonPhrase}".Trim();
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return prefix;
+        }
+
+        var details = new List<string>();
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                AddProblemText(document.RootElement, "title", details);
+                AddProblemText(document.RootElement, "detail", details);
+                AddProblemText(document.RootElement, "message", details);
+
+                if (TryGetPropertyIgnoreCase(document.RootElement, "errors", out var errors) &&
+                    errors.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var field in errors.EnumerateObject().Take(8))
+                    {
+                        if (field.Value.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var error in field.Value.EnumerateArray().Take(4))
+                            {
+                                if (error.ValueKind == JsonValueKind.String &&
+                                    !string.IsNullOrWhiteSpace(error.GetString()))
+                                {
+                                    details.Add($"{field.Name}: {error.GetString()}");
+                                }
+                            }
+                        }
+                        else if (field.Value.ValueKind == JsonValueKind.String &&
+                                 !string.IsNullOrWhiteSpace(field.Value.GetString()))
+                        {
+                            details.Add($"{field.Name}: {field.Value.GetString()}");
+                        }
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Do not copy an unstructured error body into history or logs.
+        }
+
+        var summary = string.Join("; ", details.Distinct(StringComparer.Ordinal));
+        if (string.IsNullOrWhiteSpace(summary))
+        {
+            return prefix;
+        }
+
+        summary = Regex.Replace(summary, @"\b\d{10}V\d{6}\b", "[REDACTED ICN]", RegexOptions.IgnoreCase);
+        summary = Regex.Replace(summary, @"\b\d{3}-?\d{2}-?\d{4}\b", "[REDACTED]", RegexOptions.IgnoreCase);
+        summary = Regex.Replace(summary, @"\bBearer\s+[^\s,;]+", "Bearer [REDACTED]", RegexOptions.IgnoreCase);
+        summary = Regex.Replace(
+            summary,
+            @"(?i)(x-pulse-response-token\s*[:=]\s*)[^\s,;]+",
+            "$1[REDACTED]");
+        if (summary.Length > 800)
+        {
+            summary = summary[..800];
+        }
+
+        return $"{prefix}: {summary}";
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement root, string propertyName, out JsonElement value)
+    {
+        foreach (var property in root.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static void AddProblemText(JsonElement root, string propertyName, ICollection<string> details)
+    {
+        if (TryGetPropertyIgnoreCase(root, propertyName, out var value) &&
+            value.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(value.GetString()))
+        {
+            details.Add(value.GetString()!);
+        }
     }
 
     private static bool IsTransient(HttpStatusCode statusCode) =>
