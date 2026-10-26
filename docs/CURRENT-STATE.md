@@ -1,7 +1,7 @@
 # Current State
 
 Last reviewed: 2026-10-26  
-Repository version: `0.0.39` (proposed)
+Repository version: `0.0.40` (proposed)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
@@ -10,7 +10,7 @@ Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps i
 - The same container image supports the `RTA` polling role and the `SERVICEBUS` retry-processing role, selected with `PROJECT_PULSE_ROLE`. The RTA role continuously polls; this is not an Azure Functions TimerTrigger application.
 - `APP_API_MODE` selects RTA or mock source behavior. RTA uses paging; the mock path uses `maxRecords`. Do not assume the mock query parameter is sent to the RTA endpoint.
 - The processor reads initial request input fields from RTA `INITIAL_REQUEST_METADATA`, translates them to the APIM/DOCMP request contract, and processes each claim individually. APIM requests carry correlation/idempotency information and validate the configured response-token header.
-- For initial-request writeback, DOCMP response business fields are read from DOCMP `METADATA` and translated into RTA `INITIAL_REQUEST_RESPONSE`; the similarly named RTA request metadata field is not used to parse the DOCMP response.
+- For initial-request writeback, DOCMP business fields are read from the root response object and translated into RTA `INITIAL_REQUEST_RESPONSE`; RTA's `INITIAL_REQUEST_METADATA` is only the request-side source shape.
 - APIM responses are translated into the RTA writeback shape. The original individual RTA item and the raw APIM response are retained as JSON strings in `PAYLOAD_REQUEST` and `PAYLOAD_RESPONSE`; the mapped response is included in the appropriate request-type response field. RTA status writeback is configurable.
 - Configured APIM failure handling can buffer retry envelopes in Azure Service Bus. A Service Bus role can consume and reprocess those envelopes through the shared processor. Service Bus connectivity/certificate configuration is independent of the RTA client certificate trust setup.
 - Request history stores transaction metadata in Azure Table Storage and payload bodies in Blob Storage. `REQUEST_HISTORY_PAYLOAD_MODE` supports `FULL`, `PARTIAL`, and `OFF`. `OFF` suppresses payload capture for new history records; it does not remove payloads already stored.
