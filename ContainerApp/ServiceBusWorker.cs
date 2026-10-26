@@ -153,6 +153,7 @@ public sealed class ServiceBusWorker(
             {
                 case ClaimProcessingDisposition.Completed:
                 case ClaimProcessingDisposition.Alerted:
+                // Processing queued a replacement envelope, so complete this delivery to avoid replaying it.
                 case ClaimProcessingDisposition.QueuedForRetry:
                     await receiver.CompleteMessageAsync(message, cancellationToken);
 
