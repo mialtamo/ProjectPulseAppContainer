@@ -669,6 +669,7 @@ function renderExchangeOutcomes(x){
     if(tokenRejected){apimState='Rejected';apimTone='error'}
     else if(code!=null&&code>=200&&code<300){apimState='Success';apimTone='success'}
     else if(code!=null){apimState='HTTP failure';apimTone='error'}
+    else if(x.Status==='Buffered'&&x.Reason){apimState='No response';apimTone='error'}
     else if(hasResponse){apimState='Response received';apimTone='warning'}
     else {apimState='Waiting / no response';apimTone='warning'}
     apimBody='POST'+(code==null?'':' · HTTP '+esc(code))+
@@ -690,8 +691,8 @@ function renderExchangeOutcomes(x){
       (x.RtaWritebackAttempts==null?'':' · '+esc(x.RtaWritebackAttempts)+' attempt(s)')+
       (x.RtaWritebackFailureKind?' · '+esc(x.RtaWritebackFailureKind):'')+
       (x.RtaWritebackFailureMessage?'<br>'+esc(x.RtaWritebackFailureMessage):'');
-  }else if(tokenRejected||(x.HttpStatusCode!=null&&(x.HttpStatusCode<200||x.HttpStatusCode>=300))){
-    writeState='Not attempted';writeTone='neutral';writeBody='The APIM response did not proceed to RTA writeback.';
+  }else if(!apimSent||tokenRejected||(x.HttpStatusCode!=null&&(x.HttpStatusCode<200||x.HttpStatusCode>=300))||(x.Status==='WritebackFailed'&&x.Reason!=='RtaStatusWritebackFailed')){
+    writeState='Not attempted';writeTone='neutral';writeBody='The transaction did not proceed to an RTA status PUT.';
   }else if(x.RtaWritebackEnabled===true){
     writeState='Pending / not recorded';writeTone='warning';writeBody='No RTA PUT outcome is stored yet. Older records do not include attempt-level details.';
   }
