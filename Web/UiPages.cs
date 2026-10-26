@@ -656,7 +656,7 @@ function exchangeStep(name,state,body,tone){
   return '<div class="exchange-step '+tone+'"><div class="exchange-step-heading"><span class="exchange-step-name">'+esc(name)+'</span><span class="exchange-step-state">'+esc(state)+'</span></div><div class="exchange-step-body">'+body+'</div></div>';
 }
 function renderExchangeOutcomes(x){
-  const source=x.InputSource==='MOCK'?'Mock API':'RTA';
+  const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'Request source';
   const pullTime=x.RtaPullDurationMs==null?'':' · '+x.RtaPullDurationMs+' ms';
   const pull=exchangeStep(source+' GET','Received','Request record reached Project Pulse polling. Per-poll HTTP status is not stored in request history.'+esc(pullTime),'success');
 
