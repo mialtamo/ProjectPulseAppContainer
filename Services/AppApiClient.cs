@@ -217,20 +217,22 @@ public sealed class AppApiClient(
         return false;
     }
 
-    public async Task<bool> WriteStatusAsync(string correlationId, string responseJson, CancellationToken cancellationToken)
+    public async Task<RtaWritebackResult> WriteStatusAsync(string correlationId, string responseJson, CancellationToken cancellationToken)
     {
         if (!_options.RtaStatusWritebackEnabled)
         {
             logger.LogInformation(
                 "RTA status writeback is disabled. CorrelationId={CorrelationId}",
                 correlationId);
-            return true;
+            return new RtaWritebackResult(false, null, 0, null, null, null);
         }
 
         var client = httpClientFactory.CreateClient("AppApi");
         var maxAttempts = Math.Max(1, _options.ResultWriteMaxAttempts);
         int? lastHttpStatusCode = null;
+        int attemptsMade = 0;
         string? lastFailureKind = null;
+        string? lastFailureMessage = null;
         var path = _options.RtaStatusPathTemplate.Replace(
             "{correlationId}",
             Uri.EscapeDataString(correlationId),
@@ -238,6 +240,7 @@ public sealed class AppApiClient(
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            attemptsMade = attempt;
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Put, path)
@@ -251,9 +254,10 @@ public sealed class AppApiClient(
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 lastHttpStatusCode = (int)response.StatusCode;
                 lastFailureKind = "HttpStatusCode";
+                lastFailureMessage = $"RTA returned HTTP {(int)response.StatusCode} {response.ReasonPhrase}".Trim();
                 if (response.IsSuccessStatusCode)
                 {
-                    return true;
+                    return new RtaWritebackResult(true, true, attempt, lastHttpStatusCode, null, null);
                 }
 
                 logger.LogWarning(
@@ -271,6 +275,7 @@ public sealed class AppApiClient(
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
                 lastFailureKind = ex is TaskCanceledException ? "Timeout" : "NetworkException";
+                lastFailureMessage = $"{ex.GetType().Name}: {ex.Message}";
                 logger.LogWarning(
                     ex,
                     "RTA status writeback exception for {CorrelationId}. Attempt {Attempt}/{MaxAttempts}",
@@ -297,7 +302,13 @@ public sealed class AppApiClient(
             ["correlationId"] = correlationId
         });
 
-        return false;
+        return new RtaWritebackResult(
+            true,
+            false,
+            attemptsMade,
+            lastHttpStatusCode,
+            lastFailureKind ?? "Unknown",
+            lastFailureMessage);
     }
 
     private static bool IsTransient(HttpStatusCode statusCode) =>
