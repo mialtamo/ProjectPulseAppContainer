@@ -1,7 +1,7 @@
 # Current State
 
 Last reviewed: 2026-10-26  
-Repository version: `0.0.60` (aligned with the current Container Apps deployment)
+Repository version: `0.0.61` (next build; current Container Apps deployment is `0.0.60`)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
