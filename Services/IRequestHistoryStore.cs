@@ -33,6 +33,7 @@ public interface IRequestHistoryStore
         string batchId,
         IReadOnlyList<string> uniqueIds,
         long writebackDurationMs,
+        RtaWritebackResult? writebackResult,
         DateTimeOffset completedAtUtc,
         CancellationToken cancellationToken);
 
