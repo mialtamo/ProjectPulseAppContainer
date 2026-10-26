@@ -397,6 +397,7 @@ td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:260px
 .expand-cell{padding:16px}
 .detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
 .timing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}
+.exchange-outcomes{margin:0 0 14px}.exchange-title{font-size:12px;font-weight:700;margin:0 0 8px;color:#c7d9f2}.exchange-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.exchange-step{border:1px solid var(--border);border-radius:8px;background:#08111a;padding:10px}.exchange-step.success{border-color:#145a3d}.exchange-step.warning{border-color:#6d5728}.exchange-step.error{border-color:#6b3038}.exchange-step.neutral{border-color:var(--border)}.exchange-step-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px}.exchange-step-name{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.exchange-step-state{font-size:11px;font-weight:700}.exchange-step.success .exchange-step-state{color:var(--green)}.exchange-step.warning .exchange-step-state{color:var(--amber)}.exchange-step.error .exchange-step-state{color:var(--red)}.exchange-step-body{font-size:12px;line-height:1.45;color:#c7d9f2;overflow-wrap:anywhere}.exchange-note{font-size:11px;color:var(--muted);margin:8px 0 0}
 .card{border:1px solid var(--border);padding:10px;background:#08111a;border-radius:7px}
 .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
 .payload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -651,6 +652,52 @@ function writebackReasonText(reason){
   };
   return messages[reason]||('Writeback failed: '+(reason||'Unknown reason'));
 }
+function exchangeStep(name,state,body,tone){
+  return '<div class="exchange-step '+tone+'"><div class="exchange-step-heading"><span class="exchange-step-name">'+esc(name)+'</span><span class="exchange-step-state">'+esc(state)+'</span></div><div class="exchange-step-body">'+body+'</div></div>';
+}
+function renderExchangeOutcomes(x){
+  const source=x.InputSource==='MOCK'?'Mock API':'RTA';
+  const pullTime=x.RtaPullDurationMs==null?'':' · '+durationLabel(x.RtaPullDurationMs);
+  const pull=exchangeStep(source+' GET','Received','Request record reached Project Pulse polling. Per-poll HTTP status is not stored in request history.'+esc(pullTime),'success');
+
+  const apimSent=!!x.SentToApimAtUtc;
+  const tokenRejected=x.Status==='Rejected'&&x.Reason==='InvalidApimResponseToken';
+  let apimState='Not sent',apimTone='neutral',apimBody='No APIM request is recorded.';
+  if(apimSent){
+    const code=x.HttpStatusCode;
+    const hasResponse=!!x.ApimResponseAtUtc||code!=null;
+    if(tokenRejected){apimState='Rejected';apimTone='error'}
+    else if(code!=null&&code>=200&&code<300){apimState='Success';apimTone='success'}
+    else if(code!=null){apimState='HTTP failure';apimTone='error'}
+    else if(hasResponse){apimState='Response received';apimTone='warning'}
+    else {apimState='Waiting / no response';apimTone='warning'}
+    apimBody='POST'+(code==null?'':' · HTTP '+esc(code))+
+      (x.BusinessResponseCode?' · business code '+esc(x.BusinessResponseCode):'')+
+      (tokenRejected?' · response-token validation failed.':x.Reason&&x.Status!=='Completed'&&x.Status!=='WritebackFailed'?' · '+esc(x.Reason):'');
+  }
+  const apim=exchangeStep('APIM / DOCMP POST',apimState,apimBody,apimTone);
+
+  let writeState='No outcome recorded',writeTone='neutral',writeBody='RTA writeback details were not captured for this record.';
+  if(x.RtaWritebackEnabled===false){
+    writeState='Disabled';writeTone='neutral';writeBody='RTA status PUT was disabled by configuration.';
+  }else if(x.RtaWritebackSucceeded===true){
+    writeState='Success';writeTone='success';
+    writeBody='PUT succeeded'+(x.RtaWritebackHttpStatusCode==null?'':' · HTTP '+esc(x.RtaWritebackHttpStatusCode))+
+      (x.RtaWritebackAttempts==null?'':' · '+esc(x.RtaWritebackAttempts)+' attempt(s)')+'.';
+  }else if(x.RtaWritebackSucceeded===false){
+    writeState='Failed';writeTone='error';
+    writeBody='PUT failed'+(x.RtaWritebackHttpStatusCode==null?'':' · HTTP '+esc(x.RtaWritebackHttpStatusCode))+
+      (x.RtaWritebackAttempts==null?'':' · '+esc(x.RtaWritebackAttempts)+' attempt(s)')+
+      (x.RtaWritebackFailureKind?' · '+esc(x.RtaWritebackFailureKind):'')+
+      (x.RtaWritebackFailureMessage?'<br>'+esc(x.RtaWritebackFailureMessage):'');
+  }else if(tokenRejected||(x.HttpStatusCode!=null&&(x.HttpStatusCode<200||x.HttpStatusCode>=300))){
+    writeState='Not attempted';writeTone='neutral';writeBody='The APIM response did not proceed to RTA writeback.';
+  }else if(x.RtaWritebackEnabled===true){
+    writeState='Pending / not recorded';writeTone='warning';writeBody='No RTA PUT outcome is stored yet. Older records do not include attempt-level details.';
+  }
+  const writeback=exchangeStep('RTA status PUT',writeState,writeBody,writeTone);
+  return '<section class="exchange-outcomes"><h3 class="exchange-title">Exchange outcomes</h3><div class="exchange-grid">'+pull+apim+writeback+'</div><div class="exchange-note">HTTP codes and retry details are shown when Project Pulse stored them. Exception text is the final failure message; full stack traces remain in the log stream.</div></section>';
+}
 async function toggleDetail(rowId,recordId){
   const row=document.getElementById(rowId); const opening=!row.classList.contains('open');
   document.querySelectorAll('.expand-row.open').forEach(r=>r.classList.remove('open'));
@@ -695,6 +742,7 @@ async function renderDetail(row,recordId){
       '<div class="card"><div class="label">RTA Writeback</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
       '<div class="card"><div class="label">Total</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
     '</div>'+
+    renderExchangeOutcomes(x)+
     (x.PayloadLoggingEnabled
       ? (x.PayloadMode==='PARTIAL' ? '<div class="payload-note">Partial payload mode: common identifiers and personal-name fields are masked.</div>' : '')+
         '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+payloadPanel('JSON sent to APIM',x.ApimRequestPayload)+payloadPanel('JSON received from APIM',x.ApimResponsePayload)+'</div>'
