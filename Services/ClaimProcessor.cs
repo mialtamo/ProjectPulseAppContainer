@@ -400,6 +400,7 @@ public sealed class ClaimProcessor(
                         batchId,
                         correlationIds,
                         writebackStopwatch.ElapsedMilliseconds,
+                        writebackResult.Details,
                         writebackCompletedAtUtc,
                         cancellationToken),
                     "RTA writeback timing");
@@ -757,7 +758,7 @@ public sealed class ClaimProcessor(
             }));
     }
 
-    private async Task<(bool Success, string Reason)> WriteBatchResultsAsync(
+    private async Task<(bool Success, string Reason, RtaWritebackResult? Details)> WriteBatchResultsAsync(
         string responseJson,
         int apimStatusCode,
         DateTimeOffset apimResponseReceivedAtUtc,
@@ -772,7 +773,7 @@ public sealed class ClaimProcessor(
         if (string.IsNullOrWhiteSpace(responseJson))
         {
             logger.LogWarning("RTA writeback is enabled but APIM returned an empty response body.");
-            return (false, "EmptyApimResponse");
+            return (false, "EmptyApimResponse", null);
         }
 
         using var document = JsonDocument.Parse(responseJson);
@@ -788,7 +789,7 @@ public sealed class ClaimProcessor(
         {
             logger.LogWarning(
                 "RTA writeback is enabled but APIM response was not a supported object or array.");
-            return (false, "InvalidApimResponseShape");
+            return (false, "InvalidApimResponseShape", null);
         }
 
         if (responseItems.Length != correlationIds.Count || claims.Count != correlationIds.Count)
@@ -798,7 +799,7 @@ public sealed class ClaimProcessor(
                 responseItems.Length,
                 claims.Count,
                 correlationIds.Count);
-            return (false, "ApimResponseCountMismatch");
+            return (false, "ApimResponseCountMismatch", null);
         }
 
         var requestsByCorrelationId = claims.ToDictionary(
@@ -808,6 +809,7 @@ public sealed class ClaimProcessor(
         var expectedCorrelationIds = correlationIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var responseCorrelationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var matchedResponses = new List<(JsonElement Response, string CorrelationId)>(responseItems.Length);
+        RtaWritebackResult? rtaWritebackResult = null;
 
         foreach (var item in responseItems)
         {
@@ -818,7 +820,7 @@ public sealed class ClaimProcessor(
                     logger.LogError(
                         "APIM response contained unexpected correlation ID {CorrelationId}. Writeback rejected.",
                         responseCorrelationId);
-                    return (false, "UnexpectedCorrelationId");
+                    return (false, "UnexpectedCorrelationId", null);
                 }
 
                 if (!responseCorrelationIds.Add(responseCorrelationId))
@@ -826,7 +828,7 @@ public sealed class ClaimProcessor(
                     logger.LogError(
                         "APIM response contained duplicate correlation ID {CorrelationId}. Writeback rejected.",
                         responseCorrelationId);
-                    return (false, "DuplicateCorrelationId");
+                    return (false, "DuplicateCorrelationId", null);
                 }
 
                 matchedResponses.Add((item, responseCorrelationId));
@@ -838,7 +840,7 @@ public sealed class ClaimProcessor(
             if (responseItems.Length != 1 || correlationIds.Count != 1)
             {
                 logger.LogWarning("APIM response item did not contain a correlation ID. Writeback rejected.");
-                return (false, "MissingCorrelationId");
+                return (false, "MissingCorrelationId", null);
             }
 
             matchedResponses.Add((item, correlationIds[0]));
@@ -848,7 +850,7 @@ public sealed class ClaimProcessor(
         if (!expectedCorrelationIds.SetEquals(responseCorrelationIds))
         {
             logger.LogError("APIM response correlation IDs did not exactly match the submitted batch. Writeback rejected.");
-            return (false, "CorrelationIdSetMismatch");
+            return (false, "CorrelationIdSetMismatch", null);
         }
 
         foreach (var (item, correlationId) in matchedResponses)
@@ -877,21 +879,21 @@ public sealed class ClaimProcessor(
                     [statusPayloadJson],
                     cancellationToken),
                 "RTA status payload");
-            var written = await appApiClient.WriteStatusAsync(
+            rtaWritebackResult = await appApiClient.WriteStatusAsync(
                 correlationId,
                 statusPayloadJson,
                 cancellationToken);
 
-            if (!written)
+            if (rtaWritebackResult.Succeeded != true)
             {
                 logger.LogError(
                     "RTA status writeback failed for correlation ID {CorrelationId}.",
                     correlationId);
-                return (false, "RtaStatusWritebackFailed");
+                return (false, "RtaStatusWritebackFailed", rtaWritebackResult);
             }
         }
 
-        return (true, "WritebackCompleted");
+        return (true, "WritebackCompleted", rtaWritebackResult);
     }
 
     private static JsonObject BuildInitialRtaStatusPayload(
