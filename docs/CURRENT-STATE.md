@@ -1,7 +1,7 @@
 # Current State
 
 Last reviewed: 2026-10-26  
-Repository version: `0.0.61` (next build; current Container Apps deployment is `0.0.60`)
+Repository version: `0.0.62` (next build; current Container Apps deployment is `0.0.61`)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
@@ -15,6 +15,7 @@ Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps i
 - Configured APIM failure handling can buffer retry envelopes in Azure Service Bus. A Service Bus role can consume and reprocess those envelopes through the shared processor. Service Bus connectivity/certificate configuration is independent of the RTA client certificate trust setup.
 - Request history stores transaction metadata in Azure Table Storage and payload bodies in Blob Storage. `REQUEST_HISTORY_PAYLOAD_MODE` supports `FULL`, `PARTIAL`, and `OFF`. `OFF` suppresses payload capture for new history records; it does not remove payloads already stored.
 - The authenticated request-history UI uses Microsoft Entra sign-in and the `ProjectPulse.Admin` app role, assigned to the `PROJECT_PULSE_ADMINS` group. The UI shows the signed-in user and provides sign-out/navigation.
+- Request details show RTA/mock input, APIM/DOCMP HTTP outcome, and RTA status PUT outcome when recorded. Recent writeback failures include the final attempt's HTTP status or exception category/message; full stack traces remain in the log stream. RTA poll HTTP status is not currently stored per request.
 - Per-batch timing records cover RTA pull, translation, APIM round trip, RTA writeback, and end-to-end duration. The request-history UI summarizes averages over selectable time windows and explains possible delay causes using available recorded statuses.
 - Health endpoints, Application Insights logging/telemetry, Docker image build, and GitHub Actions deployment are present.
 
