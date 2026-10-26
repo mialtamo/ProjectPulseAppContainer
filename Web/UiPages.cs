@@ -657,7 +657,7 @@ function exchangeStep(name,state,body,tone){
 }
 function renderExchangeOutcomes(x){
   const source=x.InputSource==='MOCK'?'Mock API':'RTA';
-  const pullTime=x.RtaPullDurationMs==null?'':' · '+durationLabel(x.RtaPullDurationMs);
+  const pullTime=x.RtaPullDurationMs==null?'':' · '+x.RtaPullDurationMs+' ms';
   const pull=exchangeStep(source+' GET','Received','Request record reached Project Pulse polling. Per-poll HTTP status is not stored in request history.'+esc(pullTime),'success');
 
   const apimSent=!!x.SentToApimAtUtc;
