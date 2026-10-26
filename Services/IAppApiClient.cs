@@ -6,6 +6,6 @@ namespace ProjectPulse.Processor.Services;
 public interface IAppApiClient
 {
     Task<AppApiPollResult> GetPendingClaimsAsync(CancellationToken cancellationToken);
-    Task<bool> WriteStatusAsync(string correlationId, string responseJson, CancellationToken cancellationToken);
+    Task<RtaWritebackResult> WriteStatusAsync(string correlationId, string responseJson, CancellationToken cancellationToken);
 }
 
