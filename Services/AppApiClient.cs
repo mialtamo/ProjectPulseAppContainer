@@ -38,6 +38,7 @@ public sealed class AppApiClient(
     private async Task<AppApiPollResult> GetMockPendingClaimsAsync(CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("AppApi");
+        // The mock endpoint uses maxRecords; the real RTA endpoint below uses page/limit.
         var maxRecords = _options.GetClampedPageSize();
         var separator = _options.RtaQueuedPath.Contains('?') ? '&' : '?';
         var path = $"{_options.RtaQueuedPath}{separator}maxRecords={maxRecords}";
