@@ -1,7 +1,7 @@
 # Current State
 
 Last reviewed: 2026-10-26  
-Repository version: `0.0.62` (next build; current Container Apps deployment is `0.0.61`)
+Repository version: `0.0.63` (next build; the 0.0.62 deployment workflow succeeded, but the active Container Apps revision was not independently checked.)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
@@ -11,7 +11,10 @@ Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps i
 - `APP_API_MODE` selects RTA or mock source behavior. RTA uses paging; the mock path uses `maxRecords`. Do not assume the mock query parameter is sent to the RTA endpoint.
 - The processor reads initial request input fields from RTA `INITIAL_REQUEST_METADATA`, translates them to the APIM/DOCMP request contract, and processes each claim individually. APIM requests carry correlation/idempotency information and validate the configured response-token header.
 - For initial-request writeback, DOCMP business fields are read from the root response object and translated into RTA `INITIAL_REQUEST_RESPONSE`; RTA's `INITIAL_REQUEST_METADATA` is only the request-side source shape.
-- APIM responses are translated into the RTA writeback shape. The original individual RTA item and the raw APIM response are retained as JSON strings in `PAYLOAD_REQUEST` and `PAYLOAD_RESPONSE`; the mapped response is included in the appropriate request-type response field. RTA status writeback is configurable.
+- APIM responses are translated into the RTA writeback shape. The original individual RTA item and raw APIM response are retained as JSON strings in `PAYLOAD_REQUEST` and `PAYLOAD_RESPONSE`; the mapped response is included in the appropriate request-type response field. RTA status writeback is configurable.
+- Request-history exchange outcomes show stored RTA status PUT attempt metadata when available. If the final batch status confirms a PUT failure but attempt details are missing, the page shows the failure and directs operators to the log stream.
+- For HTTP failures, Project Pulse stores and logs a short summary from standard error fields (`title`, `detail`, `message`, and validation `errors`). It reads response bodies only when payload capture is enabled, applies configured redaction in `PARTIAL` mode, masks common ICN/SSN/token patterns in the summary, and omits unstructured error bodies.
+- RTA writeback failure logs report the actual number of attempts made, which may be fewer than the configured maximum for non-retryable HTTP responses.
 - Configured APIM failure handling can buffer retry envelopes in Azure Service Bus. A Service Bus role can consume and reprocess those envelopes through the shared processor. Service Bus connectivity/certificate configuration is independent of the RTA client certificate trust setup.
 - Request history stores transaction metadata in Azure Table Storage and payload bodies in Blob Storage. `REQUEST_HISTORY_PAYLOAD_MODE` supports `FULL`, `PARTIAL`, and `OFF`. `OFF` suppresses payload capture for new history records; it does not remove payloads already stored.
 - The authenticated request-history UI uses Microsoft Entra sign-in and the `ProjectPulse.Admin` app role, assigned to the `PROJECT_PULSE_ADMINS` group. The UI shows the signed-in user and provides sign-out/navigation.
