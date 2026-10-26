@@ -4,6 +4,7 @@ public sealed record RequestHistoryItem(
     string RecordId,
     string BatchId,
     string UniqueId,
+    string? InputSource,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     string Status,
