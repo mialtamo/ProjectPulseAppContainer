@@ -125,6 +125,8 @@ public sealed class ClaimProcessorOptions
 
     public string GetRequestHistoryPayloadMode()
     {
+        // The explicit mode takes precedence; malformed values fail closed to OFF.
+        // Use the legacy boolean only when neither explicit setting is configured.
         var configuredMode =
             Environment.GetEnvironmentVariable("REQUEST_HISTORY_PAYLOAD_MODE")
             ?? RequestHistoryPayloadMode;
@@ -231,6 +233,8 @@ public sealed class ClaimProcessorOptions
         return Regex.Replace(redacted, @"\b\d{3}-?\d{2}-?\d{4}\b", "********");
     }
 
+    // API_CALL_HISTORY stores request/response bodies as JSON strings, so redact
+    // identifiers inside those embedded documents as well as ordinary JSON properties.
     private static bool TryRedactNestedJson(string value, out string redacted)
     {
         redacted = value;
