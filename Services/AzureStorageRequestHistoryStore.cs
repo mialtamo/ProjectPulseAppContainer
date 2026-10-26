@@ -405,6 +405,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 return _cachedTimingAverages!;
             }
 
+            // History has multiple rows per batch as each processing leg completes; average
+            // one sample per batch so later updates do not overweight a transaction.
             var batches = new Dictionary<string, BatchTimingValues>(StringComparer.Ordinal);
             await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
                 $"PartitionKey eq '{RecentPartitionKeyValue}'",
@@ -649,6 +651,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
     }
 
+    // Backfill the UI's recent-query partition once for existing history rows. The version
+    // marker is written only after every batch succeeds, allowing an interrupted backfill to retry.
     private async Task EnsureRecentIndexReadyAsync(CancellationToken cancellationToken)
     {
         if (_recentIndexInitialized)
