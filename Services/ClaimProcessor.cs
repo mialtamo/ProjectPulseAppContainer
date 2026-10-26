@@ -86,6 +86,8 @@ public sealed class ClaimProcessor(
         long? rtaPullDurationMs = null)
     {
         var results = new List<ClaimProcessingResult>(claims.Count);
+        // Keep each RTA item on its own APIM/writeback path. DOCMP may omit correlation IDs,
+        // so the single-item response is associated with its originating RTA request.
         foreach (var claim in claims)
         {
             var result = await ProcessSingleClaimAsync(
@@ -911,6 +913,8 @@ public sealed class ClaimProcessor(
             .ToUniversalTime()
             .ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
 
+        // Preserve the RTA API_CALL_HISTORY field names exactly; REQUEST_HEADER is the
+        // contract name used here for the captured APIM response headers.
         var apiCallHistory = new JsonObject();
         CopyJsonProperty(originatingRequest, apiCallHistory, "REQUEST_ID");
         CopyJsonProperty(originatingRequest, apiCallHistory, "IDEMPOTENCY_KEY");
@@ -955,6 +959,7 @@ public sealed class ClaimProcessor(
 
     private static JsonObject MapAccumulator(JsonObject source, string propertyName)
     {
+        // Copy the JSON numbers directly so fractional currency values remain decimals.
         var accumulator = new JsonObject();
         var sourceObject = source[propertyName];
         SetResponseValue(accumulator, "CURRENT", sourceObject, "current");
