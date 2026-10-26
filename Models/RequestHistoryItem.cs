@@ -24,7 +24,14 @@ public sealed record RequestHistoryItem(
     long? TranslationDurationMs = null,
     long? ApimRoundTripDurationMs = null,
     long? RtaWritebackDurationMs = null,
-    long? EndToEndDurationMs = null);
+    long? EndToEndDurationMs = null,
+    bool? RtaWritebackEnabled = null,
+    bool? RtaWritebackAttempted = null,
+    bool? RtaWritebackSucceeded = null,
+    int? RtaWritebackHttpStatusCode = null,
+    int? RtaWritebackAttempts = null,
+    string? RtaWritebackFailureKind = null,
+    string? RtaWritebackFailureMessage = null);
 
 public sealed record RequestHistoryPage(
     IReadOnlyList<RequestHistoryItem> Items,
