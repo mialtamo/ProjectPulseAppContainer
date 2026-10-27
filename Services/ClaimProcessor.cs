@@ -250,89 +250,89 @@ public sealed class ClaimProcessor(
                     _options.RedactRequestHistoryPayload(responseJson));
             }
 
-            if (!response.IsSuccessStatusCode)
+            if (TryParseApimError(responseJson, statusCode, out var apimError))
             {
-                if (TryParseApimError(responseJson, out var apimError))
+                // DOCMP can return an error envelope in the JSON body while APIM itself
+                // responds successfully. Treat the application error as final and report it to RTA.
+                circuitBreaker.RecordSuccess();
+                outageTracker.RecordApimSuccess();
+
+                logger.LogWarning(
+                    "APIM batch {BatchId} returned a JSON error envelope. HttpStatus={StatusCode}, Code={ErrorCode}",
+                    batchId,
+                    statusCode,
+                    apimError.Code);
+
+                var writebackSucceeded = false;
+                var writebackReason = "RtaStatusWritebackDisabled";
+                if (_options.RtaStatusWritebackEnabled)
                 {
-                    // Structured DOCMP errors are final business outcomes. Return them to RTA
-                    // rather than retrying a 404 (or another configured HTTP status) indefinitely.
-                    circuitBreaker.RecordSuccess();
-                    outageTracker.RecordApimSuccess();
-
-                    logger.LogWarning(
-                        "APIM batch {BatchId} returned structured error HTTP {StatusCode}, Code={ErrorCode}",
+                    var writebackStopwatch = Stopwatch.StartNew();
+                    var writebackResult = await WriteBatchResultsAsync(
+                        responseJson,
+                        statusCode,
+                        apimResponseReceivedAtUtc,
+                        apimRoundTripStopwatch.ElapsedMilliseconds,
+                        request.RequestUri?.ToString() ?? new Uri(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
+                        SerializeApimResponseHeaders(response),
                         batchId,
-                        statusCode,
-                        apimError.Code);
-
-                    var writebackSucceeded = false;
-                    var writebackReason = "RtaStatusWritebackDisabled";
-                    if (_options.RtaStatusWritebackEnabled)
-                    {
-                        var writebackStopwatch = Stopwatch.StartNew();
-                        var writebackResult = await WriteBatchResultsAsync(
-                            responseJson,
-                            statusCode,
-                            apimResponseReceivedAtUtc,
-                            apimRoundTripStopwatch.ElapsedMilliseconds,
-                            request.RequestUri?.ToString() ?? new Uri(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
-                            SerializeApimResponseHeaders(response),
-                            batchId,
-                            claims,
-                            correlationIds,
-                            cancellationToken,
-                            apimError.Message,
-                            apimError.Stack);
-                        writebackStopwatch.Stop();
-                        var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
-
-                        await TryRecordHistoryAsync(
-                            () => requestHistoryStore.RecordWritebackTimingAsync(
-                                batchId,
-                                correlationIds,
-                                writebackStopwatch.ElapsedMilliseconds,
-                                writebackResult.Details,
-                                writebackCompletedAtUtc,
-                                cancellationToken),
-                            "RTA error writeback timing");
-
-                        writebackSucceeded = writebackResult.Success;
-                        writebackReason = writebackResult.Reason;
-                    }
-
-                    var historyStatus = writebackSucceeded || !_options.RtaStatusWritebackEnabled
-                        ? "Alerted"
-                        : "WritebackFailed";
-                    var errorReason = $"ApimJsonError:{statusCode}:{apimError.Code ?? "Unknown"}";
-                    await TryRecordHistoryAsync(
-                        () => requestHistoryStore.RecordApimResultAsync(
-                            batchId,
-                            correlationIds,
-                            historyStatus,
-                            statusCode,
-                            apimError.Code,
-                            responseJson,
-                            writebackSucceeded || !_options.RtaStatusWritebackEnabled
-                                ? errorReason
-                                : $"{errorReason};{writebackReason}",
-                            false,
-                            DateTimeOffset.UtcNow,
-                            cancellationToken,
-                            apimResponseReceivedAtUtc,
-                            apimRoundTripStopwatch.ElapsedMilliseconds),
-                        "structured APIM error response");
-
-                    CompleteTelemetry(operation.Telemetry, false, errorReason, stopwatch.ElapsedMilliseconds);
-                    return BuildResults(
+                        claims,
                         correlationIds,
-                        writebackSucceeded || !_options.RtaStatusWritebackEnabled
-                            ? ClaimProcessingDisposition.Alerted
-                            : ClaimProcessingDisposition.FailedWriteback,
-                        errorReason,
-                        statusCode,
-                        apimError.Code);
+                        cancellationToken,
+                        apimError.Message,
+                        apimError.Stack);
+                    writebackStopwatch.Stop();
+                    var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
+
+                    await TryRecordHistoryAsync(
+                        () => requestHistoryStore.RecordWritebackTimingAsync(
+                            batchId,
+                            correlationIds,
+                            writebackStopwatch.ElapsedMilliseconds,
+                            writebackResult.Details,
+                            writebackCompletedAtUtc,
+                            cancellationToken),
+                        "RTA error writeback timing");
+
+                    writebackSucceeded = writebackResult.Success;
+                    writebackReason = writebackResult.Reason;
                 }
 
+                var historyStatus = writebackSucceeded || !_options.RtaStatusWritebackEnabled
+                    ? "Alerted"
+                    : "WritebackFailed";
+                var errorReason = $"ApimJsonError:{apimError.Code ?? "Unknown"}";
+                await TryRecordHistoryAsync(
+                    () => requestHistoryStore.RecordApimResultAsync(
+                        batchId,
+                        correlationIds,
+                        historyStatus,
+                        statusCode,
+                        apimError.Code,
+                        responseJson,
+                        writebackSucceeded || !_options.RtaStatusWritebackEnabled
+                            ? errorReason
+                            : $"{errorReason};{writebackReason}",
+                        false,
+                        DateTimeOffset.UtcNow,
+                        cancellationToken,
+                        apimResponseReceivedAtUtc,
+                        apimRoundTripStopwatch.ElapsedMilliseconds),
+                    "structured APIM error response");
+
+                CompleteTelemetry(operation.Telemetry, false, errorReason, stopwatch.ElapsedMilliseconds);
+                return BuildResults(
+                    correlationIds,
+                    writebackSucceeded || !_options.RtaStatusWritebackEnabled
+                        ? ClaimProcessingDisposition.Alerted
+                        : ClaimProcessingDisposition.FailedWriteback,
+                    errorReason,
+                    statusCode,
+                    apimError.Code);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
                 circuitBreaker.RecordFailure();
                 outageTracker.RecordApimFailure();
 
@@ -1009,7 +1009,9 @@ public sealed class ClaimProcessor(
     {
         var payload = new JsonObject();
         CopyJsonProperty(originatingRequest, payload, "REQUEST_TYPE");
-        payload["STATUS"] = isErrorResponse || apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
+        payload["STATUS"] = isErrorResponse
+            ? "FAILURE"
+            : apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
         payload["SUBSTATUS"] = null;
         payload["PROCESS_DT"] = apimResponseReceivedAtUtc
             .ToUniversalTime()
@@ -1265,7 +1267,7 @@ public sealed class ClaimProcessor(
 
     private sealed record ApimErrorDetails(string? Code, string Message, string? Stack);
 
-    private static bool TryParseApimError(string responseJson, out ApimErrorDetails error)
+    private static bool TryParseApimError(string responseJson, int httpStatusCode, out ApimErrorDetails error)
     {
         error = default!;
         if (string.IsNullOrWhiteSpace(responseJson))
@@ -1290,9 +1292,29 @@ public sealed class ClaimProcessor(
             var stack = TryGetStringProperty(root, "stack")
                 ?? TryGetStringProperty(root, "stackTrace")
                 ?? TryGetStringProperty(root, "errorStack");
+            var title = TryGetStringProperty(root, "title");
+            var detail = TryGetStringProperty(root, "detail");
+            var hasErrorsField = TryGetPropertyIgnoreCase(root, "errors", out var errors);
+            var hasErrorStatus = TryGetPropertyIgnoreCase(root, "status", out var status) &&
+                status.ValueKind == JsonValueKind.Number &&
+                status.TryGetInt32(out var embeddedStatusCode) &&
+                embeddedStatusCode >= 400;
+            var hasErrorContext = TryGetPropertyIgnoreCase(root, "path", out _) ||
+                TryGetPropertyIgnoreCase(root, "traceId", out _);
+            var hasErrorMarker = code is not null ||
+                title is not null ||
+                detail is not null ||
+                hasErrorsField ||
+                hasErrorStatus ||
+                (httpStatusCode >= 400 && message is not null) ||
+                (hasErrorContext && message is not null);
+            if (!hasErrorMarker)
+            {
+                return false;
+            }
 
             var detailMessages = new List<string>();
-            if (TryGetPropertyIgnoreCase(root, "errors", out var errors))
+            if (hasErrorsField)
             {
                 if (errors.ValueKind == JsonValueKind.Array)
                 {
