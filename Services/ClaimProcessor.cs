@@ -252,6 +252,87 @@ public sealed class ClaimProcessor(
 
             if (!response.IsSuccessStatusCode)
             {
+                if (TryParseApimError(responseJson, out var apimError))
+                {
+                    // Structured DOCMP errors are final business outcomes. Return them to RTA
+                    // rather than retrying a 404 (or another configured HTTP status) indefinitely.
+                    circuitBreaker.RecordSuccess();
+                    outageTracker.RecordApimSuccess();
+
+                    logger.LogWarning(
+                        "APIM batch {BatchId} returned structured error HTTP {StatusCode}, Code={ErrorCode}",
+                        batchId,
+                        statusCode,
+                        apimError.Code);
+
+                    var writebackSucceeded = false;
+                    var writebackReason = "RtaStatusWritebackDisabled";
+                    if (_options.RtaStatusWritebackEnabled)
+                    {
+                        var writebackStopwatch = Stopwatch.StartNew();
+                        var writebackResult = await WriteBatchResultsAsync(
+                            responseJson,
+                            statusCode,
+                            apimResponseReceivedAtUtc,
+                            apimRoundTripStopwatch.ElapsedMilliseconds,
+                            request.RequestUri?.ToString() ?? new Uri(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
+                            SerializeApimResponseHeaders(response),
+                            batchId,
+                            claims,
+                            correlationIds,
+                            cancellationToken,
+                            apimError.Message,
+                            apimError.Stack);
+                        writebackStopwatch.Stop();
+                        var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
+
+                        await TryRecordHistoryAsync(
+                            () => requestHistoryStore.RecordWritebackTimingAsync(
+                                batchId,
+                                correlationIds,
+                                writebackStopwatch.ElapsedMilliseconds,
+                                writebackResult.Details,
+                                writebackCompletedAtUtc,
+                                cancellationToken),
+                            "RTA error writeback timing");
+
+                        writebackSucceeded = writebackResult.Success;
+                        writebackReason = writebackResult.Reason;
+                    }
+
+                    var historyStatus = writebackSucceeded || !_options.RtaStatusWritebackEnabled
+                        ? "Alerted"
+                        : "WritebackFailed";
+                    var errorReason = $"ApimJsonError:{statusCode}:{apimError.Code ?? "Unknown"}";
+                    await TryRecordHistoryAsync(
+                        () => requestHistoryStore.RecordApimResultAsync(
+                            batchId,
+                            correlationIds,
+                            historyStatus,
+                            statusCode,
+                            apimError.Code,
+                            responseJson,
+                            writebackSucceeded || !_options.RtaStatusWritebackEnabled
+                                ? errorReason
+                                : $"{errorReason};{writebackReason}",
+                            false,
+                            DateTimeOffset.UtcNow,
+                            cancellationToken,
+                            apimResponseReceivedAtUtc,
+                            apimRoundTripStopwatch.ElapsedMilliseconds),
+                        "structured APIM error response");
+
+                    CompleteTelemetry(operation.Telemetry, false, errorReason, stopwatch.ElapsedMilliseconds);
+                    return BuildResults(
+                        correlationIds,
+                        writebackSucceeded || !_options.RtaStatusWritebackEnabled
+                            ? ClaimProcessingDisposition.Alerted
+                            : ClaimProcessingDisposition.FailedWriteback,
+                        errorReason,
+                        statusCode,
+                        apimError.Code);
+                }
+
                 circuitBreaker.RecordFailure();
                 outageTracker.RecordApimFailure();
 
@@ -768,7 +849,9 @@ public sealed class ClaimProcessor(
         string batchId,
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? apimErrorMessage = null,
+        string? apimErrorStack = null)
     {
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -858,7 +941,7 @@ public sealed class ClaimProcessor(
             var originatingRequest = requestsByCorrelationId[correlationId];
             var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
             var isInitialRequest = string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase);
-            var statusPayload = isInitialRequest
+            var statusPayload = apimErrorMessage is not null
                 ? BuildInitialRtaStatusPayload(
                     item,
                     originatingRequest,
@@ -868,8 +951,22 @@ public sealed class ClaimProcessor(
                     apimResponseTimeMs,
                     _options.ApimBaseUrl,
                     _options.ApimAdjudicationPath,
-                    apimResponseHeaders)
-                : BuildLegacyRtaStatusPayload(item, originatingRequest);
+                    apimResponseHeaders,
+                    apimErrorMessage,
+                    apimErrorStack,
+                    isErrorResponse: true)
+                : isInitialRequest
+                    ? BuildInitialRtaStatusPayload(
+                        item,
+                        originatingRequest,
+                        responseJson,
+                        apimStatusCode,
+                        apimResponseReceivedAtUtc,
+                        apimResponseTimeMs,
+                        _options.ApimBaseUrl,
+                        _options.ApimAdjudicationPath,
+                        apimResponseHeaders)
+                    : BuildLegacyRtaStatusPayload(item, originatingRequest);
             var statusPayloadJson = statusPayload.ToJsonString();
 
             await TryRecordHistoryAsync(
@@ -905,11 +1002,14 @@ public sealed class ClaimProcessor(
         long apimResponseTimeMs,
         string apimBaseUrl,
         string apimEndpoint,
-        string apimResponseHeaders)
+        string apimResponseHeaders,
+        string? errorMessage = null,
+        string? errorStack = null,
+        bool isErrorResponse = false)
     {
         var payload = new JsonObject();
         CopyJsonProperty(originatingRequest, payload, "REQUEST_TYPE");
-        payload["STATUS"] = apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
+        payload["STATUS"] = isErrorResponse || apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
         payload["SUBSTATUS"] = null;
         payload["PROCESS_DT"] = apimResponseReceivedAtUtc
             .ToUniversalTime()
@@ -932,9 +1032,16 @@ public sealed class ClaimProcessor(
         apiCallHistory["RESPONSE_HTTP_STATUS_CODE"] = apimStatusCode;
         apiCallHistory["RESPONSE_BODY"] = rawApimResponse;
         apiCallHistory["RESPONSE_TIME_MS"] = apimResponseTimeMs;
-        apiCallHistory["ERROR_MESSAGE"] = null;
-        apiCallHistory["ERROR_STACK"] = null;
+        apiCallHistory["ERROR_MESSAGE"] = errorMessage;
+        apiCallHistory["ERROR_STACK"] = errorStack;
         payload["API_CALL_HISTORY"] = apiCallHistory;
+
+        if (isErrorResponse)
+        {
+            payload["INITIAL_REQUEST_RESPONSE"] = null;
+            payload["UPDATE_REQUEST_RESPONSE"] = null;
+            return payload;
+        }
 
         // DOCMP's response body contains these business fields at its root. This is
         // separate from INITIAL_REQUEST_METADATA, which belongs to the RTA request.
@@ -1154,6 +1261,112 @@ public sealed class ClaimProcessor(
             : value.ToString();
 
         return !string.IsNullOrWhiteSpace(correlationId);
+    }
+
+    private sealed record ApimErrorDetails(string? Code, string Message, string? Stack);
+
+    private static bool TryParseApimError(string responseJson, out ApimErrorDetails error)
+    {
+        error = default!;
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var code = TryGetStringProperty(root, "errorCode")
+                ?? TryGetStringProperty(root, "code");
+            var message = TryGetStringProperty(root, "message")
+                ?? TryGetStringProperty(root, "detail")
+                ?? TryGetStringProperty(root, "title");
+            var stack = TryGetStringProperty(root, "stack")
+                ?? TryGetStringProperty(root, "stackTrace")
+                ?? TryGetStringProperty(root, "errorStack");
+
+            var detailMessages = new List<string>();
+            if (TryGetPropertyIgnoreCase(root, "errors", out var errors))
+            {
+                if (errors.ValueKind == JsonValueKind.Array)
+                {
+                    detailMessages.AddRange(errors.EnumerateArray()
+                        .Where(value => value.ValueKind == JsonValueKind.String)
+                        .Select(value => value.GetString()!)
+                        .Where(value => !string.IsNullOrWhiteSpace(value)));
+                }
+                else if (errors.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var field in errors.EnumerateObject())
+                    {
+                        if (field.Value.ValueKind == JsonValueKind.Array)
+                        {
+                            detailMessages.AddRange(field.Value.EnumerateArray()
+                                .Where(value => value.ValueKind == JsonValueKind.String)
+                                .Select(value => $"{field.Name}: {value.GetString()}")
+                                .Where(value => !string.IsNullOrWhiteSpace(value)));
+                        }
+                        else if (field.Value.ValueKind == JsonValueKind.String &&
+                                 !string.IsNullOrWhiteSpace(field.Value.GetString()))
+                        {
+                            detailMessages.Add($"{field.Name}: {field.Value.GetString()}");
+                        }
+                    }
+                }
+                else if (errors.ValueKind == JsonValueKind.String &&
+                         !string.IsNullOrWhiteSpace(errors.GetString()))
+                {
+                    detailMessages.Add(errors.GetString()!);
+                }
+            }
+
+            var messageParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                messageParts.Add(code);
+            }
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                messageParts.Add(message);
+            }
+            if (detailMessages.Count > 0)
+            {
+                messageParts.AddRange(detailMessages.Distinct(StringComparer.Ordinal));
+            }
+
+            if (messageParts.Count == 0)
+            {
+                messageParts.Add("APIM returned a JSON error response.");
+            }
+
+            var combinedMessage = string.Join(" — ", messageParts);
+            if (combinedMessage.Length > 2000)
+            {
+                combinedMessage = combinedMessage[..2000];
+            }
+
+            error = new ApimErrorDetails(code, combinedMessage, stack);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string? TryGetStringProperty(JsonElement source, string propertyName)
+    {
+        return TryGetPropertyIgnoreCase(source, propertyName, out var value) &&
+               value.ValueKind == JsonValueKind.String &&
+               !string.IsNullOrWhiteSpace(value.GetString())
+            ? value.GetString()
+            : null;
     }
 
     private string? TryGetBusinessCode(string json)
