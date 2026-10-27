@@ -1051,8 +1051,6 @@ public sealed class ClaimProcessor(
         // DOCMP's response body contains these business fields at its root. This is
         // separate from INITIAL_REQUEST_METADATA, which belongs to the RTA request.
         var docmpResponse = JsonNode.Parse(apimResponse.GetRawText()) as JsonObject ?? new JsonObject();
-        var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
-        var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
 
         if (isUpdateRequest)
         {
