@@ -941,8 +941,9 @@ public sealed class ClaimProcessor(
             var originatingRequest = requestsByCorrelationId[correlationId];
             var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
             var isInitialRequest = string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase);
+            var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
             var statusPayload = apimErrorMessage is not null
-                ? BuildInitialRtaStatusPayload(
+                ? BuildRtaStatusPayload(
                     item,
                     originatingRequest,
                     responseJson,
@@ -955,8 +956,8 @@ public sealed class ClaimProcessor(
                     apimErrorMessage,
                     apimErrorStack,
                     isErrorResponse: true)
-                : isInitialRequest
-                    ? BuildInitialRtaStatusPayload(
+                : isInitialRequest || isUpdateRequest
+                    ? BuildRtaStatusPayload(
                         item,
                         originatingRequest,
                         responseJson,
@@ -993,7 +994,7 @@ public sealed class ClaimProcessor(
         return (true, "WritebackCompleted", rtaWritebackResult);
     }
 
-    private static JsonObject BuildInitialRtaStatusPayload(
+    private static JsonObject BuildRtaStatusPayload(
         JsonElement apimResponse,
         JsonElement originatingRequest,
         string rawApimResponse,
@@ -1024,7 +1025,9 @@ public sealed class ClaimProcessor(
         CopyJsonProperty(originatingRequest, apiCallHistory, "IDEMPOTENCY_KEY");
         apiCallHistory["EXTERNAL_CORRELATION_ID"] = null;
         CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
-        apiCallHistory["IDENTIFIER"] = "initial-accum-request";
+        var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
+        var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
+        apiCallHistory["IDENTIFIER"] = isUpdateRequest ? "update-accum-request" : "initial-accum-request";
         apiCallHistory["HTTP_METHOD"] = "POST";
         apiCallHistory["API_URL"] = $"{apimBaseUrl.TrimEnd('/')}/";
         apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
@@ -1048,6 +1051,28 @@ public sealed class ClaimProcessor(
         // DOCMP's response body contains these business fields at its root. This is
         // separate from INITIAL_REQUEST_METADATA, which belongs to the RTA request.
         var docmpResponse = JsonNode.Parse(apimResponse.GetRawText()) as JsonObject ?? new JsonObject();
+        var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
+        var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
+
+        if (isUpdateRequest)
+        {
+            var updateResponse = new JsonObject();
+            SetResponseValue(updateResponse, "PATIENT_ICN", docmpResponse, "patientIcn");
+            SetResponseValue(updateResponse, "PROGRAM", docmpResponse, "program");
+
+            var updatedAccumulator = docmpResponse["updatedAccumulator"] as JsonObject ?? new JsonObject();
+            updateResponse["UPDATED_ACCUMULATOR"] = new JsonObject
+            {
+                ["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(updatedAccumulator["individualDeductible"]),
+                ["FAMILY_DEDUCTIBLE"] = MapAccumulator(updatedAccumulator["familyDeductible"]),
+                ["OUT_OF_POCKET_MAX"] = MapAccumulator(updatedAccumulator["outOfPocketMax"])
+            };
+            updateResponse["LAST_ADJUSTMENTS"] = MapLastAdjustments(docmpResponse["lastAdjustments"]);
+
+            payload["INITIAL_REQUEST_RESPONSE"] = null;
+            payload["UPDATE_REQUEST_RESPONSE"] = updateResponse;
+            return payload;
+        }
 
         var initialResponse = new JsonObject();
         SetResponseValue(initialResponse, "PATIENT_ICN", docmpResponse, "patientIcn");
@@ -1059,23 +1084,49 @@ public sealed class ClaimProcessor(
         SetResponseValue(benefitPeriod, "END_DT", docmpResponse["benefitPeriod"], "endDate");
         initialResponse["BENEFIT_PERIOD"] = benefitPeriod;
 
-        initialResponse["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(docmpResponse, "individualDeductible");
-        initialResponse["FAMILY_DEDUCTIBLE"] = MapAccumulator(docmpResponse, "familyDeductible");
-        initialResponse["OUT_OF_POCKET_MAX"] = MapAccumulator(docmpResponse, "outOfPocketMax");
+        initialResponse["INDIVIDUAL_DEDUCTIBLE"] = MapAccumulator(docmpResponse["individualDeductible"]);
+        initialResponse["FAMILY_DEDUCTIBLE"] = MapAccumulator(docmpResponse["familyDeductible"]);
+        initialResponse["OUT_OF_POCKET_MAX"] = MapAccumulator(docmpResponse["outOfPocketMax"]);
 
         payload["INITIAL_REQUEST_RESPONSE"] = initialResponse;
         payload["UPDATE_REQUEST_RESPONSE"] = null;
         return payload;
     }
 
-    private static JsonObject MapAccumulator(JsonObject source, string propertyName)
+    private static JsonObject MapAccumulator(JsonNode? sourceObject)
     {
-        // Copy the JSON numbers directly so fractional currency values remain decimals.
+        // Clone the JSON number nodes directly so decimal values retain their numeric type.
         var accumulator = new JsonObject();
-        var sourceObject = source[propertyName];
         SetResponseValue(accumulator, "CURRENT", sourceObject, "current");
         SetResponseValue(accumulator, "MAX", sourceObject, "max");
         return accumulator;
+    }
+
+    private static JsonArray MapLastAdjustments(JsonNode? source)
+    {
+        var adjustments = new JsonArray();
+        if (source is not JsonArray sourceItems)
+        {
+            return adjustments;
+        }
+
+        foreach (var sourceItem in sourceItems)
+        {
+            var adjustment = new JsonObject();
+            SetResponseValue(adjustment, "ADJUSTMENT_ID", sourceItem, "adjustmentId");
+            SetResponseValue(adjustment, "CLAIM_NUMBER", sourceItem, "claimNumber");
+            SetResponseValue(adjustment, "DELTA", sourceItem, "delta");
+            SetResponseValue(adjustment, "ACCUMULATOR_TYPE", sourceItem, "accumulatorType");
+            SetResponseValue(adjustment, "START_DATE_OF_SERVICE", sourceItem, "startDateOfService");
+            SetResponseValue(adjustment, "END_DATE_OF_SERVICE", sourceItem, "endDateOfService");
+            SetResponseValue(adjustment, "UNITS", sourceItem, "units");
+            SetResponseValue(adjustment, "SOURCE", sourceItem, "source");
+            SetResponseValue(adjustment, "NOTES", sourceItem, "notes");
+            SetResponseValue(adjustment, "CREATE_DATE", sourceItem, "createDate");
+            adjustments.Add(adjustment);
+        }
+
+        return adjustments;
     }
 
     private static void SetResponseValue(JsonObject target, string targetName, JsonNode? sourceObject, string sourceName)
