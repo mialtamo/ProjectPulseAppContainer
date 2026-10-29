@@ -16,6 +16,7 @@ public sealed class ClaimProcessor(
     IAuthHeaderProvider authHeaderProvider,
     IAppApiClient appApiClient,
     IRetryQueue retryQueue,
+    IRtaNotificationClient rtaNotificationClient,
     IRequestHistoryStore requestHistoryStore,
     PayloadTransformer transformer,
     OutboundCircuitBreaker circuitBreaker,
@@ -25,7 +26,6 @@ public sealed class ClaimProcessor(
     ILogger<ClaimProcessor> logger) : IClaimProcessor
 {
     private readonly ClaimProcessorOptions _options = options.Value;
-    private readonly HashSet<int> _retryHttpCodes = options.Value.GetRetryHttpStatusCodeSet();
     private readonly HashSet<string> _jsonRetryCodes = options.Value.GetJsonRetryCodeSet();
     private readonly HashSet<string> _jsonAlertCodes = options.Value.GetJsonAlertCodeSet();
 
@@ -48,9 +48,10 @@ public sealed class ClaimProcessor(
         {
             await QueueAllAsync(claims, transformed, reason, cancellationToken);
         }
-        catch
+        catch (Exception ex)
         {
             outageTracker.RecordBufferFailure();
+            await NotifyServiceBusFailureAsync(claims, reason, ex, cancellationToken);
             throw;
         }
 
@@ -132,9 +133,10 @@ public sealed class ClaimProcessor(
             {
                 await QueueAllAsync(claims, transformedClaims, "OutboundCircuitOpen", cancellationToken);
             }
-            catch
+            catch (Exception ex)
             {
                 outageTracker.RecordBufferFailure();
+                await NotifyServiceBusFailureAsync(claims, "OutboundCircuitOpen", ex, cancellationToken);
                 throw;
             }
 
@@ -205,6 +207,113 @@ public sealed class ClaimProcessor(
             apimRoundTripStopwatch.Stop();
             var apimResponseReceivedAtUtc = DateTimeOffset.UtcNow;
             var statusCode = (int)response.StatusCode;
+
+            // Only the transport-level HTTP status selects retry/notification handling.
+            // A status-like value inside a DOCMP JSON body is handled below as an application response.
+            if (statusCode != 200)
+            {
+                circuitBreaker.RecordFailure();
+                outageTracker.RecordApimFailure();
+                var reason = $"Http{statusCode}";
+
+                if (_options.GetRetryHttpStatusCodeSet().Contains(statusCode))
+                {
+                    try
+                    {
+                        await QueueAllAsync(claims, transformedClaims, reason, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        outageTracker.RecordBufferFailure();
+                        await RecordBufferFailureHistoryAsync(
+                            batchId,
+                            correlationIds,
+                            statusCode,
+                            null,
+                            responseJson,
+                            $"ServiceBusBufferFailed:{reason}");
+                        await NotifyApimHttpFailureAsync(
+                            claims[0],
+                            statusCode,
+                            response.ReasonPhrase,
+                            request.RequestUri?.ToString(),
+                            apimRoundTripStopwatch.ElapsedMilliseconds,
+                            serviceBusQueued: false,
+                            serviceBusFailure: ex,
+                            cancellationToken);
+                        logger.LogError(
+                            ex,
+                            "APIM returned HTTP {StatusCode} for batch {BatchId}, but retry buffering failed. The APIM response was saved in request history.",
+                            statusCode,
+                            batchId);
+                        throw;
+                    }
+
+                    await TryRecordHistoryAsync(
+                        () => requestHistoryStore.RecordApimResultAsync(
+                            batchId,
+                            correlationIds,
+                            "Buffered",
+                            statusCode,
+                            null,
+                            responseJson,
+                            reason,
+                            true,
+                            DateTimeOffset.UtcNow,
+                            cancellationToken,
+                            apimResponseReceivedAtUtc,
+                            apimRoundTripStopwatch.ElapsedMilliseconds),
+                        "retryable HTTP response");
+
+                    await NotifyApimHttpFailureAsync(
+                        claims[0],
+                        statusCode,
+                        response.ReasonPhrase,
+                        request.RequestUri?.ToString(),
+                        apimRoundTripStopwatch.ElapsedMilliseconds,
+                        serviceBusQueued: true,
+                        serviceBusFailure: null,
+                        cancellationToken);
+
+                    CompleteTelemetry(operation.Telemetry, false, $"HTTP {statusCode}", stopwatch.ElapsedMilliseconds);
+                    return BuildResults(correlationIds, ClaimProcessingDisposition.QueuedForRetry, reason, statusCode);
+                }
+
+                logger.LogError(
+                    "APIM batch {BatchId} with {Count} records received non-retry HTTP status {StatusCode}",
+                    batchId,
+                    claims.Count,
+                    statusCode);
+
+                await TryRecordHistoryAsync(
+                    () => requestHistoryStore.RecordApimResultAsync(
+                        batchId,
+                        correlationIds,
+                        "Alerted",
+                        statusCode,
+                        null,
+                        responseJson,
+                        reason,
+                        false,
+                        DateTimeOffset.UtcNow,
+                        cancellationToken,
+                        apimResponseReceivedAtUtc,
+                        apimRoundTripStopwatch.ElapsedMilliseconds),
+                    "non-retry HTTP response");
+
+                await NotifyApimHttpFailureAsync(
+                    claims[0],
+                    statusCode,
+                    response.ReasonPhrase,
+                    request.RequestUri?.ToString(),
+                    apimRoundTripStopwatch.ElapsedMilliseconds,
+                    serviceBusQueued: false,
+                    serviceBusFailure: null,
+                    cancellationToken);
+
+                CompleteTelemetry(operation.Telemetry, false, $"HTTP {statusCode}", stopwatch.ElapsedMilliseconds);
+                return BuildResults(correlationIds, ClaimProcessingDisposition.Alerted, reason, statusCode);
+            }
 
             if (!ValidateApimResponseToken(response, batchId))
             {
@@ -331,85 +440,6 @@ public sealed class ClaimProcessor(
                     apimError.Code);
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                circuitBreaker.RecordFailure();
-                outageTracker.RecordApimFailure();
-
-                if (_retryHttpCodes.Contains(statusCode))
-                {
-                    try
-                    {
-                        await QueueAllAsync(claims, transformedClaims, $"Http{statusCode}", cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        outageTracker.RecordBufferFailure();
-                        await RecordBufferFailureHistoryAsync(
-                            batchId,
-                            correlationIds,
-                            statusCode,
-                            null,
-                            responseJson,
-                            $"ServiceBusBufferFailed:Http{statusCode}");
-                        logger.LogError(
-                            ex,
-                            "APIM returned HTTP {StatusCode} for batch {BatchId}, but retry buffering failed. The APIM response was saved in request history.",
-                            statusCode,
-                            batchId);
-                        throw;
-                    }
-
-                    await TryRecordHistoryAsync(
-                        () => requestHistoryStore.RecordApimResultAsync(
-                            batchId,
-                            correlationIds,
-                            "Buffered",
-                            statusCode,
-                            null,
-                            responseJson,
-                            $"Http{statusCode}",
-                            true,
-                            DateTimeOffset.UtcNow,
-                            cancellationToken,
-
-                            apimResponseReceivedAtUtc,
-
-                            apimRoundTripStopwatch.ElapsedMilliseconds),
-                        "retryable HTTP response");
-
-                    CompleteTelemetry(operation.Telemetry, false, $"HTTP {statusCode}", stopwatch.ElapsedMilliseconds);
-                    return BuildResults(correlationIds, ClaimProcessingDisposition.QueuedForRetry, $"Http{statusCode}", statusCode);
-                }
-
-                logger.LogError(
-                    "APIM batch {BatchId} with {Count} records received non-retry HTTP status {StatusCode}",
-                    batchId,
-                    claims.Count,
-                    statusCode);
-
-                await TryRecordHistoryAsync(
-                    () => requestHistoryStore.RecordApimResultAsync(
-                        batchId,
-                        correlationIds,
-                        "Alerted",
-                        statusCode,
-                        null,
-                        responseJson,
-                        $"Http{statusCode}",
-                        false,
-                        DateTimeOffset.UtcNow,
-                        cancellationToken,
-
-                        apimResponseReceivedAtUtc,
-
-                        apimRoundTripStopwatch.ElapsedMilliseconds),
-                    "non-retry HTTP response");
-
-                CompleteTelemetry(operation.Telemetry, false, $"HTTP {statusCode}", stopwatch.ElapsedMilliseconds);
-                return BuildResults(correlationIds, ClaimProcessingDisposition.Alerted, $"Http{statusCode}", statusCode);
-            }
-
             circuitBreaker.RecordSuccess();
             outageTracker.RecordApimSuccess();
             var businessCode = TryGetBusinessCode(responseJson);
@@ -430,6 +460,11 @@ public sealed class ClaimProcessor(
                         businessCode,
                         responseJson,
                         $"ServiceBusBufferFailed:JsonCode:{businessCode}");
+                    await NotifyServiceBusFailureAsync(
+                        claims,
+                        $"JsonCode:{businessCode}",
+                        ex,
+                        cancellationToken);
                     logger.LogError(
                         ex,
                         "APIM response for batch {BatchId} had retryable business code {BusinessCode}, but retry buffering failed. The APIM response was saved in request history.",
@@ -585,9 +620,10 @@ public sealed class ClaimProcessor(
             {
                 await QueueAllAsync(claims, transformedClaims, "ApimTimeout", cancellationToken);
             }
-            catch
+            catch (Exception queueException)
             {
                 outageTracker.RecordBufferFailure();
+                await NotifyServiceBusFailureAsync(claims, "ApimTimeout", queueException, cancellationToken);
                 throw;
             }
 
@@ -620,9 +656,10 @@ public sealed class ClaimProcessor(
             {
                 await QueueAllAsync(claims, transformedClaims, "NetworkFailure", cancellationToken);
             }
-            catch
+            catch (Exception queueException)
             {
                 outageTracker.RecordBufferFailure();
+                await NotifyServiceBusFailureAsync(claims, "NetworkFailure", queueException, cancellationToken);
                 throw;
             }
 
@@ -716,6 +753,71 @@ public sealed class ClaimProcessor(
 
         throw new InvalidOperationException(
             $"Queued request JSON does not contain configured correlation ID field '{_options.CorrelationIdField}'.");
+    }
+
+    private async Task NotifyApimHttpFailureAsync(
+        JsonElement claim,
+        int statusCode,
+        string? reasonPhrase,
+        string? apimUrl,
+        long responseTimeMs,
+        bool serviceBusQueued,
+        Exception? serviceBusFailure,
+        CancellationToken cancellationToken)
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["HTTP_STATUS_CODE"] = statusCode.ToString(),
+            ["HTTP_REASON_PHRASE"] = reasonPhrase ?? string.Empty,
+            ["APIM_URL"] = apimUrl ?? string.Empty,
+            ["RESPONSE_TIME_MS"] = responseTimeMs.ToString(),
+            ["SERVICE_BUS_QUEUE"] = _options.ServiceBusQueueName,
+            ["SERVICE_BUS_QUEUED"] = serviceBusQueued.ToString()
+        };
+
+        if (serviceBusFailure is not null)
+        {
+            attributes["SERVICE_BUS_FAILURE_TYPE"] = serviceBusFailure.GetType().Name;
+            attributes["SERVICE_BUS_FAILURE_MESSAGE"] = serviceBusFailure.Message;
+        }
+
+        var body = serviceBusFailure is null
+            ? $"Project Pulse received HTTP {statusCode} from APIM. The request {(serviceBusQueued ? "was queued for retry" : "was not queued because this status is not configured for retry")}."
+            : $"Project Pulse received HTTP {statusCode} from APIM and could not queue the request to Service Bus. Service Bus error: {serviceBusFailure.GetType().Name}: {serviceBusFailure.Message}";
+
+        await rtaNotificationClient.SendFailureAsync(
+            claim,
+            "APIM",
+            "HTTP_STATUS",
+            body,
+            attributes,
+            cancellationToken);
+    }
+
+    private async Task NotifyServiceBusFailureAsync(
+        IReadOnlyList<JsonElement> claims,
+        string reason,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["SERVICE_BUS_QUEUE"] = _options.ServiceBusQueueName,
+            ["SERVICE_BUS_FAILURE_TYPE"] = exception.GetType().Name,
+            ["SERVICE_BUS_FAILURE_MESSAGE"] = exception.Message,
+            ["QUEUE_REASON"] = reason
+        };
+
+        foreach (var claim in claims)
+        {
+            await rtaNotificationClient.SendFailureAsync(
+                claim,
+                "SERVICE_BUS",
+                "SEND_FAILURE",
+                $"Project Pulse could not send the request to Service Bus for retry. Reason: {reason}. Error: {exception.GetType().Name}: {exception.Message}",
+                attributes,
+                cancellationToken);
+        }
     }
 
     private async Task QueueAllAsync(

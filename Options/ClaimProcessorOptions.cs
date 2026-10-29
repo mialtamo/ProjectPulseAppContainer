@@ -24,6 +24,8 @@ public sealed class ClaimProcessorOptions
     public string RtaHealthPath { get; init; } = "/healthchecks";
     public string RtaDbHealthPath { get; init; } = "/healthchecks/db/app";
     public string RtaStatusPathTemplate { get; init; } = "/requests/{correlationId}/status";
+    public string RTANotificationsBaseURL { get; init; } = string.Empty;
+    public string RTANotificationsPath { get; init; } = "/admin/notifications";
     public int RtaPageSize { get; init; } = 100;
     public int RtaPagesPerPoll { get; init; } = 1;
     public bool RtaStatusWritebackEnabled { get; init; } = false;

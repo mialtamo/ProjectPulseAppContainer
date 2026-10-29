@@ -11,6 +11,8 @@
   "RtaHealthPath": "/health",
   "RtaDbHealthPath": "/health",
   "RtaStatusPathTemplate": "/requests/{correlationId}/status",
+  "RTANotificationsBaseURL": "",
+  "RTANotificationsPath": "/admin/notifications",
   "RtaPageSize": "100",
   "RtaPagesPerPoll": "1",
   "RtaStatusWritebackEnabled": "true",

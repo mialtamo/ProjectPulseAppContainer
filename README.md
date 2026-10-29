@@ -252,6 +252,10 @@ Set `REQUEST_HISTORY_PAYLOAD_MODE` to control payload logging and request-histor
 
 The legacy `LOG_POLL_PAYLOADS` setting is honored only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset (`true` maps to `FULL`; `false` maps to `OFF`). Set the new variable explicitly to avoid ambiguity. Switching to `OFF` hides existing payloads but does not delete existing blobs; `PARTIAL` masks payloads when they are saved and when older blobs are read.
 
+### RTA failure notifications
+
+Configure `RTANotificationsBaseURL` and `RTANotificationsPath` to enable POSTs to RTA's `/admin/notifications` endpoint. Actual APIM HTTP statuses other than 200 trigger a notification; configured retryable HTTP statuses are also sent to Service Bus. A Service Bus enqueue failure triggers a notification too. Values such as `"status": 404` inside an HTTP 200 DOCMP JSON body are application data and do not trigger HTTP retry or notification handling. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include request IDs when available, and omit raw payloads and patient identifiers.
+
 ### Required secret references
 
 `ApimResponseToken` is the expected value returned by APIM in the configured response-token header. Store it as a Container Apps secret, recommended name `apim-response-token`, and configure the `ApimResponseToken` environment variable to reference that secret.
