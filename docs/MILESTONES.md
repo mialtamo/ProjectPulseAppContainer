@@ -18,7 +18,7 @@ Remaining: verify successful PUT and expected status transitions in each target 
 
 ## M3 - Failure handling and Service Bus — In progress
 
-Configured APIM outage handling can buffer work; the Service Bus runtime role can receive and reprocess retry envelopes. Health gating and failure logging are implemented.
+Configured APIM outage handling can buffer work; the Service Bus runtime role can receive and reprocess retry envelopes. Health gating, failure logging, and RTA notifications for actual APIM HTTP non-200 responses and Service Bus enqueue failures are implemented in the repository. DOCMP error codes embedded in an HTTP 200 JSON response remain application responses, not HTTP retry or notification triggers.
 
 Remaining: exercise and document the full failure/recovery matrix in the target environment, including Service Bus TLS/configuration, APIM timeout/429/5xx, buffering failure, and recovery. Confirm no claim is silently lost.
 

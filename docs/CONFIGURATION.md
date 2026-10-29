@@ -57,6 +57,8 @@ The configured storage account must be reachable from the Container App environm
 | `RtaHealthPath` | Both | No | `/healthchecks` in code | No | RTA health endpoint path. |
 | `RtaDbHealthPath` | Both | No | `/healthchecks/db/app` in code | No | RTA database health endpoint path. |
 | `RtaStatusPathTemplate` | Both | No | `/requests/{correlationId}/status` | No | Path template used for result writeback. |
+| `RTANotificationsBaseURL` | Both | Required to send notifications | RTA admin API base URL | No | Base URL for the RTA catastrophic-error notification endpoint. |
+| `RTANotificationsPath` | Both | No | `/admin/notifications` | No | Path for RTA admin notifications. |
 | `RtaPageSize` | RTA | No | `100` | No | Requested RTA page size. Clamped to 1-100. |
 | `RtaPagesPerPoll` | RTA | No | `1` | No | Number of pages processed per poll. Clamped to 1-3. |
 | `RtaStatusWritebackEnabled` | Both | No | `false` in code | No | Enables result writeback to RTA. |
@@ -78,7 +80,7 @@ For `INITIAL_REQUEST`, Project Pulse sends one APIM request per RTA record. The 
 
 For enabled initial-request writeback, Project Pulse builds the RTA status PUT body with an `API_CALL_HISTORY` object. Its request and response bodies are JSON strings: `REQUEST_BODY` contains the individual raw RTA item and `RESPONSE_BODY` contains the raw APIM response. `HTTP_METHOD` is `POST`; `API_URL` is the APIM base URL from `ApimBaseUrl`, normalized to end with a slash; `API_ENDPOINT` is `ApimAdjudicationPath` with leading and trailing slashes removed (for example, `pulse/pending`). `REQUEST_HEADER` (singular) contains the serialized headers received from APIM, with the configured APIM response-token value redacted. `RESPONSE_HTTP_STATUS_CODE` and `RESPONSE_TIME_MS` describe the APIM response. `EXTERNAL_CORRELATION_ID`, `REQUEST_QUERY_PARAMETER`, `ERROR_MESSAGE`, and `ERROR_STACK` are null.
 
-| `RetryHttpStatusCodes` | Both | No | `404,408,429,500,502,503,504` | No | HTTP status codes considered retryable. |
+| `RetryHttpStatusCodes` | Both | No | `404,408,429,500,502,503,504` | No | Actual APIM HTTP status codes considered retryable. A status value inside a JSON response body is never treated as an HTTP status. |
 | `JsonResponseCodeField` | Both | No | `RESPONSE_CODE` | No | JSON field inspected for application response codes. |
 | `JsonRetryCodes` | Both | No | empty | No | Optional comma-separated application response codes that should be retried. |
 | `JsonAlertCodes` | Both | No | `419` | No | Comma-separated application response codes that should be alerted. |
@@ -98,6 +100,12 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 | `REQUEST_HISTORY_PAYLOAD_MODE` | Both | No | `OFF` (when unset, falls back to legacy setting) | No | `OFF` suppresses payload bodies while preserving transaction metadata; `PARTIAL` masks common identifiers and personal-name fields; `FULL` captures unredacted payloads for synthetic POC data only. |
 | `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Deprecated compatibility setting. Used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset; `true` maps to `FULL`, `false` maps to `OFF`. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Both | Recommended | Azure-provided value | **Yes** | Standard Application Insights connection string consumed by ASP.NET Core Application Insights telemetry. |
+
+## RTA failure notifications
+
+Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` when APIM returns an actual HTTP status other than 200. Statuses listed in `RetryHttpStatusCodes` are also buffered to Service Bus. If Service Bus buffering fails, the notification includes both failures. A Service Bus enqueue failure in other buffering paths also generates an RTA notification.
+
+Status-like values inside a DOCMP JSON response are application data, not HTTP statuses. For example, an HTTP 200 response whose JSON contains `"status": 404` is handled as a DOCMP response and does not trigger the HTTP retry or notification path. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include `REQUEST_ID` and `REQUEST_QUEUE_ID` when present in the RTA item, and include concise diagnostics in `NOTIFICATION_ATTRS`; raw request/response payloads and patient identifiers are not included. Notifications use `AppApiScope` for RTA authorization.
 
 ## POC RTA settings currently used
 

@@ -37,6 +37,11 @@ builder.Services.AddHttpClient("Apim", (sp, client) =>
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
 
+builder.Services.AddHttpClient("RtaNotifications", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
 builder.Services.AddHttpClient("HealthCheck", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(3);
@@ -52,6 +57,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<IAuthHeaderProvider, ManagedIdentityAuthHeaderProvider>();
 builder.Services.AddSingleton<IHealthGate, HealthGate>();
 builder.Services.AddSingleton<IAppApiClient, AppApiClient>();
+builder.Services.AddSingleton<IRtaNotificationClient, RtaNotificationClient>();
 builder.Services.AddSingleton<IRetryQueue, ServiceBusRetryQueue>();
 builder.Services.AddSingleton<IRequestHistoryStore, AzureStorageRequestHistoryStore>();
 builder.Services.AddSingleton<PayloadTransformer>();
