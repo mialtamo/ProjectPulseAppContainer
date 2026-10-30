@@ -42,6 +42,8 @@ public sealed class ClaimProcessor(
 
         var transformed = TransformClaims(claims);
         var ids = claims.Select(GetCorrelationId).ToArray();
+        var rtaRequestIds = claims.Select(claim =>
+            TryGetScalar(claim, "REQUEST_ID", out var requestId) ? requestId : null).ToArray();
         var batchId = Guid.NewGuid().ToString("N");
 
         try
@@ -59,6 +61,7 @@ public sealed class ClaimProcessor(
             () => requestHistoryStore.RecordServiceBusAsync(
                 batchId,
                 ids,
+                rtaRequestIds,
                 rtaResponsePayloads,
                 reason,
                 DateTimeOffset.UtcNow,
@@ -117,6 +120,8 @@ public sealed class ClaimProcessor(
 
         var pipelineStartedAtUtc = pollStartedAtUtc ?? DateTimeOffset.UtcNow;
         var correlationIds = claims.Select(GetCorrelationId).ToArray();
+        var rtaRequestIds = claims.Select(claim =>
+            TryGetScalar(claim, "REQUEST_ID", out var requestId) ? requestId : null).ToArray();
         var translationStopwatch = Stopwatch.StartNew();
         var transformedClaims = TransformClaims(claims);
         translationStopwatch.Stop();
@@ -144,6 +149,7 @@ public sealed class ClaimProcessor(
                 () => requestHistoryStore.RecordServiceBusAsync(
                     batchId,
                     correlationIds,
+                    rtaRequestIds,
                     rtaResponsePayloads,
                     "OutboundCircuitOpen",
                     DateTimeOffset.UtcNow,
@@ -165,6 +171,7 @@ public sealed class ClaimProcessor(
             () => requestHistoryStore.RecordApimAttemptAsync(
                 batchId,
                 correlationIds,
+                rtaRequestIds,
                 rtaResponsePayloads,
                 outboundPayloadJson,
                 pipelineStartedAtUtc,

@@ -7,6 +7,7 @@ public interface IRequestHistoryStore
     Task RecordApimAttemptAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string?> rtaRequestIds,
         IReadOnlyList<string> rtaResponsePayloads,
         string requestPayload,
         DateTimeOffset? pipelineStartedAtUtc,
@@ -46,6 +47,7 @@ public interface IRequestHistoryStore
     Task RecordServiceBusAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string?> rtaRequestIds,
         IReadOnlyList<string> rtaResponsePayloads,
         string reason,
         DateTimeOffset bufferedAtUtc,
@@ -54,6 +56,7 @@ public interface IRequestHistoryStore
     Task<RequestHistoryPage> ListAsync(
         int limit,
         string? continuationToken,
+        string? search,
         CancellationToken cancellationToken);
 
     Task<RequestHistoryTimingAverages> GetTimingAveragesAsync(

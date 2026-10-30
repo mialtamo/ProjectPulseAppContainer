@@ -311,10 +311,16 @@ public static class UiPages
 """;
     }
 
-    public static string RequestHistoryPageFor(string? signedInUser)
+    public static string RequestHistoryPageFor(string? signedInUser, bool canManuallyPoll)
     {
         var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
-        return RequestHistoryPage.Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal);
+        var pollControls = canManuallyPoll
+            ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
+            : string.Empty;
+
+        return RequestHistoryPage
+            .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
+            .Replace("{{POLL_CONTROL}}", pollControls, StringComparison.Ordinal);
     }
 
     private const string RequestHistoryPage = """
@@ -342,7 +348,7 @@ h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-siz
 .sign-out:hover,.sign-out:focus-visible{border-color:var(--cyan);outline:none}
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
-.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text);padding:9px 11px;border-radius:7px}
 .load-more-wrap{display:flex;justify-content:center;padding:14px 0}
@@ -389,7 +395,8 @@ th{position:sticky;top:0;background:#0c1621;color:#9fb4cf;text-align:left;white-
 th:hover{color:#dceaff}
 tr.data-row{cursor:pointer}
 tr.data-row:hover{background:#0f1a27}
-td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:300px;white-space:normal;overflow-wrap:anywhere}
+.id-secondary{display:block;margin-top:3px;font-family:ui-sans-serif,system-ui,sans-serif;font-size:10px;color:var(--muted)}
 .tag{display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;border:1px solid #29445f;white-space:nowrap}
 .tag.APIM{color:var(--green)}.tag.ServiceBus{color:var(--amber)}
 .status-Completed{color:var(--green)}.status-Buffered{color:var(--amber)}.status-Alerted,.status-WritebackFailed,.status-Rejected{color:var(--red)}
@@ -433,13 +440,14 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
 </header>
 <main>
   <div class="toolbar">
-    <input id="search" type="search" placeholder="Search ID, status, reason, code..." oninput="render()">
+    <input id="search" type="search" placeholder="Search all history: correlation ID, RTA request ID, batch, status..." oninput="queueSearch()">
     <select id="destination" onchange="render()">
       <option value="">All destinations</option>
       <option value="APIM">APIM</option>
       <option value="ServiceBus">Service Bus</option>
     </select>
     <button onclick="load()">Refresh</button>
+    {{POLL_CONTROL}}
     <label class="refresh-control">Auto refresh
       <select id="refreshInterval" aria-label="Auto refresh interval" onchange="setRefreshRate()">
         <option value="5">5 seconds</option>
@@ -515,7 +523,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let nextPageToken=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -532,7 +540,8 @@ function groupByBatch(source){
   return Array.from(groups.values()).map(group=>{
     const representative=group.slice().sort((a,b)=>Date.parse(b.UpdatedAtUtc||0)-Date.parse(a.UpdatedAtUtc||0))[0];
     const uniqueIds=[...new Set(group.map(x=>x.UniqueId).filter(Boolean))];
-    return {...representative,ClaimCount:group.length,UniqueId:uniqueIds.length===1?uniqueIds[0]:uniqueIds.join(', '),RecordId:representative.RecordId};
+    const requestIds=[...new Set(group.map(x=>x.RtaRequestId).filter(Boolean))];
+    return {...representative,ClaimCount:group.length,UniqueId:uniqueIds.length===1?uniqueIds[0]:uniqueIds.join(', '),RtaRequestIds:requestIds,RecordId:representative.RecordId};
   });
 }
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -597,7 +606,7 @@ function compare(a,b){
 function filtered(){
   const q=document.getElementById('search').value.trim().toLowerCase();
   const dest=document.getElementById('destination').value;
-  return groupByBatch(items).filter(x=>(!dest||x.Destination===dest)&&(!q||[x.UniqueId,x.Status,x.Destination,x.HttpStatusCode,x.BusinessResponseCode,x.Reason,x.BatchId,x.ClaimCount].some(v=>String(v??'').toLowerCase().includes(q)))).sort(compare);
+  return groupByBatch(items).filter(x=>(!dest||x.Destination===dest)&&(!q||[x.UniqueId,x.RtaRequestIds?.join(' '),x.Status,x.Destination,x.HttpStatusCode,x.BusinessResponseCode,x.Reason,x.BatchId,x.ClaimCount].some(v=>String(v??'').toLowerCase().includes(q)))).sort(compare);
 }
 function renderSummary(list){
   const apim=list.filter(x=>x.Destination==='APIM').length, sb=list.filter(x=>x.Destination==='ServiceBus').length;
@@ -620,7 +629,7 @@ function render(){
     return '<tr class="data-row" onclick="toggleDetail(\''+key+'\',\''+esc(x.RecordId)+'\')">'+
       '<td>'+new Date(x.UpdatedAtUtc).toLocaleString()+'</td>'+
       '<td>'+esc(x.ClaimCount)+'</td>'+
-      '<td class="id" title="'+esc(x.UniqueId)+'">'+esc(x.UniqueId)+'</td>'+
+      '<td class="id" title="'+esc('Correlation ID: '+x.UniqueId+'; RTA request ID: '+(x.RtaRequestIds||[]).join(', '))+'">'+esc(x.UniqueId)+((x.RtaRequestIds||[]).length?'<span class="id-secondary">RTA request ID: '+esc(x.RtaRequestIds.join(', '))+'</span>':'')+'</td>'+
       '<td class="status-'+esc(x.Status)+'">'+esc(x.Status)+'</td>'+
       '<td><span class="tag '+esc(x.Destination)+'">'+esc(x.Destination)+'</span></td>'+
       '<td>'+esc(x.HttpStatusCode??'')+'</td>'+
@@ -853,31 +862,78 @@ async function loadAverages(){
     if(requestId===averagesRequestId)averagesLoading=false;
   }
 }
+function queueSearch(){
+  if(searchTimer)clearTimeout(searchTimer);
+  searchTimer=setTimeout(()=>void load(),300);
+}
+function historyUrl(pageToken=null){
+  const params=new URLSearchParams({limit:'100'});
+  if(activeSearch)params.set('search',activeSearch);
+  if(pageToken)params.set('pageToken',pageToken);
+  return '/requests?'+params.toString();
+}
+function historyStatusText(){
+  return activeSearch
+    ? items.length+' matching claim record(s) for "'+activeSearch+'" across request history'
+    : groupByBatch(items).length+' recent batch(es), '+items.length+' claim record(s) loaded';
+}
+async function requestPoll(){
+  const button=document.getElementById('pollNowButton');
+  const status=document.getElementById('pollStatus');
+  if(!button||!status)return;
+  button.disabled=true;
+  status.textContent='Requesting an immediate poll...';
+  try{
+    const response=await fetch('/requests/poll',{
+      method:'POST',
+      cache:'no-store',
+      headers:{'X-Requested-With':'XMLHttpRequest'}
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Poll request returned HTTP '+response.status);
+    status.textContent=result.alreadyQueued
+      ? 'A manual poll is already queued.'
+      : 'Poll queued; it will start after the current cycle, if one is running.';
+  }catch(error){
+    status.textContent='Could not queue poll: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
+}
 async function load(){
   if(loading)return; loading=true;
   void loadAverages();
   const status=document.getElementById('status');
-  status.textContent='Loading recent activity...'; detailCache.clear(); nextPageToken=null;
+  activeSearch=document.getElementById('search').value.trim().slice(0,200);
+  status.textContent=activeSearch?'Searching all request history...':'Loading recent activity...';
+  detailCache.clear(); nextPageToken=null;
   try{
-    const r=await fetch('/requests?limit=100',{cache:'no-store'});
+    const r=await fetch(historyUrl(),{cache:'no-store'});
     if(!r.ok)throw new Error('Request history returned HTTP '+r.status);
     items=await r.json(); nextPageToken=r.headers.get('X-Next-Page-Token');
-    status.textContent=groupByBatch(items).length+' recent batch(es), '+items.length+' claim record(s) loaded';
+    status.textContent=historyStatusText();
     render();
   }catch(error){status.textContent='Could not load request history: '+error.message}
-  finally{loading=false;document.getElementById('loadMoreButton').hidden=!nextPageToken}
+  finally{
+    loading=false;
+    document.getElementById('loadMoreButton').hidden=!nextPageToken;
+    if(document.getElementById('search').value.trim().slice(0,200)!==activeSearch)void load();
+  }
 }
 async function loadMore(){
   if(loading||!nextPageToken)return; loading=true;
   const button=document.getElementById('loadMoreButton'); button.disabled=true; button.textContent='Loading...';
   try{
-    const r=await fetch('/requests?limit=100&pageToken='+encodeURIComponent(nextPageToken),{cache:'no-store'});
+    const r=await fetch(historyUrl(nextPageToken),{cache:'no-store'});
     if(!r.ok)throw new Error('Request history returned HTTP '+r.status);
     const more=await r.json(); items=items.concat(more); nextPageToken=r.headers.get('X-Next-Page-Token');
-    document.getElementById('status').textContent=groupByBatch(items).length+' batch(es), '+items.length+' claim record(s) loaded';
+    document.getElementById('status').textContent=historyStatusText();
     render();
   }catch(error){document.getElementById('status').textContent='Could not load more history: '+error.message}
-  finally{loading=false;button.disabled=false;button.textContent='Load more';button.hidden=!nextPageToken}
+  finally{
+    loading=false;button.disabled=false;button.textContent='Load more';button.hidden=!nextPageToken;
+    if(document.getElementById('search').value.trim().slice(0,200)!==activeSearch)void load();
+  }
 }
 document.querySelectorAll('th[data-key]').forEach(th=>th.addEventListener('click',()=>{const k=th.dataset.key;if(sortKey===k)sortDir=sortDir==='asc'?'desc':'asc';else{sortKey=k;sortDir='asc'}render()}));
 function setRefreshRate(){

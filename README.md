@@ -111,10 +111,13 @@ The request-history page reports per-batch averages across stored history. When 
 /pulse-health
 /requests
 /requests/averages
+/requests/poll (POST, RTA role only)
 /requests/{id}
 /requests.html
 /live
 ```
+
+The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
 
 Container Apps ingress target port:
 
@@ -217,7 +220,7 @@ The Container App managed identity needs its own downstream permissions. Permiss
 
 ## Configuration
 
-The complete environment-variable and secret reference is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The deployable template is [environment.example.json](environment.example.json). The request-history page loads its newest 100 records first and fetches older records on demand. A time-ordered index is maintained in the existing history table; the first page request after this version is deployed builds that index from existing records once.
+The complete environment-variable and secret reference is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The deployable template is [environment.example.json](environment.example.json). The request-history page loads its newest 100 records first and fetches older records on demand. A time-ordered index is maintained in the existing history table; the first page request after this version is deployed builds that index from existing records once. Search by correlation ID, RTA request ID, batch ID, status, HTTP/business code, destination, or reason queries the full indexed history across pages. RTA request IDs are stored as searchable metadata independently of payload capture mode.
 
 Core RTA configuration:
 

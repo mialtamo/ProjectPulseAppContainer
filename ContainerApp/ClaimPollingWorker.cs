@@ -11,6 +11,7 @@ public sealed class ClaimPollingWorker(
     IAppApiClient appApiClient,
     IClaimProcessor claimProcessor,
     ApimOutageTracker outageTracker,
+    IClaimPollingTrigger pollTrigger,
     TelemetryClient telemetry,
     ILogger<ClaimPollingWorker> logger) : BackgroundService
 {
@@ -32,6 +33,12 @@ public sealed class ClaimPollingWorker(
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var manuallyRequested = pollTrigger.ConsumePendingPoll();
+            if (manuallyRequested)
+            {
+                logger.LogInformation("Starting queued manual RTA poll");
+            }
+
             var started = DateTimeOffset.UtcNow;
 
             try
@@ -55,7 +62,11 @@ public sealed class ClaimPollingWorker(
             {
                 try
                 {
-                    await Task.Delay(remaining, stoppingToken);
+                    var manualPollReceived = await pollTrigger.WaitForManualPollAsync(remaining, stoppingToken);
+                    if (manualPollReceived)
+                    {
+                        logger.LogInformation("Manual RTA poll requested; starting the next poll cycle");
+                    }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
