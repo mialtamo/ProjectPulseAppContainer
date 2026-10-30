@@ -64,6 +64,7 @@ builder.Services.AddSingleton<PayloadTransformer>();
 builder.Services.AddSingleton<IClaimProcessor, ClaimProcessor>();
 builder.Services.AddSingleton<OutboundCircuitBreaker>();
 builder.Services.AddSingleton<ApimOutageTracker>();
+builder.Services.AddSingleton<IClaimPollingTrigger, ClaimPollingTrigger>();
 
 if (projectPulseRole == ProjectPulseRole.Rta)
 {
@@ -230,6 +231,36 @@ app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStor
     return Results.Json(averages, historyJsonOptions);
 });
 
+app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTrigger) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (projectPulseRole != ProjectPulseRole.Rta)
+    {
+        return Results.Conflict(new { error = "Manual polling is available only on the RTA role." });
+    }
+
+    if (!string.Equals(
+            context.Request.Headers["X-Requested-With"],
+            "XMLHttpRequest",
+            StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var queued = pollTrigger.TryRequestPoll();
+    return Results.Accepted(value: new
+    {
+        queued = true,
+        alreadyQueued = !queued,
+        message = queued
+            ? "An immediate RTA poll was queued."
+            : "An immediate RTA poll is already queued."
+    });
+});
+
 app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
@@ -254,7 +285,7 @@ app.MapGet("/requests.html", (HttpContext context) =>
         "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
-    return Results.Content(UiPages.RequestHistoryPageFor(signedInUser), "text/html; charset=utf-8");
+    return Results.Content(UiPages.RequestHistoryPageFor(signedInUser, projectPulseRole == ProjectPulseRole.Rta), "text/html; charset=utf-8");
 });
 
 app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRoleName }));

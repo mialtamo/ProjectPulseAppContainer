@@ -311,10 +311,16 @@ public static class UiPages
 """;
     }
 
-    public static string RequestHistoryPageFor(string? signedInUser)
+    public static string RequestHistoryPageFor(string? signedInUser, bool canManuallyPoll)
     {
         var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
-        return RequestHistoryPage.Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal);
+        var pollControls = canManuallyPoll
+            ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
+            : string.Empty;
+
+        return RequestHistoryPage
+            .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
+            .Replace("{{POLL_CONTROL}}", pollControls, StringComparison.Ordinal);
     }
 
     private const string RequestHistoryPage = """
@@ -342,7 +348,7 @@ h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-siz
 .sign-out:hover,.sign-out:focus-visible{border-color:var(--cyan);outline:none}
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
-.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text);padding:9px 11px;border-radius:7px}
 .load-more-wrap{display:flex;justify-content:center;padding:14px 0}
@@ -441,6 +447,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       <option value="ServiceBus">Service Bus</option>
     </select>
     <button onclick="load()">Refresh</button>
+    {{POLL_CONTROL}}
     <label class="refresh-control">Auto refresh
       <select id="refreshInterval" aria-label="Auto refresh interval" onchange="setRefreshRate()">
         <option value="5">5 seconds</option>
@@ -869,6 +876,29 @@ function historyStatusText(){
   return activeSearch
     ? items.length+' matching claim record(s) for "'+activeSearch+'" across request history'
     : groupByBatch(items).length+' recent batch(es), '+items.length+' claim record(s) loaded';
+}
+async function requestPoll(){
+  const button=document.getElementById('pollNowButton');
+  const status=document.getElementById('pollStatus');
+  if(!button||!status)return;
+  button.disabled=true;
+  status.textContent='Requesting an immediate poll...';
+  try{
+    const response=await fetch('/requests/poll',{
+      method:'POST',
+      cache:'no-store',
+      headers:{'X-Requested-With':'XMLHttpRequest'}
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Poll request returned HTTP '+response.status);
+    status.textContent=result.alreadyQueued
+      ? 'A manual poll is already queued.'
+      : 'Poll queued; it will start after the current cycle, if one is running.';
+  }catch(error){
+    status.textContent='Could not queue poll: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
 }
 async function load(){
   if(loading)return; loading=true;

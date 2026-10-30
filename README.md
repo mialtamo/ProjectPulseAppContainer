@@ -111,10 +111,13 @@ The request-history page reports per-batch averages across stored history. When 
 /pulse-health
 /requests
 /requests/averages
+/requests/poll (POST, RTA role only)
 /requests/{id}
 /requests.html
 /live
 ```
+
+The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
 
 Container Apps ingress target port:
 
