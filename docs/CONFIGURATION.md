@@ -101,11 +101,47 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 | `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Deprecated compatibility setting. Used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset; `true` maps to `FULL`, `false` maps to `OFF`. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Both | Recommended | Azure-provided value | **Yes** | Standard Application Insights connection string consumed by ASP.NET Core Application Insights telemetry. |
 
+## Azure Service Bus retry setup
+
+Project Pulse authenticates to Azure Service Bus with the Container App's managed identity through .NET `DefaultAzureCredential`. Do not configure a Service Bus connection string or SAS key for this integration.
+
+1. Create the retry queue in the Service Bus namespace.
+2. Enable a system-assigned managed identity on each Container App, or use the identity already selected for that app.
+3. At the queue's **Access control (IAM)** scope, grant these built-in data roles:
+
+| Container App role (`PROJECT_PULSE_ROLE`) | Azure Service Bus role | Why |
+| --- | --- | --- |
+| `RTA` | `Azure Service Bus Data Sender` | Sends records to the retry queue when a retry is needed. |
+| `SERVICEBUS` | `Azure Service Bus Data Receiver` and `Azure Service Bus Data Sender` | Receives, completes, and dead-letters queued messages; it also needs to send replacement messages when a retry is needed. |
+
+Use the queue as the role-assignment scope when possible. The Service Bus role assignments can take several minutes to propagate.
+
+4. Configure the namespace and queue on **both** Container Apps. The namespace is the host name only, without `https://`:
+
+```text
+# RTA Container App
+PROJECT_PULSE_ROLE=RTA
+ServiceBusFullyQualifiedNamespace=<namespace>.servicebus.windows.net
+ServiceBusQueueName=<queue-name>
+ServiceBusMessageTtlMinutes=10
+
+# Service Bus worker Container App
+PROJECT_PULSE_ROLE=SERVICEBUS
+ServiceBusFullyQualifiedNamespace=<same-namespace>.servicebus.windows.net
+ServiceBusQueueName=<same-queue-name>
+ServiceBusMessageTtlMinutes=10
+ServiceBusReceiveBatchSize=10
+ServiceBusReceiveWaitSeconds=5
+ServiceBusDependencyRetrySeconds=5
+```
+
+The namespace and queue name must match between the apps. The `SERVICEBUS` app also needs the shared RTA/App API and APIM settings used by the processor and health gate (including their base URLs, required scopes, and APIM response-token secret reference). Configure request-history storage and RTA notifications there too if those features should record or report Service Bus processing outcomes. The full shared settings are listed in the table above.
+
 ## RTA failure notifications
 
-Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` when APIM returns an actual HTTP status other than 200. Statuses listed in `RetryHttpStatusCodes` are also buffered to Service Bus. If Service Bus buffering fails, the notification includes both failures. A Service Bus enqueue failure in other buffering paths also generates an RTA notification.
+Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` for actual APIM HTTP statuses other than 200, except when the body is a recognized DOCMP error envelope containing `errorCode`. For example, a DOCMP `ACC-NOTF-001` response with HTTP 404 is treated as an application error: Project Pulse writes the failure and raw DOCMP response back to RTA and does not queue or send a catastrophic notification. Other non-200 APIM responses use the HTTP retry/notification path. Statuses listed in `RetryHttpStatusCodes` are buffered to Service Bus; if buffering fails, the notification includes both failures. A Service Bus enqueue failure in other buffering paths also generates an RTA notification.
 
-Status-like values inside a DOCMP JSON response are application data, not HTTP statuses. For example, an HTTP 200 response whose JSON contains `"status": 404` is handled as a DOCMP response and does not trigger the HTTP retry or notification path. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include `REQUEST_ID` and `REQUEST_QUEUE_ID` when present in the RTA item, and include concise diagnostics in `NOTIFICATION_ATTRS`; raw request/response payloads and patient identifiers are not included. Notifications use `AppApiScope` for RTA authorization.
+Status-like values inside DOCMP JSON are application data, not HTTP statuses. For example, an HTTP 200 response whose JSON contains `"status": 404` does not trigger HTTP retry or notification handling. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include `REQUEST_ID` and `REQUEST_QUEUE_ID` when present in the RTA item, and include concise diagnostics in `NOTIFICATION_ATTRS`; raw request/response payloads and patient identifiers are not included. Notifications use `AppApiScope` for RTA authorization.
 
 ## POC RTA settings currently used
 

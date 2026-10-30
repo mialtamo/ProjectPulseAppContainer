@@ -34,6 +34,12 @@ The Service Bus role does not poll RTA. It receives `RetryEnvelope` messages fro
 
 For backward compatibility, if `PROJECT_PULSE_ROLE` is not yet configured the container starts in `RTA` mode. Any non-empty unsupported role value fails startup.
 
+### Service Bus retry worker setup
+
+Create the retry queue, then configure the **same** `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on both Container Apps. The RTA app's managed identity needs **Azure Service Bus Data Sender** on the queue. The Service Bus app's identity needs **Azure Service Bus Data Receiver** and **Azure Service Bus Data Sender**, because a retry can be requeued. Project Pulse uses managed identity through `.NET DefaultAzureCredential`; no Service Bus connection string or SAS key is needed.
+
+The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It also requires the shared RTA/App API and APIM settings because it health-checks and processes through those services. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
+
 ## Why Container Apps
 
 The original Project Pulse implementation uses an Azure Functions timer trigger. This POC requires polling more frequently than once per minute.
@@ -254,7 +260,7 @@ The legacy `LOG_POLL_PAYLOADS` setting is honored only when `REQUEST_HISTORY_PAY
 
 ### RTA failure notifications
 
-Configure `RTANotificationsBaseURL` and `RTANotificationsPath` to enable POSTs to RTA's `/admin/notifications` endpoint. Actual APIM HTTP statuses other than 200 trigger a notification; configured retryable HTTP statuses are also sent to Service Bus. A Service Bus enqueue failure triggers a notification too. Values such as `"status": 404` inside an HTTP 200 DOCMP JSON body are application data and do not trigger HTTP retry or notification handling. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include request IDs when available, and omit raw payloads and patient identifiers.
+Configure `RTANotificationsBaseURL` and `RTANotificationsPath` to enable POSTs to RTA's `/admin/notifications` endpoint. A DOCMP error envelope identified by `errorCode` (for example, `ACC-NOTF-001`) is treated as an application error and written back to RTA, even if APIM mirrors its status as HTTP 404. It is not queued to Service Bus or sent to the notification endpoint. Other actual APIM HTTP statuses other than 200 use the HTTP retry/notification path; configured retryable HTTP statuses are sent to Service Bus. A Service Bus enqueue failure triggers a notification too. Status values inside HTTP 200 DOCMP JSON are application data, not HTTP statuses. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include request IDs when available, and omit raw payloads and patient identifiers.
 
 ### Required secret references
 

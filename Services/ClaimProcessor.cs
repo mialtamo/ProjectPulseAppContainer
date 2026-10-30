@@ -207,10 +207,13 @@ public sealed class ClaimProcessor(
             apimRoundTripStopwatch.Stop();
             var apimResponseReceivedAtUtc = DateTimeOffset.UtcNow;
             var statusCode = (int)response.StatusCode;
+            var hasApimError = TryParseApimError(responseJson, statusCode, out var apimError);
+            var isDocmpErrorEnvelope = hasApimError && apimError.IsDocmpErrorEnvelope;
 
-            // Only the transport-level HTTP status selects retry/notification handling.
-            // A status-like value inside a DOCMP JSON body is handled below as an application response.
-            if (statusCode != 200)
+            // DOCMP error envelopes are application failures even when APIM mirrors their status
+            // (for example, ACC-NOTF-001 with HTTP 404). Send those to RTA; only other non-200
+            // transport responses use the HTTP retry/notification path.
+            if (statusCode != 200 && !isDocmpErrorEnvelope)
             {
                 circuitBreaker.RecordFailure();
                 outageTracker.RecordApimFailure();
@@ -359,10 +362,11 @@ public sealed class ClaimProcessor(
                     _options.RedactRequestHistoryPayload(responseJson));
             }
 
-            if (TryParseApimError(responseJson, statusCode, out var apimError))
+            if (hasApimError)
             {
                 // DOCMP can return an error envelope in the JSON body while APIM itself
-                // responds successfully. Treat the application error as final and report it to RTA.
+                // responds successfully or mirrors the DOCMP status. Treat it as a final
+                // application error and report it to RTA.
                 circuitBreaker.RecordSuccess();
                 outageTracker.RecordApimSuccess();
 
@@ -1367,7 +1371,7 @@ public sealed class ClaimProcessor(
         return !string.IsNullOrWhiteSpace(correlationId);
     }
 
-    private sealed record ApimErrorDetails(string? Code, string Message, string? Stack);
+    private sealed record ApimErrorDetails(string? Code, string Message, string? Stack, bool IsDocmpErrorEnvelope);
 
     private static bool TryParseApimError(string responseJson, int httpStatusCode, out ApimErrorDetails error)
     {
@@ -1386,7 +1390,8 @@ public sealed class ClaimProcessor(
                 return false;
             }
 
-            var code = TryGetStringProperty(root, "errorCode")
+            var docmpErrorCode = TryGetStringProperty(root, "errorCode");
+            var code = docmpErrorCode
                 ?? TryGetStringProperty(root, "code");
             var message = TryGetStringProperty(root, "message")
                 ?? TryGetStringProperty(root, "detail")
@@ -1475,7 +1480,11 @@ public sealed class ClaimProcessor(
                 combinedMessage = combinedMessage[..2000];
             }
 
-            error = new ApimErrorDetails(code, combinedMessage, stack);
+            error = new ApimErrorDetails(
+                code,
+                combinedMessage,
+                stack,
+                !string.IsNullOrWhiteSpace(docmpErrorCode));
             return true;
         }
         catch (JsonException)
