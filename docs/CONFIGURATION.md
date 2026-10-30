@@ -101,6 +101,42 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 | `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Deprecated compatibility setting. Used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset; `true` maps to `FULL`, `false` maps to `OFF`. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Both | Recommended | Azure-provided value | **Yes** | Standard Application Insights connection string consumed by ASP.NET Core Application Insights telemetry. |
 
+## Azure Service Bus retry setup
+
+Project Pulse authenticates to Azure Service Bus with the Container App's managed identity through .NET `DefaultAzureCredential`. Do not configure a Service Bus connection string or SAS key for this integration.
+
+1. Create the retry queue in the Service Bus namespace.
+2. Enable a system-assigned managed identity on each Container App, or use the identity already selected for that app.
+3. At the queue's **Access control (IAM)** scope, grant these built-in data roles:
+
+| Container App role (`PROJECT_PULSE_ROLE`) | Azure Service Bus role | Why |
+| --- | --- | --- |
+| `RTA` | `Azure Service Bus Data Sender` | Sends records to the retry queue when a retry is needed. |
+| `SERVICEBUS` | `Azure Service Bus Data Receiver` and `Azure Service Bus Data Sender` | Receives, completes, and dead-letters queued messages; it also needs to send replacement messages when a retry is needed. |
+
+Use the queue as the role-assignment scope when possible. The Service Bus role assignments can take several minutes to propagate.
+
+4. Configure the namespace and queue on **both** Container Apps. The namespace is the host name only, without `https://`:
+
+```text
+# RTA Container App
+PROJECT_PULSE_ROLE=RTA
+ServiceBusFullyQualifiedNamespace=<namespace>.servicebus.windows.net
+ServiceBusQueueName=<queue-name>
+ServiceBusMessageTtlMinutes=10
+
+# Service Bus worker Container App
+PROJECT_PULSE_ROLE=SERVICEBUS
+ServiceBusFullyQualifiedNamespace=<same-namespace>.servicebus.windows.net
+ServiceBusQueueName=<same-queue-name>
+ServiceBusMessageTtlMinutes=10
+ServiceBusReceiveBatchSize=10
+ServiceBusReceiveWaitSeconds=5
+ServiceBusDependencyRetrySeconds=5
+```
+
+The namespace and queue name must match between the apps. The `SERVICEBUS` app also needs the shared RTA/App API and APIM settings used by the processor and health gate (including their base URLs, required scopes, and APIM response-token secret reference). Configure request-history storage and RTA notifications there too if those features should record or report Service Bus processing outcomes. The full shared settings are listed in the table above.
+
 ## RTA failure notifications
 
 Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` when APIM returns an actual HTTP status other than 200. Statuses listed in `RetryHttpStatusCodes` are also buffered to Service Bus. If Service Bus buffering fails, the notification includes both failures. A Service Bus enqueue failure in other buffering paths also generates an RTA notification.
