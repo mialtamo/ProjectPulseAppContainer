@@ -14,7 +14,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private const string PartitionKeyValue = "requests";
     private const string RecentPartitionKeyValue = "!recent";
     private const string IndexMetadataPartitionKey = "!index";
-    private const string IndexVersionRowKey = "recent-v1";
+    private const string IndexVersionRowKey = "recent-v2";
 
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
@@ -48,6 +48,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     public async Task RecordApimAttemptAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string?> rtaRequestIds,
         IReadOnlyList<string> rtaResponsePayloads,
         string requestPayload,
         DateTimeOffset? pipelineStartedAtUtc,
@@ -56,6 +57,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         DateTimeOffset sentAtUtc,
         CancellationToken cancellationToken)
     {
+        if (rtaRequestIds.Count != uniqueIds.Count)
+        {
+            throw new ArgumentException("The RTA request ID count must match the correlation ID count.", nameof(rtaRequestIds));
+        }
+
         await EnsureInitializedAsync(cancellationToken);
         var requestBlob = await SavePayloadAsync(
             batchId,
@@ -75,6 +81,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 RowKey = BuildRowKey(batchId, i),
                 BatchId = batchId,
                 UniqueId = uniqueIds[i],
+                RtaRequestId = rtaRequestIds[i],
                 InputSource = _options.IsMockApiMode() ? "MOCK" : "RTA",
                 CreatedAtUtc = sentAtUtc,
                 UpdatedAtUtc = sentAtUtc,
@@ -298,11 +305,17 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     public async Task RecordServiceBusAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
+        IReadOnlyList<string?> rtaRequestIds,
         IReadOnlyList<string> rtaResponsePayloads,
         string reason,
         DateTimeOffset bufferedAtUtc,
         CancellationToken cancellationToken)
     {
+        if (rtaRequestIds.Count != uniqueIds.Count)
+        {
+            throw new ArgumentException("The RTA request ID count must match the correlation ID count.", nameof(rtaRequestIds));
+        }
+
         await EnsureInitializedAsync(cancellationToken);
         var rtaResponseBlobs = await SaveRtaResponsePayloadsAsync(
             batchId,
@@ -336,6 +349,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 };
             }
 
+            entity.RtaRequestId = rtaRequestIds[i];
             entity.UpdatedAtUtc = bufferedAtUtc;
             entity.Status = "Buffered";
             entity.Destination = "ServiceBus";
@@ -352,6 +366,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     public async Task<RequestHistoryPage> ListAsync(
         int limit,
         string? continuationToken,
+        string? search,
         CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
@@ -365,11 +380,19 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             filter += $" and RowKey gt '{lastRowKey}'";
         }
 
+        var searchTerm = search?.Trim();
+        if (string.IsNullOrEmpty(searchTerm))
+        {
+            searchTerm = null;
+        }
+
         var items = new List<RequestHistoryItem>(pageSize);
         var seenRecordIds = new HashSet<string>(StringComparer.Ordinal);
+        var requestIdMapsByBlobList = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         string? lastExaminedRowKey = null;
         var hasMore = false;
 
+        // Search the full time-ordered index, not just the page the browser has loaded.
         await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
             filter,
             maxPerPage: pageSize,
@@ -380,6 +403,33 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             if (string.IsNullOrWhiteSpace(recordId) || !seenRecordIds.Add(recordId))
             {
                 continue;
+            }
+
+            if (searchTerm is not null && !MatchesSearch(entity, searchTerm))
+            {
+                if (!string.IsNullOrWhiteSpace(entity.RtaRequestId)
+                    || !entity.PayloadLoggingEnabled
+                    || string.IsNullOrWhiteSpace(entity.RtaResponsePayloadBlobs))
+                {
+                    continue;
+                }
+
+                if (!requestIdMapsByBlobList.TryGetValue(entity.RtaResponsePayloadBlobs, out var requestIdMap))
+                {
+                    requestIdMap = await LoadRtaRequestIdMapAsync(
+                        entity.RtaResponsePayloadBlobs,
+                        cancellationToken);
+                    requestIdMapsByBlobList[entity.RtaResponsePayloadBlobs] = requestIdMap;
+                }
+
+                if (!requestIdMap.TryGetValue(entity.UniqueId, out var recoveredRequestId)
+                    || !Contains(recoveredRequestId, searchTerm))
+                {
+                    continue;
+                }
+
+                // Older history may have the ID only inside its captured RTA payload.
+                entity.RtaRequestId = recoveredRequestId;
             }
 
             items.Add(Map(entity, null, null, null, null));
@@ -395,6 +445,105 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             : null;
         return new RequestHistoryPage(items, nextPageToken);
     }
+
+    private async Task<Dictionary<string, string>> LoadRtaRequestIdMapAsync(
+        string blobNamesJson,
+        CancellationToken cancellationToken)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var payloads = await ReadRtaResponsePayloadsAsync(blobNamesJson, cancellationToken);
+            if (payloads is null)
+            {
+                return map;
+            }
+
+            foreach (var payload in payloads)
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(payload);
+                    CollectRtaRequestIds(document.RootElement, map);
+                }
+                catch (JsonException)
+                {
+                    // A malformed captured payload should not prevent searching other history.
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignore malformed blob-name metadata for this older record.
+        }
+
+        return map;
+    }
+
+    private static void CollectRtaRequestIds(
+        JsonElement element,
+        IDictionary<string, string> requestIdsByCorrelation)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetJsonScalar(element, "CORRELATION_ID", out var correlationId)
+                && TryGetJsonScalar(element, "REQUEST_ID", out var requestId)
+                && !string.IsNullOrWhiteSpace(correlationId)
+                && !string.IsNullOrWhiteSpace(requestId))
+            {
+                requestIdsByCorrelation[correlationId] = requestId;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                CollectRtaRequestIds(property.Value, requestIdsByCorrelation);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                CollectRtaRequestIds(item, requestIdsByCorrelation);
+            }
+        }
+    }
+
+    private static bool TryGetJsonScalar(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            value = property.GetString() ?? string.Empty;
+            return true;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number)
+        {
+            value = property.GetRawText();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool MatchesSearch(RequestHistoryEntity entity, string search) =>
+        Contains(entity.UniqueId, search)
+        || Contains(entity.RtaRequestId, search)
+        || Contains(entity.BatchId, search)
+        || Contains(entity.Status, search)
+        || Contains(entity.Destination, search)
+        || Contains(entity.HttpStatusCode?.ToString(System.Globalization.CultureInfo.InvariantCulture), search)
+        || Contains(entity.BusinessResponseCode, search)
+        || Contains(entity.Reason, search);
+
+    private static bool Contains(string? value, string search) =>
+        value?.Contains(search, StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task<RequestHistoryTimingAverages> GetTimingAveragesAsync(
         DateTimeOffset? fromUtc,
@@ -559,6 +708,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.PrimaryRecordId ?? entity.RowKey,
             entity.BatchId,
             entity.UniqueId,
+            entity.RtaRequestId,
             entity.InputSource,
             entity.CreatedAtUtc,
             entity.UpdatedAtUtc,
@@ -772,6 +922,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             PrimaryRecordId = entity.RowKey,
             BatchId = entity.BatchId,
             UniqueId = entity.UniqueId,
+            RtaRequestId = entity.RtaRequestId,
             InputSource = entity.InputSource,
             CreatedAtUtc = entity.CreatedAtUtc,
             UpdatedAtUtc = entity.UpdatedAtUtc,
@@ -795,6 +946,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             RtaWritebackAttempts = entity.RtaWritebackAttempts,
             RtaWritebackFailureKind = entity.RtaWritebackFailureKind,
             RtaWritebackFailureMessage = entity.RtaWritebackFailureMessage,
+            RtaResponsePayloadBlobs = entity.RtaResponsePayloadBlobs,
             PayloadLoggingEnabled = entity.PayloadLoggingEnabled
         };
 
@@ -867,7 +1019,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         public string BatchId { get; set; } = string.Empty;
         public string UniqueId { get; set; } = string.Empty;
-        public string? InputSource { get; set; }
+        public string? RtaRequestId { get; set; }
+        public string? InputSource { get; set;}
         public DateTimeOffset CreatedAtUtc { get; set; }
         public DateTimeOffset UpdatedAtUtc { get; set; }
         public string Status { get; set; } = string.Empty;

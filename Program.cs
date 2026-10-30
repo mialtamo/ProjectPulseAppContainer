@@ -164,6 +164,7 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
     var page = await store.ListAsync(
         limit,
         context.Request.Query["pageToken"].FirstOrDefault(),
+        context.Request.Query["search"].FirstOrDefault(),
         cancellationToken);
     if (page.NextPageToken is not null)
     {

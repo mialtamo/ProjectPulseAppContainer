@@ -217,7 +217,7 @@ The Container App managed identity needs its own downstream permissions. Permiss
 
 ## Configuration
 
-The complete environment-variable and secret reference is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The deployable template is [environment.example.json](environment.example.json). The request-history page loads its newest 100 records first and fetches older records on demand. A time-ordered index is maintained in the existing history table; the first page request after this version is deployed builds that index from existing records once.
+The complete environment-variable and secret reference is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). The deployable template is [environment.example.json](environment.example.json). The request-history page loads its newest 100 records first and fetches older records on demand. A time-ordered index is maintained in the existing history table; the first page request after this version is deployed builds that index from existing records once. Search by correlation ID, RTA request ID, batch ID, status, HTTP/business code, destination, or reason queries the full indexed history across pages. RTA request IDs are stored as searchable metadata independently of payload capture mode.
 
 Core RTA configuration:
 
