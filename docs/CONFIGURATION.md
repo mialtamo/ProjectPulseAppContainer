@@ -139,9 +139,9 @@ The namespace and queue name must match between the apps. The `SERVICEBUS` app a
 
 ## RTA failure notifications
 
-Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` when APIM returns an actual HTTP status other than 200. Statuses listed in `RetryHttpStatusCodes` are also buffered to Service Bus. If Service Bus buffering fails, the notification includes both failures. A Service Bus enqueue failure in other buffering paths also generates an RTA notification.
+Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` for actual APIM HTTP statuses other than 200, except when the body is a recognized DOCMP error envelope containing `errorCode`. For example, a DOCMP `ACC-NOTF-001` response with HTTP 404 is treated as an application error: Project Pulse writes the failure and raw DOCMP response back to RTA and does not queue or send a catastrophic notification. Other non-200 APIM responses use the HTTP retry/notification path. Statuses listed in `RetryHttpStatusCodes` are buffered to Service Bus; if buffering fails, the notification includes both failures. A Service Bus enqueue failure in other buffering paths also generates an RTA notification.
 
-Status-like values inside a DOCMP JSON response are application data, not HTTP statuses. For example, an HTTP 200 response whose JSON contains `"status": 404` is handled as a DOCMP response and does not trigger the HTTP retry or notification path. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include `REQUEST_ID` and `REQUEST_QUEUE_ID` when present in the RTA item, and include concise diagnostics in `NOTIFICATION_ATTRS`; raw request/response payloads and patient identifiers are not included. Notifications use `AppApiScope` for RTA authorization.
+Status-like values inside DOCMP JSON are application data, not HTTP statuses. For example, an HTTP 200 response whose JSON contains `"status": 404` does not trigger HTTP retry or notification handling. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include `REQUEST_ID` and `REQUEST_QUEUE_ID` when present in the RTA item, and include concise diagnostics in `NOTIFICATION_ATTRS`; raw request/response payloads and patient identifiers are not included. Notifications use `AppApiScope` for RTA authorization.
 
 ## POC RTA settings currently used
 
