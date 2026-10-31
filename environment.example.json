@@ -16,6 +16,8 @@
   "RtaPageSize": "100",
   "RtaPagesPerPoll": "1",
   "RtaStatusWritebackEnabled": "true",
+  "RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED": "false",
+  "RTA_STATUS_WRITEBACK_MAX_CONCURRENCY": "5",
   "ApimBaseUrl": "https://example.invalid",
   "ApimHealthPath": "/health",
   "ApimAdjudicationPath": "pulse/pending",
