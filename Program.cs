@@ -165,14 +165,47 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
     var limit = int.TryParse(context.Request.Query["limit"], out var requestedLimit)
         ? Math.Clamp(requestedLimit, 1, 1000)
         : 100;
+    var pageToken = context.Request.Query["pageToken"].FirstOrDefault();
+    var range = context.Request.Query["range"].FirstOrDefault() ?? "24h";
+    var nowUtc = DateTimeOffset.UtcNow;
+    DateTimeOffset? updatedAfterUtc = range switch
+    {
+        "5m" => nowUtc.AddMinutes(-5),
+        "1h" => nowUtc.AddHours(-1),
+        "24h" => nowUtc.AddHours(-24),
+        "7d" => nowUtc.AddDays(-7),
+        "all" => null,
+        _ => nowUtc.AddHours(-24)
+    };
+
+    // Keep the first page's cutoff when the browser requests later pages.
+    if (pageToken is not null
+        && DateTimeOffset.TryParse(
+            context.Request.Query["fromUtc"].FirstOrDefault(),
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var pageCutoffUtc))
+    {
+        updatedAfterUtc = pageCutoffUtc;
+    }
+
     var page = await store.ListAsync(
         limit,
-        context.Request.Query["pageToken"].FirstOrDefault(),
+        pageToken,
         context.Request.Query["search"].FirstOrDefault(),
+        updatedAfterUtc,
         cancellationToken);
     if (page.NextPageToken is not null)
     {
         context.Response.Headers["X-Next-Page-Token"] = page.NextPageToken;
+    }
+    if (page.TotalCount is { } totalCount)
+    {
+        context.Response.Headers["X-Total-Count"] = totalCount.ToString(CultureInfo.InvariantCulture);
+    }
+    if (updatedAfterUtc is { } rangeStartUtc)
+    {
+        context.Response.Headers["X-Range-Start-Utc"] = rangeStartUtc.ToString("O", CultureInfo.InvariantCulture);
     }
 
     return Results.Json(page.Items, historyJsonOptions);

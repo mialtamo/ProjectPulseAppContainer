@@ -16,7 +16,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private const string PartitionKeyValue = "requests";
     private const string RecentPartitionKeyValue = "!recent";
     private const string IndexMetadataPartitionKey = "!index";
-    private const string IndexVersionRowKey = "recent-v2";
+    private const string IndexVersionRowKey = "recent-v4";
 
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
@@ -190,10 +190,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 entity.ApimRoundTripDurationMs = Math.Max(0, (long)(responseAtUtc - sentToApimAtUtc).TotalMilliseconds);
             }
 
-            if (entity.PipelineStartedAtUtc is { } pipelineStartedAtUtc)
-            {
-                entity.EndToEndDurationMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
-            }
+            UpdateEndToEndTiming(entity, completedAtUtc);
 
             entity.ResponsePayloadBlob = responseBlob;
             entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
@@ -248,10 +245,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 entity.RtaWritebackFailureMessage = TruncateDiagnostic(writebackResult.FailureMessage);
             }
 
-            if (entity.PipelineStartedAtUtc is { } pipelineStartedAtUtc)
-            {
-                entity.EndToEndDurationMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
-            }
+            UpdateEndToEndTiming(entity, completedAtUtc);
 
             var previousIndexRowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey);
             entity.ProcessingRole = _processingRole;
@@ -380,6 +374,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         int limit,
         string? continuationToken,
         string? search,
+        DateTimeOffset? updatedAfterUtc,
         CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
@@ -402,16 +397,23 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         var items = new List<RequestHistoryItem>(pageSize);
         var seenRecordIds = new HashSet<string>(StringComparer.Ordinal);
         var requestIdMapsByBlobList = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
-        string? lastExaminedRowKey = null;
+        string? pageBoundaryRowKey = null;
         var hasMore = false;
+        long matchedCount = 0;
+        var isFirstPage = lastRowKey is null;
 
-        // Search the full time-ordered index, not just the page the browser has loaded.
+        // The recent index is ordered newest-first, so the scan can stop at the selected time boundary.
+        // The first page continues through the whole window to return an exact count.
         await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
             filter,
             maxPerPage: pageSize,
             cancellationToken: cancellationToken))
         {
-            lastExaminedRowKey = entity.RowKey;
+            if (updatedAfterUtc is { } cutoffUtc && entity.UpdatedAtUtc < cutoffUtc)
+            {
+                break;
+            }
+
             var recordId = entity.PrimaryRecordId;
             if (string.IsNullOrWhiteSpace(recordId) || !seenRecordIds.Add(recordId))
             {
@@ -445,18 +447,29 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 entity.RtaRequestId = recoveredRequestId;
             }
 
-            items.Add(Map(entity, null, null, null, null));
-            if (items.Count == pageSize)
+            matchedCount++;
+            if (items.Count < pageSize)
+            {
+                items.Add(Map(entity, null, null, null, null));
+                if (items.Count == pageSize)
+                {
+                    pageBoundaryRowKey = entity.RowKey;
+                }
+            }
+            else
             {
                 hasMore = true;
-                break;
+                if (!isFirstPage)
+                {
+                    break;
+                }
             }
         }
 
-        var nextPageToken = hasMore && lastExaminedRowKey is not null
-            ? EncodeContinuationToken(lastExaminedRowKey)
+        var nextPageToken = hasMore && pageBoundaryRowKey is not null
+            ? EncodeContinuationToken(pageBoundaryRowKey)
             : null;
-        return new RequestHistoryPage(items, nextPageToken);
+        return new RequestHistoryPage(items, nextPageToken, isFirstPage ? matchedCount : null);
     }
 
     private async Task<Dictionary<string, string>> LoadRtaRequestIdMapAsync(
@@ -1113,6 +1126,24 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public bool RtaStatusPutFailed { get; set; }
     }
 
+    private static void UpdateEndToEndTiming(RequestHistoryEntity entity, DateTimeOffset completedAtUtc)
+    {
+        if (entity.PipelineStartedAtUtc is not { } pipelineStartedAtUtc)
+        {
+            return;
+        }
+
+        var endToEndMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
+        var measuredStagesMs =
+            (entity.RtaPullDurationMs ?? 0)
+            + (entity.TranslationDurationMs ?? 0)
+            + (entity.ApimRoundTripDurationMs ?? 0)
+            + (entity.RtaWritebackDurationMs ?? 0);
+
+        entity.EndToEndDurationMs = endToEndMs;
+        entity.OtherProcessingDurationMs = Math.Max(0, endToEndMs - measuredStagesMs);
+    }
+
     private static string? TruncateDiagnostic(string? message) =>
         string.IsNullOrWhiteSpace(message) ? null : message.Length <= 1000 ? message : message[..1000];
 
@@ -1150,6 +1181,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.ApimRoundTripDurationMs,
             entity.RtaWritebackDurationMs,
             entity.EndToEndDurationMs,
+            entity.OtherProcessingDurationMs,
             entity.RtaWritebackEnabled,
             entity.RtaWritebackAttempted,
             entity.RtaWritebackSucceeded,
@@ -1347,6 +1379,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             UpdatedAtUtc = entity.UpdatedAtUtc,
             Status = entity.Status,
             Destination = entity.Destination,
+            ProcessingRole = entity.ProcessingRole,
             HttpStatusCode = entity.HttpStatusCode,
             BusinessResponseCode = entity.BusinessResponseCode,
             Reason = entity.Reason,
@@ -1358,6 +1391,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             ApimRoundTripDurationMs = entity.ApimRoundTripDurationMs,
             RtaWritebackDurationMs = entity.RtaWritebackDurationMs,
             EndToEndDurationMs = entity.EndToEndDurationMs,
+            OtherProcessingDurationMs = entity.OtherProcessingDurationMs,
             RtaWritebackEnabled = entity.RtaWritebackEnabled,
             RtaWritebackAttempted = entity.RtaWritebackAttempted,
             RtaWritebackSucceeded = entity.RtaWritebackSucceeded,
@@ -1457,6 +1491,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public long? ApimRoundTripDurationMs { get; set; }
         public long? RtaWritebackDurationMs { get; set; }
         public long? EndToEndDurationMs { get; set; }
+        public long? OtherProcessingDurationMs { get; set; }
         public bool? RtaWritebackEnabled { get; set; }
         public bool? RtaWritebackAttempted { get; set; }
         public bool? RtaWritebackSucceeded { get; set; }
