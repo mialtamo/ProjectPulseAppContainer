@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Configuration;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -44,8 +45,16 @@ public sealed class ClaimProcessorOptions
     public string ApimScope { get; init; } = string.Empty;
     public string ApimResponseHeaderName { get; init; } = "X-Pulse-Response-Token";
     public string ApimResponseToken { get; init; } = string.Empty;
+    [ConfigurationKeyName("APIM_MOCK_SCENARIO")]
+    public string ApimMockScenario { get; init; } = string.Empty;
     public string ApimOutageMode { get; init; } = "BUFFER_THEN_STOP";
     public int ApimOutagePollStopSeconds { get; init; } = 300;
+
+    public bool IsApimMockScenarioValid() =>
+        string.IsNullOrWhiteSpace(ApimMockScenario)
+        || ApimMockScenario.Trim().ToLowerInvariant() is
+            "success" or "docmp-not-found" or "docmp-error"
+            or "http-404" or "http-429" or "http-500" or "http-503" or "http-504";
 
     public string CorrelationIdField { get; init; } = "CORRELATION_ID";
 
