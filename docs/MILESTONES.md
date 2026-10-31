@@ -42,9 +42,9 @@ Remaining: production security review, least-privilege identity/access checks, n
 
 ## M7 - Observability and operations — In progress
 
-Request history, per-batch stage timings, selectable average windows, status-aware delay hints, Application Insights telemetry, and UI navigation are present.
+Request history, per-batch stage timings, selectable average windows, time-range/search counts, processor-role visibility, status-aware delay hints, Application Insights telemetry, and UI navigation are present. The timing view includes an `Other processing` remainder so stage durations reconcile to end-to-end time.
 
-Remaining: validate metrics and explanations against real environment logs, define actionable alerts and automated retention, and complete operational runbooks. Admin-triggered history cleanup is available in the secured UI; Table deletion is batched and parallel, while blob cleanup uses a single container scan and bounded parallel deletes. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
+Remaining: validate metrics and explanations against real environment logs, define actionable alerts and automated retention, and complete operational runbooks. Admin-triggered history cleanup is available in the secured UI; Table deletion is batched and parallel, while blob cleanup uses a single container scan and bounded parallel deletes. Progress separately counts history rows and payload files. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
 
 ## M8 - Durable state and scale-out safety — Planned
 
@@ -54,9 +54,9 @@ Deliverables: durable state if required, restart/recovery validation, concurrenc
 
 ## M9 - Performance and scale — In progress
 
-Azure Container Apps with a continuous worker is the selected POC execution model. The UI includes timing averages and configurable date ranges.
+Azure Container Apps with a continuous worker is the selected POC execution model. The RTA role has configurable per-record concurrency modes and limits; the Service Bus role remains one-message-at-a-time. The UI includes timing averages and configurable date ranges.
 
-Remaining: load and soak testing, throughput/bottleneck analysis, scale behavior, and a production sizing decision.
+Remaining: load and soak testing, throughput/bottleneck analysis, scale behavior, and a production sizing decision. Configurable concurrency is available but has not established safe production throughput or scale-out limits.
 
 ## M10 - Production readiness — Planned
 
