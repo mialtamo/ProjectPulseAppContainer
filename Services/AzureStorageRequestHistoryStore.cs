@@ -841,7 +841,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         await EnsureRecentIndexReadyAsync(cancellationToken);
 
         var records = new List<RequestHistoryEntity>();
-        var allPrimaryRecordIds = new HashSet<string>(StringComparer.Ordinal);
+        var primaryRecordsById = new Dictionary<string, RequestHistoryEntity>(StringComparer.Ordinal);
         var selectedRecordIds = new HashSet<string>(StringComparer.Ordinal);
 
         await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
@@ -849,7 +849,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             maxPerPage: 1000,
             cancellationToken: cancellationToken))
         {
-            allPrimaryRecordIds.Add(entity.RowKey);
+            primaryRecordsById[entity.RowKey] = entity;
             if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
             {
                 records.Add(entity);
@@ -865,20 +865,23 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             maxPerPage: 1000,
             cancellationToken: cancellationToken))
         {
-            if (createdAfterUtc is not null && indexEntity.CreatedAtUtc < createdAfterUtc.Value)
+            var primaryId = indexEntity.PrimaryRecordId;
+            var primaryExists = !string.IsNullOrWhiteSpace(primaryId)
+                && primaryRecordsById.ContainsKey(primaryId);
+            var primarySelected = primaryExists && selectedRecordIds.Contains(primaryId!);
+            var indexSelected = createdAfterUtc is null || indexEntity.CreatedAtUtc >= createdAfterUtc.Value;
+
+            // Match the preview's union of primary rows and qualifying index rows.
+            // A matching index row selects its primary row even if their timestamps differ.
+            if (!primarySelected && !indexSelected)
             {
                 continue;
             }
 
-            var primaryId = indexEntity.PrimaryRecordId;
-            var primaryExists = !string.IsNullOrWhiteSpace(primaryId)
-                && allPrimaryRecordIds.Contains(primaryId);
-
-            // Remove matching index rows and orphaned rows left by an interrupted
-            // cleanup. Keep index rows for primary records outside the selected range.
-            if (primaryExists && !selectedRecordIds.Contains(primaryId!))
+            if (primaryExists && !primarySelected)
             {
-                continue;
+                records.Add(primaryRecordsById[primaryId!]);
+                selectedRecordIds.Add(primaryId!);
             }
 
             indexRecords.Add(indexEntity);
