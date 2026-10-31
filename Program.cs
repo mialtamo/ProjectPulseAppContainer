@@ -231,6 +231,58 @@ app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStor
     return Results.Json(averages, historyJsonOptions);
 });
 
+app.MapGet("/requests/cleanup/preview", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (!TryGetRequestHistoryCleanupCutoff(
+            context.Request.Query["range"].FirstOrDefault(),
+            DateTimeOffset.UtcNow,
+            out var createdAfterUtc,
+            out var rangeLabel))
+    {
+        return Results.BadRequest(new { error = "Choose all history, the last 24 hours, last week, or last 30 days." });
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var count = await store.CountForCleanupAsync(createdAfterUtc, cancellationToken);
+    return Results.Json(new { range = rangeLabel, count }, historyJsonOptions);
+});
+
+app.MapDelete("/requests", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (!string.Equals(
+            context.Request.Headers["X-Requested-With"],
+            "XMLHttpRequest",
+            StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    if (!TryGetRequestHistoryCleanupCutoff(
+            context.Request.Query["range"].FirstOrDefault(),
+            DateTimeOffset.UtcNow,
+            out var createdAfterUtc,
+            out var rangeLabel))
+    {
+        return Results.BadRequest(new { error = "Choose all history, the last 24 hours, last week, or last 30 days." });
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var result = await store.DeleteForCleanupAsync(createdAfterUtc, cancellationToken);
+    return Results.Json(new
+    {
+        range = rangeLabel,
+        deletedRecords = result.DeletedRecords,
+        deletedPayloadBlobs = result.DeletedPayloadBlobs,
+        payloadCleanupFailures = result.PayloadCleanupFailures
+    }, historyJsonOptions);
+});
+
 app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTrigger) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
@@ -291,6 +343,36 @@ app.MapGet("/requests.html", (HttpContext context) =>
 app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRoleName }));
 
 app.Run();
+
+static bool TryGetRequestHistoryCleanupCutoff(
+    string? range,
+    DateTimeOffset nowUtc,
+    out DateTimeOffset? createdAfterUtc,
+    out string rangeLabel)
+{
+    createdAfterUtc = null;
+    switch (range?.Trim().ToLowerInvariant())
+    {
+        case "all":
+            rangeLabel = "all history";
+            return true;
+        case "24h":
+            createdAfterUtc = nowUtc.AddHours(-24);
+            rangeLabel = "the last 24 hours";
+            return true;
+        case "7d":
+            createdAfterUtc = nowUtc.AddDays(-7);
+            rangeLabel = "the last 7 days";
+            return true;
+        case "30d":
+            createdAfterUtc = nowUtc.AddDays(-30);
+            rangeLabel = "the last 30 days";
+            return true;
+        default:
+            rangeLabel = string.Empty;
+            return false;
+    }
+}
 
 static IResult? RequireProjectPulseAdmin(HttpContext context, bool redirectToLogin)
 {
