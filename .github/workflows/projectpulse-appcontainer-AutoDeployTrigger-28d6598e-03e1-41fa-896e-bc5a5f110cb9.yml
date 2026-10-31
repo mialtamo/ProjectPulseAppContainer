@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout to the branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
 
       - name: Read image version
         id: version
@@ -34,26 +34,27 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.PROJECTPULSEAPPCONTAINER_AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.PROJECTPULSEAPPCONTAINER_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.PROJECTPULSEAPPCONTAINER_AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push container image to registry
-        uses: azure/container-apps-deploy-action@v2
-        with:
-          appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: _dockerfilePath_
-          _targetLabelKey_: _targetLabel_
-          registryUrl: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io
-          registryUsername: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_USERNAME }}
-          registryPassword: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_PASSWORD }}
-          containerAppName: projectpulse-appcontainer
-          resourceGroup: NewWorld-RSG
-          imageToBuild: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
+      - name: Build, push, and deploy RTA Container App
+        shell: bash
+        env:
+          REGISTRY_URL: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io
+          REGISTRY_USERNAME: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_PASSWORD }}
+          IMAGE_NAME: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}
+        run: |
+          printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
+          docker build --tag "$IMAGE_NAME" .
+          docker push "$IMAGE_NAME"
+          az containerapp update \
+            --name projectpulse-appcontainer \
+            --resource-group NewWorld-RSG \
+            --image "$IMAGE_NAME"
 
       # Reuse the image built above so both runtime roles run the same version.
       - name: Deploy image to Service Bus Container App
