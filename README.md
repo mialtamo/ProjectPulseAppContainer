@@ -271,8 +271,8 @@ RtaQueuedPath=/claims/pending
 RtaHealthPath=/health
 RtaStatusPathTemplate=/requests/{correlationId}/status
 RtaStatusWritebackEnabled=true
-RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED=false
-RTA_STATUS_WRITEBACK_MAX_CONCURRENCY=5
+PROCESSING_CONCURRENCY_MODE=SEQUENTIAL
+PROCESSING_MAX_CONCURRENCY=5
 
 ApimResponseHeaderName=X-Pulse-Response-Token
 ApimResponseToken=<secret reference>
@@ -281,16 +281,21 @@ RequestHistoryStorageConnectionString=<secret reference>
 REQUEST_HISTORY_PAYLOAD_MODE=OFF
 ```
 
-### RTA writeback concurrency
+### Processing concurrency
 
-By default, the RTA poller processes records sequentially. Set
-`RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED=true` to overlap completed records' RTA status PUTs.
-`RTA_STATUS_WRITEBACK_MAX_CONCURRENCY` sets the per-batch worker cap (default `5`, clamped to
-`1–100`). APIM/DOCMP POSTs remain serialized within each batch, so this setting does not increase
-the number of simultaneous APIM/DOCMP requests from a poller instance. Concurrent PUT pressure
-can still multiply across active Container App replicas; start with a low cap and increase it only
-after confirming the RTA API can handle it. This setting applies to the RTA polling batch; the
-Service Bus worker handles one queued record at a time.
+Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
+
+- `SEQUENTIAL` (default): process one record at a time; APIM/DOCMP and RTA are both serial.
+- `RTA_ONLY`: APIM/DOCMP stays serial; RTA status PUTs may overlap.
+- `APIM_ONLY`: APIM/DOCMP calls may overlap; RTA status PUTs stay serial.
+- `FULL`: both APIM/DOCMP and RTA status PUTs may overlap.
+
+`PROCESSING_MAX_CONCURRENCY` sets the per-batch cap (default `5`, clamped to `1–100`). APIM
+concurrency also increases the number of simultaneous requests that can reach DOCMP through APIM;
+use it only after checking APIM and DOCMP capacity. RTA concurrency increases simultaneous status
+PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
+so multiple replicas add to the aggregate load. The Service Bus worker handles one queued record
+at a time.
 
 ### Request-history payload capture
 
