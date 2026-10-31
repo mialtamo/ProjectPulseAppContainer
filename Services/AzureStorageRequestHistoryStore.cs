@@ -974,7 +974,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 phase,
                 percent,
                 totalItems,
-                processedItems,
+                Volatile.Read(ref processedItems),
                 deletedRecords,
                 deletedBlobs,
                 failures,
@@ -982,7 +982,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 DateTimeOffset.UtcNow));
         }
 
-        await Report("Deleting history records", 0, records.Count + orphanedRecordIds.Count);
+        await Report("Deleting history records", 0);
         // Azure Table transactions are limited to 100 entities and one partition. Build valid
         // transactions first, then submit independent transactions concurrently to reduce wall time.
         var deleteTransactions = new List<IReadOnlyList<TableTransactionAction>>();
