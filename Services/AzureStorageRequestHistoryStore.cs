@@ -1088,7 +1088,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 return separator > 0 && !retainedBatchIdsAfterDelete.Contains(blobName[..separator]);
             })
             .ToArray();
-        var skippedPayloads = payloadBlobs.Length - payloadsToDelete.Length;
+        var skippedPayloads = payloadBlobs.Count - payloadsToDelete.Length;
         if (skippedPayloads > 0)
         {
             Interlocked.Add(ref processedItems, skippedPayloads);
