@@ -357,6 +357,12 @@ main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .history-cleanup button:hover,.history-cleanup button:focus-visible{border-color:var(--red);outline:none}
 .history-cleanup button:disabled{opacity:.55;cursor:wait}
 .history-cleanup-status{font-size:12px;color:var(--muted)}
+.history-cleanup-progress{display:flex;align-items:center;gap:10px;flex:1 1 100%;min-width:220px}
+.history-cleanup-progress[hidden]{display:none}
+.history-cleanup-progress progress{width:min(520px,100%);height:10px;accent-color:var(--cyan)}
+.history-cleanup-progress progress::-webkit-progress-bar{background:#1b2532;border-radius:999px}
+.history-cleanup-progress progress::-webkit-progress-value{background:linear-gradient(90deg,var(--blue),var(--cyan));border-radius:999px}
+.history-cleanup-progress progress::-moz-progress-bar{background:linear-gradient(90deg,var(--blue),var(--cyan));border-radius:999px}
 input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text);padding:9px 11px;border-radius:7px}
 .load-more-wrap{display:flex;justify-content:center;padding:14px 0}
 .load-more-wrap button[hidden]{display:none}
@@ -476,6 +482,10 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     </select>
     <button id="cleanupButton" type="button" onclick="deleteHistory()">Delete…</button>
     <span id="cleanupStatus" class="history-cleanup-status" role="status" aria-live="polite"></span>
+    <div id="cleanupProgress" class="history-cleanup-progress" hidden>
+      <progress id="cleanupProgressBar" max="100" value="0" aria-label="History deletion progress"></progress>
+      <span id="cleanupProgressLabel" class="history-cleanup-status"></span>
+    </div>
   </div>
   <div id="summary" class="summary"></div>
   <section class="timing-summary" aria-label="Average request timings">
@@ -918,12 +928,40 @@ async function requestPoll(){
     button.disabled=false;
   }
 }
+async function waitForCleanup(operationId){
+  const progress=document.getElementById('cleanupProgress');
+  const bar=document.getElementById('cleanupProgressBar');
+  const label=document.getElementById('cleanupProgressLabel');
+  progress.hidden=false;
+  while(true){
+    const response=await fetch('/requests/cleanup/'+encodeURIComponent(operationId),{cache:'no-store'});
+    const operation=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(operation.error||'Progress check returned HTTP '+response.status);
+    const percent=Math.max(0,Math.min(100,Number(operation.progressPercent||0)));
+    bar.value=percent;
+    const processed=Number(operation.processedItems||0);
+    const total=Number(operation.totalItems||0);
+    label.textContent=operation.phase+(total?' · '+processed.toLocaleString()+' of '+total.toLocaleString()+' items · '+percent+'%':' · preparing');
+    if(operation.status==='Completed'){
+      bar.value=100;
+      return operation;
+    }
+    if(operation.status==='Failed')throw new Error(operation.error||'Cleanup failed.');
+    await new Promise(resolve=>setTimeout(resolve,900));
+  }
+}
 async function deleteHistory(){
   const button=document.getElementById('cleanupButton');
+  const rangeSelect=document.getElementById('cleanupRange');
   const status=document.getElementById('cleanupStatus');
-  const range=document.getElementById('cleanupRange').value;
+  const range=rangeSelect.value;
   const rangeLabel={ '24h':'the last 24 hours','7d':'the last week','30d':'the last 30 days','all':'all history' }[range];
+  const progress=document.getElementById('cleanupProgress');
+  const bar=document.getElementById('cleanupProgressBar');
   button.disabled=true;
+  rangeSelect.disabled=true;
+  progress.hidden=true;
+  bar.value=0;
   status.textContent='Checking matching history…';
   try{
     const previewResponse=await fetch('/requests/cleanup/preview?range='+encodeURIComponent(range),{cache:'no-store'});
@@ -943,14 +981,15 @@ async function deleteHistory(){
       status.textContent='Deletion cancelled.';
       return;
     }
-    status.textContent='Deleting history and unreferenced payloads…';
+    status.textContent='Starting history cleanup…';
     const response=await fetch('/requests?range='+encodeURIComponent(range),{
       method:'DELETE',
       cache:'no-store',
       headers:{'X-Requested-With':'XMLHttpRequest'}
     });
-    const result=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(result.error||'Delete returned HTTP '+response.status);
+    const operation=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(operation.error||'Delete returned HTTP '+response.status);
+    const result=await waitForCleanup(operation.operationId);
     status.textContent='Deleted '+Number(result.deletedRecords||0).toLocaleString()+' record(s); removed '+Number(result.deletedPayloadBlobs||0).toLocaleString()+' payload file(s).'+(result.payloadCleanupFailures?' '+result.payloadCleanupFailures+' payload file(s) could not be removed.':'');
     detailCache.clear();
     await load();
@@ -958,6 +997,7 @@ async function deleteHistory(){
     status.textContent='Could not delete history: '+error.message;
   }finally{
     button.disabled=false;
+    rangeSelect.disabled=false;
   }
 }
 async function load(){
