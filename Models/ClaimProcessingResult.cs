@@ -4,6 +4,7 @@ public enum ClaimProcessingDisposition
 {
     Completed,
     QueuedForRetry,
+    QueuedForWritebackRetry,
     Alerted,
     FailedWriteback,
     Skipped

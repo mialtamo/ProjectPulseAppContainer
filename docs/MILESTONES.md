@@ -1,6 +1,6 @@
 # Project Pulse Milestones
 
-Statuses reflect the repository and POC evidence reviewed on 2026-10-22. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
+Statuses reflect the repository and POC evidence reviewed on 2026-10-31. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
 
 ## M0 - Baseline and development framework — Complete
 
@@ -32,7 +32,7 @@ Remaining: establish and validate duplicate behavior across redelivery, Service 
 
 A Service Bus consumer role exists in the same application/image; the older plan for a separate Function/App is not the current implementation.
 
-Remaining: verify retry scheduling, poison/dead-letter handling, operational recovery, and behavior under dependency outages. Decide whether a separate deployment is needed based on operational evidence.
+Implemented: direct RTA writeback retry messages retain the exact translated PUT payload, the SERVICEBUS role does not replay APIM/DOCMP for those messages, and delayed retries stop at the message TTL deadline before dead-lettering. Remaining: verify scheduling, poison/dead-letter handling, and operational recovery in the target environment. Configure Service Bus dead-letter-on-expiration so a message that expires while the worker is unavailable remains inspectable.
 
 ## M6 - Security and payload controls — In progress
 

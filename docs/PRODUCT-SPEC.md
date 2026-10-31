@@ -11,7 +11,7 @@ This specification describes the current Container Apps implementation and its P
 Project Pulse is a .NET 10 ASP.NET Core container. One codebase/image supports two runtime roles selected by `PROJECT_PULSE_ROLE`:
 
 - **RTA role:** continuously polls the configured source API.
-- **Service Bus role:** receives buffered retry work and reprocesses it through the shared processing flow.
+- **Service Bus role:** receives both claim replay messages and stored RTA writeback messages. Claim replays use APIM/DOCMP; stored writeback retries call RTA directly.
 
 The POC is configured for one replica. There is no Azure Functions TimerTrigger, `host.json`, or `POLL_SCHEDULE` execution model in this application.
 
@@ -22,8 +22,8 @@ The POC is configured for one replica. There is no Azure Functions TimerTrigger,
 3. Each RTA item is translated to the APIM/DOCMP JSON contract and processed as an individual claim request.
 4. Project Pulse sends the request with correlation/idempotency information and validates the configured APIM response-token header.
 5. It records the HTTP response body and translates a successful response into the RTA writeback contract.
-6. When enabled and configured, it sends the writeback to RTA. Writeback failure is recorded and may be retried according to configured behavior.
-7. Under configured APIM outage conditions, eligible work can be placed on Service Bus. The Service Bus role can consume and replay buffered work.
+6. When enabled and configured, it sends the writeback to RTA. If the PUT fails after its configured attempts, Project Pulse queues the exact translated RTA status body for the SERVICEBUS role.
+7. The SERVICEBUS role retries that stored PUT directly to RTA with increasing scheduled delays until the message TTL deadline (10 minutes by default); it never sends that writeback through APIM/DOCMP again. Eligible APIM claim failures are separately replayed through APIM/DOCMP.
 
 The source item, APIM request, APIM response, mapped RTA response, status, and timing values are captured according to request-history settings.
 

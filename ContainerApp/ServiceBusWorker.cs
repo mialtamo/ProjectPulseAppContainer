@@ -14,6 +14,8 @@ public sealed class ServiceBusWorker(
     ServiceBusClient serviceBusClient,
     IHealthGate healthGate,
     IClaimProcessor claimProcessor,
+    IAppApiClient appApiClient,
+    IRetryQueue retryQueue,
     IOptions<ClaimProcessorOptions> options,
     TelemetryClient telemetry,
     ILogger<ServiceBusWorker> logger) : BackgroundService
@@ -38,14 +40,13 @@ public sealed class ServiceBusWorker(
         {
             try
             {
-                var (rtaHealth, apimHealth) = await healthGate.CheckAsync(stoppingToken);
+                var rtaHealth = await healthGate.CheckRtaAsync(stoppingToken);
 
-                if (!rtaHealth.IsHealthy || !apimHealth.IsHealthy)
+                if (!rtaHealth.IsHealthy)
                 {
                     logger.LogWarning(
-                        "Service Bus processing paused because dependencies are unhealthy. RtaHealthy={RtaHealthy} ApimHealthy={ApimHealthy}",
-                        rtaHealth.IsHealthy,
-                        apimHealth.IsHealthy);
+                        "Service Bus processing paused because RTA is unhealthy. RtaHealthy={RtaHealthy}",
+                        rtaHealth.IsHealthy);
 
                     await Task.Delay(
                         TimeSpan.FromSeconds(_options.GetServiceBusDependencyRetrySeconds()),
@@ -96,6 +97,26 @@ public sealed class ServiceBusWorker(
         ServiceBusReceivedMessage message,
         CancellationToken cancellationToken)
     {
+        try
+        {
+            using var messageDocument = JsonDocument.Parse(message.Body.ToString());
+            if (messageDocument.RootElement.ValueKind == JsonValueKind.Object &&
+                messageDocument.RootElement.TryGetProperty("MessageType", out var messageType) &&
+                messageType.ValueKind == JsonValueKind.String &&
+                string.Equals(messageType.GetString(), RtaWritebackRetryEnvelope.TypeName, StringComparison.OrdinalIgnoreCase))
+            {
+                await ProcessRtaWritebackMessageAsync(receiver, message, messageDocument.RootElement, cancellationToken);
+                return;
+            }
+        }
+        catch (JsonException ex)
+        {
+            logger.LogError(ex, "Invalid Service Bus message JSON. MessageId={MessageId}", message.MessageId);
+            telemetry.TrackException(ex);
+            await receiver.DeadLetterMessageAsync(message, "InvalidRetryEnvelope", "Message body was not valid JSON.", cancellationToken);
+            return;
+        }
+
         RetryEnvelope? envelope;
 
         try
@@ -155,6 +176,7 @@ public sealed class ServiceBusWorker(
                 case ClaimProcessingDisposition.Alerted:
                 // Processing queued a replacement envelope, so complete this delivery to avoid replaying it.
                 case ClaimProcessingDisposition.QueuedForRetry:
+                case ClaimProcessingDisposition.QueuedForWritebackRetry:
                     await receiver.CompleteMessageAsync(message, cancellationToken);
 
                     telemetry.TrackEvent("ServiceBusRetryProcessed", new Dictionary<string, string>
@@ -172,6 +194,17 @@ public sealed class ServiceBusWorker(
                     break;
 
                 case ClaimProcessingDisposition.FailedWriteback:
+                    await receiver.DeadLetterMessageAsync(
+                        message,
+                        "RtaWritebackRetryCouldNotBeBuffered",
+                        "APIM/DOCMP had already returned a result, but the exact RTA writeback could not be queued. APIM will not be replayed.",
+                        cancellationToken);
+                    logger.LogCritical(
+                        "Dead-lettered claim retry {UniqueId} because its failed RTA writeback could not be buffered. APIM will not be replayed. Reason={Reason}",
+                        envelope.UniqueId,
+                        result.Reason);
+                    break;
+
                 case ClaimProcessingDisposition.Skipped:
                     await receiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
 
@@ -213,5 +246,134 @@ public sealed class ServiceBusWorker(
             await receiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
         }
     }
-}
+    private async Task ProcessRtaWritebackMessageAsync(
+        ServiceBusReceiver receiver,
+        ServiceBusReceivedMessage message,
+        JsonElement body,
+        CancellationToken cancellationToken)
+    {
+        var envelope = JsonSerializer.Deserialize<RtaWritebackRetryEnvelope>(body.GetRawText());
+        if (envelope is null || string.IsNullOrWhiteSpace(envelope.CorrelationId) || string.IsNullOrWhiteSpace(envelope.WritebackPayload))
+        {
+            await receiver.DeadLetterMessageAsync(message, "InvalidRtaWritebackRetry", "RTA writeback retry message is missing required fields.", cancellationToken);
+            return;
+        }
 
+        if (DateTimeOffset.UtcNow >= envelope.RetryUntilUtc)
+        {
+            await receiver.DeadLetterMessageAsync(
+                message,
+                "RtaWritebackRetryWindowExpired",
+                "The direct RTA writeback retry message reached its configured lifetime before processing.",
+                cancellationToken);
+            telemetry.TrackEvent("RtaWritebackRetryExpired", new Dictionary<string, string>
+            {
+                ["uniqueId"] = envelope.UniqueId,
+                ["correlationId"] = envelope.CorrelationId
+            });
+            return;
+        }
+
+        if (!_options.RtaStatusWritebackEnabled)
+        {
+            await receiver.DeadLetterMessageAsync(message, "RtaWritebackDisabled", "RTA status writeback is disabled in this Service Bus role configuration.", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            using var payload = JsonDocument.Parse(envelope.WritebackPayload);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogError(ex, "Invalid stored RTA writeback JSON. CorrelationId={CorrelationId}", envelope.CorrelationId);
+            await receiver.DeadLetterMessageAsync(message, "InvalidRtaWritebackPayload", "Stored RTA writeback body is invalid JSON.", cancellationToken);
+            return;
+        }
+
+        logger.LogInformation(
+            "Sending stored RTA writeback directly to RTA. CorrelationId={CorrelationId} RetryAttempt={RetryAttempt}. APIM/DOCMP will not be called.",
+            envelope.CorrelationId,
+            envelope.RetryAttempt);
+
+        try
+        {
+            var result = await appApiClient.WriteStatusAsync(envelope.CorrelationId, envelope.WritebackPayload, cancellationToken);
+            if (result.Succeeded == true)
+            {
+                await receiver.CompleteMessageAsync(message, cancellationToken);
+                telemetry.TrackEvent("RtaWritebackRetryCompleted", new Dictionary<string, string>
+                {
+                    ["uniqueId"] = envelope.UniqueId,
+                    ["correlationId"] = envelope.CorrelationId,
+                    ["attempts"] = result.Attempts.ToString()
+                });
+                return;
+            }
+
+            await ScheduleOrDeadLetterAsync(receiver, message, envelope, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Direct RTA writeback attempt threw. CorrelationId={CorrelationId}", envelope.CorrelationId);
+            telemetry.TrackException(ex);
+            await ScheduleOrDeadLetterAsync(receiver, message, envelope, cancellationToken);
+        }
+    }
+
+    private async Task ScheduleOrDeadLetterAsync(
+        ServiceBusReceiver receiver,
+        ServiceBusReceivedMessage message,
+        RtaWritebackRetryEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        var remaining = envelope.RetryUntilUtc - DateTimeOffset.UtcNow;
+        var delaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt, 0, 10)));
+        var delay = TimeSpan.FromSeconds(delaySeconds);
+        if (remaining <= delay)
+        {
+            await receiver.DeadLetterMessageAsync(
+                message,
+                "RtaWritebackRetryWindowExpired",
+                "RTA writeback did not succeed within the configured message lifetime.",
+                cancellationToken);
+            telemetry.TrackEvent("RtaWritebackRetryExpired", new Dictionary<string, string>
+            {
+                ["uniqueId"] = envelope.UniqueId,
+                ["correlationId"] = envelope.CorrelationId
+            });
+            logger.LogError("RTA writeback retry window expired; moved to DLQ. CorrelationId={CorrelationId}", envelope.CorrelationId);
+            return;
+        }
+
+        try
+        {
+            await retryQueue.ScheduleRtaWritebackRetryAsync(envelope, delay, cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
+            logger.LogWarning(
+                "Scheduled another direct RTA writeback attempt. CorrelationId={CorrelationId} RetryAttempt={RetryAttempt} DelaySeconds={DelaySeconds}",
+                envelope.CorrelationId,
+                envelope.RetryAttempt + 1,
+                delay.TotalSeconds);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "Could not schedule RTA writeback retry; moving message to DLQ. CorrelationId={CorrelationId}", envelope.CorrelationId);
+            telemetry.TrackException(ex);
+            await receiver.DeadLetterMessageAsync(
+                message,
+                "RtaWritebackRetryScheduleFailed",
+                "The next direct RTA writeback retry could not be scheduled.",
+                cancellationToken);
+        }
+    }
+
+}

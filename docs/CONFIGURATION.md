@@ -93,11 +93,11 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 | `JsonAlertCodes` | Both | No | `419` | No | Comma-separated application response codes that should be alerted. |
 | `ServiceBusFullyQualifiedNamespace` | Both | Yes | `<namespace>.servicebus.windows.net` | No | Service Bus namespace used by the retry queue. Authentication uses managed identity. |
 | `ServiceBusQueueName` | Both | No | `claim-retry` in code | No | Retry queue name. |
-| `ServiceBusMessageTtlMinutes` | Both | No | `10` | No | TTL assigned to retry messages. |
+| `ServiceBusMessageTtlMinutes` | Both | No | `10` | No | Message lifetime for claim retries and direct RTA writeback retries. Direct writeback retries are scheduled with backoff until this deadline; unsuccessful messages are dead-lettered. Configure the queue to dead-letter expired messages so messages expiring while the worker is unavailable remain inspectable. |
 | `ServiceBusReceiveBatchSize` | SERVICEBUS | No | `10` | No | Maximum number of retry messages received per Service Bus receive cycle. |
 | `ServiceBusReceiveWaitSeconds` | SERVICEBUS | No | `5` | No | Maximum wait for a Service Bus receive operation when the queue is empty. |
 | `ServiceBusDependencyRetrySeconds` | SERVICEBUS | No | `5` | No | Delay before retrying dependency health checks. |
-| `ResultWriteMaxAttempts` | Both | No | `3` | No | Maximum number of RTA result-write attempts. |
+| `ResultWriteMaxAttempts` | Both | No | `3` | No | Maximum number of RTA status PUT attempts in each writeback call. After the initial RTA-role attempts fail, the exact translated payload is queued for direct SERVICEBUS-role retries. |
 | `ResultWriteRetryDelayMilliseconds` | Both | No | `500` | No | Delay between RTA result-write attempts. |
 | `CircuitFailureThreshold` | Both | No | `5` | No | Consecutive failures before the outbound circuit breaker opens. |
 | `CircuitOpenSeconds` | Both | No | `30` | No | Duration the outbound circuit breaker remains open. |

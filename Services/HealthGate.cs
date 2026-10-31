@@ -18,28 +18,33 @@ public sealed class HealthGate(
 
     public async Task<(HealthResult AppApi, HealthResult Apim)> CheckAsync(CancellationToken cancellationToken)
     {
+        var rtaTask = CheckRtaAsync(cancellationToken);
+        var apimTask = CheckApimAsync(cancellationToken);
+        await Task.WhenAll(rtaTask, apimTask);
+        return (await rtaTask, await apimTask);
+    }
+
+    public async Task<HealthResult> CheckRtaAsync(CancellationToken cancellationToken)
+    {
         var appHealthTask = ProbeRtaHealthAsync("RtaApi", _options.RtaHealthPath, cancellationToken);
         var dbHealthTask = ProbeRtaHealthAsync("RtaDbApp", _options.RtaDbHealthPath, cancellationToken);
-        var apimTask = ProbeHttpAsync(
+        await Task.WhenAll(appHealthTask, dbHealthTask);
+
+        var appHealth = await appHealthTask;
+        var dbHealth = await dbHealthTask;
+        return Report(new HealthResult(
+            appHealth.IsHealthy && dbHealth.IsHealthy,
+            "RtaApiAndDb",
+            Detail: $"API={appHealth.IsHealthy}; DB/App={dbHealth.IsHealthy}"));
+    }
+
+    public Task<HealthResult> CheckApimAsync(CancellationToken cancellationToken) =>
+        ProbeHttpAsync(
             "ApimAndBackend",
             httpClientFactory.CreateClient("Apim"),
             _options.ApimHealthPath,
             _options.ApimScope,
             cancellationToken);
-
-        await Task.WhenAll(appHealthTask, dbHealthTask, apimTask);
-
-        var appHealth = await appHealthTask;
-        var dbHealth = await dbHealthTask;
-        var apimHealth = await apimTask;
-
-        var combinedRta = Report(new HealthResult(
-            appHealth.IsHealthy && dbHealth.IsHealthy,
-            "RtaApiAndDb",
-            Detail: $"API={appHealth.IsHealthy}; DB/App={dbHealth.IsHealthy}"));
-
-        return (combinedRta, apimHealth);
-    }
 
     private async Task<HealthResult> ProbeRtaHealthAsync(
         string dependency,

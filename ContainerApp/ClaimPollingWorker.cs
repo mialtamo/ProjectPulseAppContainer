@@ -184,10 +184,11 @@ public sealed class ClaimPollingWorker(
         telemetry.TrackMetric("ClaimBatchSize", claims.Count);
 
         logger.LogInformation(
-            "Poll completed. Batched={Batched}, Completed={Completed}, RetryBuffered={Retry}, Alerted={Alerted}, WritebackFailed={WritebackFailed}",
+            "Poll completed. Batched={Batched}, Completed={Completed}, RetryBuffered={Retry}, WritebackRetryQueued={WritebackRetryQueued}, Alerted={Alerted}, WritebackFailed={WritebackFailed}",
             claims.Count,
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.Completed), 0),
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.QueuedForRetry), 0),
+            summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.QueuedForWritebackRetry), 0),
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.Alerted), 0),
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.FailedWriteback), 0));
     }
