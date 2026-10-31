@@ -69,6 +69,15 @@ public interface IRequestHistoryStore
         string recordId,
         CancellationToken cancellationToken);
 
+    Task<RequestHistoryCleanupProgress> StartCleanupAsync(
+        DateTimeOffset? createdAfterUtc,
+        string rangeLabel,
+        CancellationToken cancellationToken);
+
+    Task<RequestHistoryCleanupProgress?> GetCleanupProgressAsync(
+        string operationId,
+        CancellationToken cancellationToken);
+
     Task<int> CountForCleanupAsync(
         DateTimeOffset? createdAfterUtc,
         CancellationToken cancellationToken);
