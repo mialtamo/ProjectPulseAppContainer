@@ -101,6 +101,23 @@ Project Pulse
 - Application Insights
 - HTTP port 8080
 
+## APIM mock scenarios
+
+For testing with an APIM policy that supports mock scenarios, set `APIM_MOCK_SCENARIO` on the Container App. Project Pulse forwards the value in the `X-Mock-Scenario` header on every APIM adjudication request. Leave it blank to omit the header and use APIM's normal behavior. The setting is available to both the `RTA` and `SERVICEBUS` roles because they share the same claim processor.
+
+| `APIM_MOCK_SCENARIO` | Simulated result |
+| --- | --- |
+| `success` | Successful mock response. |
+| `docmp-not-found` | HTTP 200 with a DOCMP not-found error envelope. |
+| `docmp-error` | HTTP 200 with a DOCMP application-error envelope. |
+| `http-404` | Actual HTTP 404 response. |
+| `http-429` | Actual HTTP 429 response. |
+| `http-500` | Actual HTTP 500 response. |
+| `http-503` | Actual HTTP 503 response. |
+| `http-504` | Actual HTTP 504 response. |
+
+These values exercise different paths: DOCMP errors inside HTTP 200 responses are application errors; `http-*` scenarios simulate actual HTTP failures and the configured retry/notification behavior. Only set this variable when the APIM policy is configured to recognize the header. See the [full configuration reference](docs/CONFIGURATION.md#configuration-reference).
+
 ## Request timing diagnostics
 
 The request-history page reports per-batch averages across stored history. When RTA writeback is enabled, its duration includes status PUT calls, retries, and configured backoff delays. Its summary also counts batches recorded with an `RtaStatusWritebackFailed` reason; that count identifies failed status PUT outcomes, not proof that every such batch retried. Project Pulse logs include correlation IDs, attempt counts, and the final observed HTTP status or exception category for exhausted writebacks. Match a batch's correlation ID in those logs to investigate the specific failure. APIM round-trip duration combines APIM, DOCMP/backend, and network time and cannot isolate those components.
