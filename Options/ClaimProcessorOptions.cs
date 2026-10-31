@@ -30,6 +30,10 @@ public sealed class ClaimProcessorOptions
     public int RtaPageSize { get; init; } = 100;
     public int RtaPagesPerPoll { get; init; } = 1;
     public bool RtaStatusWritebackEnabled { get; init; } = false;
+    [ConfigurationKeyName("RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED")]
+    public bool RtaStatusWritebackConcurrencyEnabled { get; init; } = false;
+    [ConfigurationKeyName("RTA_STATUS_WRITEBACK_MAX_CONCURRENCY")]
+    public int RtaStatusWritebackMaxConcurrency { get; init; } = 5;
     public string AppApiMode { get; init; } = "RTA";
     public bool LogPollPayloads { get; init; } = false;
     public string RequestHistoryPayloadMode { get; init; } = string.Empty;
@@ -124,6 +128,8 @@ public sealed class ClaimProcessorOptions
 
     public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, 100);
     public int GetClampedPagesPerPoll() => Math.Clamp(RtaPagesPerPoll, 1, 3);
+    public int GetRtaStatusWritebackMaxConcurrency() =>
+        Math.Clamp(RtaStatusWritebackMaxConcurrency, 1, 100);
     public int GetServiceBusReceiveBatchSize() => Math.Clamp(ServiceBusReceiveBatchSize, 1, 100);
     public int GetServiceBusReceiveWaitSeconds() => Math.Clamp(ServiceBusReceiveWaitSeconds, 1, 60);
     public int GetServiceBusDependencyRetrySeconds() => Math.Clamp(ServiceBusDependencyRetrySeconds, 1, 300);
