@@ -71,6 +71,7 @@ The configured storage account must be reachable from the Container App environm
 | `ApimScope` | Both | No | empty | No | Optional managed-identity OAuth scope for APIM. |
 | `ApimResponseHeaderName` | Both | No | `X-Pulse-Response-Token` | No | Response header containing the APIM response-validation token. |
 | `ApimResponseToken` | Both | Yes for validation | secret | **Yes** | Expected APIM response token. Use a Container Apps secret reference. |
+| `APIM_MOCK_SCENARIO` | Both | No | empty | No | Optional test control forwarded to APIM as `X-Mock-Scenario`. Supported values: `success`, `docmp-not-found`, `docmp-error`, `http-404`, `http-429`, `http-500`, `http-503`, and `http-504`. Blank omits the header. Configure only when the APIM policy supports mock scenarios. |
 | `APIM_OUTAGE_MODE` | Both | No | `BUFFER_THEN_STOP` | No | Controls behavior during APIM outage: `BUFFER_THEN_STOP`, `STOP_IMMEDIATELY`, or `BUFFER_CONTINUOUSLY`. |
 | `APIM_OUTAGE_POLL_STOP_SECONDS` | RTA | No | `300` | No | Outage duration used before the RTA poller stops in buffer-then-stop mode. |
 | `CorrelationIdField` | Both | No | `CORRELATION_ID` | No | Input JSON field containing the correlation ID. |
