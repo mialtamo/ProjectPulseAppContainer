@@ -113,7 +113,8 @@ The request-history page reports per-batch averages across stored history. When 
 /requests/averages
 /requests/poll (POST, RTA role only)
 /requests/cleanup/preview (GET)
-/requests (DELETE, history cleanup)
+/requests (DELETE, starts history cleanup)
+/requests/cleanup/{operationId} (GET, cleanup progress)
 /requests/{id}
 /requests.html
 /live
@@ -121,7 +122,7 @@ The request-history page reports per-batch averages across stored history. When 
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
 
-The request-history page also lets admins delete history created in the last 24 hours, last 7 days, last 30 days, or all time. The page previews the matching record count and requires confirmation. Cleanup deletes Azure Table history rows and their recent-history index entries, then removes a batch's Blob payloads only after no retained history row references that batch. It does not delete Service Bus messages or platform logs.
+The request-history page also lets admins delete history created in the last 24 hours, last 7 days, last 30 days, or all time. The page previews the matching record count and requires confirmation, then shows progress while cleanup runs in the background. The progress endpoint reports persisted operation status, phase, and item counts so the browser can poll without waiting on a long-running delete request. Cleanup deletes Azure Table history rows and their recent-history index entries, then removes a batch's Blob payloads only after no retained history row references that batch. It does not delete Service Bus messages or platform logs.
 
 Container Apps ingress target port:
 

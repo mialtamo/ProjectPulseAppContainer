@@ -273,14 +273,24 @@ app.MapDelete("/requests", async (HttpContext context, IRequestHistoryStore stor
     }
 
     context.Response.Headers.CacheControl = "no-store";
-    var result = await store.DeleteForCleanupAsync(createdAfterUtc, cancellationToken);
-    return Results.Json(new
-    {
-        range = rangeLabel,
-        deletedRecords = result.DeletedRecords,
-        deletedPayloadBlobs = result.DeletedPayloadBlobs,
-        payloadCleanupFailures = result.PayloadCleanupFailures
-    }, historyJsonOptions);
+    var operation = await store.StartCleanupAsync(createdAfterUtc, rangeLabel, cancellationToken);
+    return Results.Accepted(
+        $"/requests/cleanup/{operation.OperationId}",
+        operation);
+});
+
+app.MapGet("/requests/cleanup/{operationId}", async (
+    HttpContext context,
+    string operationId,
+    IRequestHistoryStore store,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var operation = await store.GetCleanupProgressAsync(operationId, cancellationToken);
+    return operation is null ? Results.NotFound() : Results.Json(operation, historyJsonOptions);
 });
 
 app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTrigger) =>
