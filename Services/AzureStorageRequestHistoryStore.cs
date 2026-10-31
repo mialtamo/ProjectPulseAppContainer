@@ -1000,6 +1000,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 });
         }
 
+        await Report(
+            "Checking retained history references",
+            totalItems == 0 ? 95 : Math.Min(95, Volatile.Read(ref processedItems) * 95 / totalItems),
+            deletedRecordCount);
+
         // Check retained batch references in one partition scan. Querying once per batch
         // made cleanup scale as batches multiplied by table rows.
         var retainedBatchIds = new HashSet<string>(StringComparer.Ordinal);
@@ -1045,7 +1050,6 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         var deletedPayloadBlobs = 0;
         var payloadCleanupFailures = 0;
-        var completedBatchCount = 0;
         if (batchesToClean.Count > 0)
         {
             await Report(
@@ -1084,7 +1088,6 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                         }
                     }
 
-                    Interlocked.Increment(ref completedBatchCount);
                     var processed = Interlocked.Increment(ref processedItems);
                     var percent = totalItems == 0 ? 99 : Math.Min(99, processed * 99 / totalItems);
                     await Report(
