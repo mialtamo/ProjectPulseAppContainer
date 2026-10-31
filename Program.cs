@@ -152,6 +152,7 @@ var historyJsonOptions = new JsonSerializerOptions
 {
     PropertyNamingPolicy = null
 };
+var cleanupProgressJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
 app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
@@ -290,7 +291,7 @@ app.MapGet("/requests/cleanup/{operationId}", async (
 
     context.Response.Headers.CacheControl = "no-store";
     var operation = await store.GetCleanupProgressAsync(operationId, cancellationToken);
-    return operation is null ? Results.NotFound() : Results.Json(operation, historyJsonOptions);
+    return operation is null ? Results.NotFound() : Results.Json(operation, cleanupProgressJsonOptions);
 });
 
 app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTrigger) =>
