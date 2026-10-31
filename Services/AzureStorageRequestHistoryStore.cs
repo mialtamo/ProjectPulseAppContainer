@@ -24,6 +24,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private readonly SemaphoreSlim _recentIndexInitializeLock = new(1, 1);
     private readonly SemaphoreSlim _timingAveragesLock = new(1, 1);
+    private readonly SemaphoreSlim _cleanupExecutionLock = new(1, 1);
     private RequestHistoryTimingAverages? _cachedTimingAverages;
     private string? _cachedTimingAveragesRangeKey;
     private bool _initialized;
@@ -686,6 +687,316 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
 
         return recordIds.Count;
+    }
+
+    public async Task<RequestHistoryCleanupProgress> StartCleanupAsync(
+        DateTimeOffset? createdAfterUtc,
+        string rangeLabel,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        var progress = new RequestHistoryCleanupProgress(
+            Guid.NewGuid().ToString("N"),
+            rangeLabel,
+            "Queued",
+            "Waiting to start",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            null,
+            DateTimeOffset.UtcNow);
+        await SaveCleanupProgressAsync(progress, cancellationToken);
+        _ = Task.Run(() => RunCleanupAsync(progress, createdAfterUtc));
+        return progress;
+    }
+
+    public async Task<RequestHistoryCleanupProgress?> GetCleanupProgressAsync(
+        string operationId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        try
+        {
+            var entity = (await _table.GetEntityAsync<TableEntity>(
+                "!cleanup",
+                operationId,
+                cancellationToken: cancellationToken)).Value;
+            return new RequestHistoryCleanupProgress(
+                operationId,
+                entity.GetString("Range") ?? "history",
+                entity.GetString("Status") ?? "Unknown",
+                entity.GetString("Phase") ?? "Unknown",
+                entity.GetInt32("ProgressPercent") ?? 0,
+                entity.GetInt32("TotalItems") ?? 0,
+                entity.GetInt32("ProcessedItems") ?? 0,
+                entity.GetInt32("DeletedRecords") ?? 0,
+                entity.GetInt32("DeletedPayloadBlobs") ?? 0,
+                entity.GetInt32("PayloadCleanupFailures") ?? 0,
+                entity.GetString("Error"),
+                entity.GetDateTimeOffset("UpdatedAtUtc") ?? DateTimeOffset.UtcNow);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    private async Task RunCleanupAsync(
+        RequestHistoryCleanupProgress initialProgress,
+        DateTimeOffset? createdAfterUtc)
+    {
+        await _cleanupExecutionLock.WaitAsync();
+        try
+        {
+            var running = initialProgress with
+            {
+                Status = "Running",
+                Phase = "Finding matching history",
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            await SaveCleanupProgressAsync(running, CancellationToken.None);
+
+            var result = await DeleteForCleanupAsync(
+                createdAfterUtc,
+                CancellationToken.None,
+                async update =>
+                {
+                    var current = update with
+                    {
+                        OperationId = initialProgress.OperationId,
+                        Range = initialProgress.Range,
+                        Status = "Running",
+                        UpdatedAtUtc = DateTimeOffset.UtcNow
+                    };
+                    await SaveCleanupProgressAsync(current, CancellationToken.None);
+                });
+
+            await SaveCleanupProgressAsync(running with
+            {
+                Status = "Completed",
+                Phase = "Cleanup complete",
+                ProgressPercent = 100,
+                ProcessedItems = result.DeletedRecords + result.DeletedPayloadBlobs,
+                DeletedRecords = result.DeletedRecords,
+                DeletedPayloadBlobs = result.DeletedPayloadBlobs,
+                PayloadCleanupFailures = result.PayloadCleanupFailures,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            }, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Request-history cleanup operation {OperationId} failed", initialProgress.OperationId);
+            await SaveCleanupProgressAsync(initialProgress with
+            {
+                Status = "Failed",
+                Phase = "Cleanup stopped",
+                Error = ex.Message.Length <= 1000 ? ex.Message : ex.Message[..1000],
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            }, CancellationToken.None);
+        }
+        finally
+        {
+            _cleanupExecutionLock.Release();
+        }
+    }
+
+    private Task SaveCleanupProgressAsync(
+        RequestHistoryCleanupProgress progress,
+        CancellationToken cancellationToken)
+    {
+        var entity = new TableEntity("!cleanup", progress.OperationId)
+        {
+            ["Range"] = progress.Range,
+            ["Status"] = progress.Status,
+            ["Phase"] = progress.Phase,
+            ["ProgressPercent"] = progress.ProgressPercent,
+            ["TotalItems"] = progress.TotalItems,
+            ["ProcessedItems"] = progress.ProcessedItems,
+            ["DeletedRecords"] = progress.DeletedRecords,
+            ["DeletedPayloadBlobs"] = progress.DeletedPayloadBlobs,
+            ["PayloadCleanupFailures"] = progress.PayloadCleanupFailures,
+            ["Error"] = progress.Error,
+            ["UpdatedAtUtc"] = progress.UpdatedAtUtc
+        };
+        return _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+    }
+
+    public Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
+        DateTimeOffset? createdAfterUtc,
+        CancellationToken cancellationToken) =>
+        DeleteForCleanupAsync(createdAfterUtc, cancellationToken, null);
+
+    private async Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
+        DateTimeOffset? createdAfterUtc,
+        CancellationToken cancellationToken,
+        Func<RequestHistoryCleanupProgress, Task>? reportProgress)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        await EnsureRecentIndexReadyAsync(cancellationToken);
+
+        var records = new List<RequestHistoryEntity>();
+        var allPrimaryRecordIds = new HashSet<string>(StringComparer.Ordinal);
+        var selectedRecordIds = new HashSet<string>(StringComparer.Ordinal);
+
+        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == PartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            allPrimaryRecordIds.Add(entity.RowKey);
+            if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
+            {
+                records.Add(entity);
+                selectedRecordIds.Add(entity.RowKey);
+            }
+        }
+
+        var indexRecords = new List<RequestHistoryEntity>();
+        var orphanedRecordIds = new HashSet<string>(StringComparer.Ordinal);
+
+        await foreach (var indexEntity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == RecentPartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (createdAfterUtc is not null && indexEntity.CreatedAtUtc < createdAfterUtc.Value)
+            {
+                continue;
+            }
+
+            var primaryId = indexEntity.PrimaryRecordId;
+            var primaryExists = !string.IsNullOrWhiteSpace(primaryId)
+                && allPrimaryRecordIds.Contains(primaryId);
+
+            // Remove matching index rows and orphaned rows left by an interrupted
+            // cleanup. Keep index rows for primary records outside the selected range.
+            if (primaryExists && !selectedRecordIds.Contains(primaryId!))
+            {
+                continue;
+            }
+
+            indexRecords.Add(indexEntity);
+            if (!primaryExists)
+            {
+                orphanedRecordIds.Add(string.IsNullOrWhiteSpace(primaryId)
+                    ? "index:" + indexEntity.RowKey
+                    : primaryId!);
+            }
+        }
+
+        if (records.Count == 0 && indexRecords.Count == 0)
+        {
+            return new RequestHistoryCleanupResult(0, 0, 0);
+        }
+
+        // Delete index entries first so a timeout cannot leave deleted primary rows
+        // appearing in the request list. A retry can still remove any remaining rows.
+        var entitiesToDelete = new List<TableEntity>(records.Count + indexRecords.Count);
+        entitiesToDelete.AddRange(indexRecords.Select(
+            entity => new TableEntity(entity.PartitionKey, entity.RowKey) { ETag = ETag.All }));
+        entitiesToDelete.AddRange(records.Select(
+            entity => new TableEntity(entity.PartitionKey, entity.RowKey) { ETag = ETag.All }));
+
+        var batchIds = records
+            .Select(entity => entity.BatchId)
+            .Concat(indexRecords.Select(entity => entity.BatchId))
+            .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var totalItems = entitiesToDelete.Count + batchIds.Length;
+        var processedItems = 0;
+        async Task Report(string phase, int percent, int deletedRecords = 0, int deletedBlobs = 0, int failures = 0)
+        {
+            if (reportProgress is null) return;
+            await reportProgress(new RequestHistoryCleanupProgress(
+                "",
+                "",
+                "Running",
+                phase,
+                percent,
+                totalItems,
+                processedItems,
+                deletedRecords,
+                deletedBlobs,
+                failures,
+                null,
+                DateTimeOffset.UtcNow));
+        }
+
+        await Report("Deleting history records", 0, records.Count + orphanedRecordIds.Count);
+        foreach (var partition in entitiesToDelete.GroupBy(entity => entity.PartitionKey))
+        {
+            var actions = new List<TableTransactionAction>(100);
+            foreach (var entity in partition)
+            {
+                actions.Add(new TableTransactionAction(TableTransactionActionType.Delete, entity));
+                if (actions.Count == 100)
+                {
+                    var count = actions.Count;
+                    await _table.SubmitTransactionAsync(actions, cancellationToken);
+                    actions.Clear();
+                    processedItems += count;
+                    await Report("Deleting history records", totalItems == 0 ? 95 : Math.Min(95, processedItems * 95 / totalItems), records.Count + orphanedRecordIds.Count);
+                }
+            }
+
+            if (actions.Count > 0)
+            {
+                var count = actions.Count;
+                await _table.SubmitTransactionAsync(actions, cancellationToken);
+                processedItems += count;
+                await Report("Deleting history records", totalItems == 0 ? 95 : Math.Min(95, processedItems * 95 / totalItems), records.Count + orphanedRecordIds.Count);
+            }
+        }
+
+        var deletedPayloadBlobs = 0;
+        var payloadCleanupFailures = 0;
+        var completedBatchCount = 0;
+        foreach (var batchId in batchIds)
+        {
+            var hasRetainedRows = false;
+            await foreach (var _ in _table.QueryAsync<RequestHistoryEntity>(
+                entity => entity.PartitionKey == PartitionKeyValue && entity.BatchId == batchId,
+                maxPerPage: 1,
+                cancellationToken: cancellationToken))
+            {
+                hasRetainedRows = true;
+                break;
+            }
+
+            if (!hasRetainedRows)
+            {
+                await foreach (var blob in _container.GetBlobsAsync(
+                                   prefix: batchId + "/",
+                                   cancellationToken: cancellationToken))
+                {
+                    try
+                    {
+                        await _container.GetBlobClient(blob.Name).DeleteIfExistsAsync(
+                            DeleteSnapshotsOption.IncludeSnapshots,
+                            cancellationToken: cancellationToken);
+                        deletedPayloadBlobs++;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        payloadCleanupFailures++;
+                        _logger.LogWarning(ex, "Could not delete request-history payload blob {BlobName}", blob.Name);
+                    }
+                }
+            }
+
+            completedBatchCount++;
+            processedItems++;
+            var percent = totalItems == 0 ? 99 : Math.Min(99, processedItems * 99 / totalItems);
+            await Report("Removing unreferenced payloads", percent, records.Count + orphanedRecordIds.Count, deletedPayloadBlobs, payloadCleanupFailures);
+        }
+
+        _cachedTimingAverages = null;
+        _cachedTimingAveragesRangeKey = null;
+        return new RequestHistoryCleanupResult(records.Count + orphanedRecordIds.Count, deletedPayloadBlobs, payloadCleanupFailures);
     }
 
     public async Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
