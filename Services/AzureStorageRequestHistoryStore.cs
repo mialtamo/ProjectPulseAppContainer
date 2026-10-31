@@ -936,6 +936,29 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        var totalItems = 0;
+        var processedItems = 0;
+        var deletedHistoryRecords = 0;
+        async Task Report(string phase, int percent, int deletedRecords = 0, int deletedBlobs = 0, int failures = 0)
+        {
+            if (reportProgress is null) return;
+            await reportProgress(new RequestHistoryCleanupProgress(
+                "",
+                "",
+                "Running",
+                phase,
+                percent,
+                totalItems,
+                Volatile.Read(ref processedItems),
+                deletedRecords,
+                deletedBlobs,
+                failures,
+                null,
+                DateTimeOffset.UtcNow));
+        }
+
+        await Report("Finding matching payload files", 0);
+
         var selectedBatchIds = new HashSet<string>(batchIds, StringComparer.Ordinal);
         var retainedBatchIds = primaryRecordsById
             .Where(entry => !selectedRecordIds.Contains(entry.Key))
@@ -961,27 +984,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
         }
 
-        var totalItems = entitiesToDelete.Count + payloadBlobs.Count;
-        var processedItems = 0;
-        var deletedHistoryRecords = 0;
-        async Task Report(string phase, int percent, int deletedRecords = 0, int deletedBlobs = 0, int failures = 0)
-        {
-            if (reportProgress is null) return;
-            await reportProgress(new RequestHistoryCleanupProgress(
-                "",
-                "",
-                "Running",
-                phase,
-                percent,
-                totalItems,
-                Volatile.Read(ref processedItems),
-                deletedRecords,
-                deletedBlobs,
-                failures,
-                null,
-                DateTimeOffset.UtcNow));
-        }
-
+        totalItems = entitiesToDelete.Count + payloadBlobs.Count;
         await Report("Deleting history records", 0);
         // Azure Table transactions are limited to 100 entities and one partition. Build valid
         // transactions first, then submit independent transactions concurrently to reduce wall time.
