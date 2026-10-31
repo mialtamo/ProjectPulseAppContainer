@@ -44,7 +44,7 @@ Remaining: production security review, least-privilege identity/access checks, n
 
 Request history, per-batch stage timings, selectable average windows, status-aware delay hints, Application Insights telemetry, and UI navigation are present.
 
-Remaining: validate metrics and explanations against real environment logs, define actionable alerts and retention, and complete operational runbooks. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
+Remaining: validate metrics and explanations against real environment logs, define actionable alerts and automated retention, and complete operational runbooks. Admin-triggered history cleanup is available in the secured UI. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
 
 ## M8 - Durable state and scale-out safety — Planned
 
