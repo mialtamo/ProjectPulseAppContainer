@@ -966,7 +966,13 @@ async function waitForCleanup(operationId){
     bar.value=percent;
     const processed=Number(operation.processedItems||0);
     const total=Number(operation.totalItems||0);
-    label.textContent=operation.phase+(total?' · '+processed.toLocaleString()+' of '+total.toLocaleString()+' items · '+percent+'%':' · preparing');
+    const deletedRecords=Number(operation.deletedRecords||0);
+    const deletedPayloads=Number(operation.deletedPayloadBlobs||0);
+    label.textContent=operation.phase
+      +(total?' · '+processed.toLocaleString()+' of '+total.toLocaleString()+' cleanup items':' · preparing')
+      +' · '+deletedRecords.toLocaleString()+' history records removed'
+      +' · '+deletedPayloads.toLocaleString()+' payload files deleted'
+      +' · '+percent+'%';
     if(operation.status==='Completed'){
       bar.value=100;
       return operation;
