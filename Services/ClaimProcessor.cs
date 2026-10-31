@@ -89,16 +89,23 @@ public sealed class ClaimProcessor(
         DateTimeOffset? pollStartedAtUtc = null,
         long? rtaPullDurationMs = null)
     {
-        var maxConcurrency = _options.RtaStatusWritebackConcurrencyEnabled
-            ? _options.GetRtaStatusWritebackMaxConcurrency()
+        var mode = _options.GetProcessingConcurrencyMode();
+        var maxConcurrency = mode == ProcessingConcurrencyMode.Sequential
+            ? 1
+            : _options.GetProcessingMaxConcurrency();
+        var apimConcurrency = mode is ProcessingConcurrencyMode.ApimOnly or ProcessingConcurrencyMode.Full
+            ? maxConcurrency
+            : 1;
+        var rtaConcurrency = mode is ProcessingConcurrencyMode.RtaOnly or ProcessingConcurrencyMode.Full
+            ? maxConcurrency
             : 1;
         var resultsByClaim = new IReadOnlyList<ClaimProcessingResult>?[claims.Count];
-        using var apimRequestGate = new SemaphoreSlim(1, 1);
+        using var apimRequestGate = new SemaphoreSlim(apimConcurrency, apimConcurrency);
+        using var rtaWritebackGate = new SemaphoreSlim(rtaConcurrency, rtaConcurrency);
 
-        // Keep each RTA item on its own APIM/writeback path. DOCMP may omit correlation IDs,
+        // Each record follows its own APIM/writeback path. DOCMP may omit correlation IDs,
         // so the single-item response is associated with its originating RTA request.
-        // The APIM gate serializes outbound APIM/DOCMP calls while allowing completed responses
-        // to continue through their independent RTA status writebacks concurrently.
+        // Separate gates make the selected concurrency mode explicit at each external boundary.
         await Parallel.ForEachAsync(
             Enumerable.Range(0, claims.Count),
             new ParallelOptions
@@ -114,7 +121,8 @@ public sealed class ClaimProcessor(
                     itemCancellationToken,
                     pollStartedAtUtc,
                     rtaPullDurationMs,
-                    apimRequestGate);
+                    apimRequestGate,
+                    rtaWritebackGate);
             });
 
         return resultsByClaim
@@ -129,7 +137,8 @@ public sealed class ClaimProcessor(
         CancellationToken cancellationToken,
         DateTimeOffset? pollStartedAtUtc,
         long? rtaPullDurationMs,
-        SemaphoreSlim apimRequestGate)
+        SemaphoreSlim apimRequestGate,
+        SemaphoreSlim rtaWritebackGate)
     {
         if (claims.Count == 0)
         {
@@ -428,6 +437,7 @@ public sealed class ClaimProcessor(
                         claims,
                         correlationIds,
                         cancellationToken,
+                        rtaWritebackGate,
                         apimError.Message,
                         apimError.Stack);
                     writebackStopwatch.Stop();
@@ -548,7 +558,8 @@ public sealed class ClaimProcessor(
                     batchId,
                     claims,
                     correlationIds,
-                    cancellationToken);
+                    cancellationToken,
+                    rtaWritebackGate);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                 await TryRecordHistoryAsync(
@@ -1004,6 +1015,7 @@ public sealed class ClaimProcessor(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
         CancellationToken cancellationToken,
+        SemaphoreSlim rtaWritebackGate,
         string? apimErrorMessage = null,
         string? apimErrorStack = null)
     {
@@ -1130,10 +1142,18 @@ public sealed class ClaimProcessor(
                     [statusPayloadJson],
                     cancellationToken),
                 "RTA status payload");
-            rtaWritebackResult = await appApiClient.WriteStatusAsync(
-                correlationId,
-                statusPayloadJson,
-                cancellationToken);
+            await rtaWritebackGate.WaitAsync(cancellationToken);
+            try
+            {
+                rtaWritebackResult = await appApiClient.WriteStatusAsync(
+                    correlationId,
+                    statusPayloadJson,
+                    cancellationToken);
+            }
+            finally
+            {
+                rtaWritebackGate.Release();
+            }
 
             if (rtaWritebackResult.Succeeded != true)
             {
