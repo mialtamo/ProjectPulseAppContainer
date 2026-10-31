@@ -749,6 +749,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         DateTimeOffset? createdAfterUtc)
     {
         await _cleanupExecutionLock.WaitAsync();
+        var latestProgress = initialProgress;
         try
         {
             var running = initialProgress with
@@ -757,6 +758,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 Phase = "Finding matching history",
                 UpdatedAtUtc = DateTimeOffset.UtcNow
             };
+            latestProgress = running;
             await SaveCleanupProgressAsync(running, CancellationToken.None);
 
             var result = await DeleteForCleanupAsync(
@@ -771,15 +773,16 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                         Status = "Running",
                         UpdatedAtUtc = DateTimeOffset.UtcNow
                     };
+                    latestProgress = current;
                     await SaveCleanupProgressAsync(current, CancellationToken.None);
                 });
 
-            await SaveCleanupProgressAsync(running with
+            await SaveCleanupProgressAsync(latestProgress with
             {
                 Status = "Completed",
                 Phase = "Cleanup complete",
                 ProgressPercent = 100,
-                ProcessedItems = result.DeletedRecords + result.DeletedPayloadBlobs,
+                ProcessedItems = latestProgress.TotalItems,
                 DeletedRecords = result.DeletedRecords,
                 DeletedPayloadBlobs = result.DeletedPayloadBlobs,
                 PayloadCleanupFailures = result.PayloadCleanupFailures,
@@ -789,7 +792,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         catch (Exception ex)
         {
             _logger.LogError(ex, "Request-history cleanup operation {OperationId} failed", initialProgress.OperationId);
-            await SaveCleanupProgressAsync(initialProgress with
+            await SaveCleanupProgressAsync(latestProgress with
             {
                 Status = "Failed",
                 Phase = "Cleanup stopped",
