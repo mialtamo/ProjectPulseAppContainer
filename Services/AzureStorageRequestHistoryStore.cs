@@ -975,6 +975,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         // can be submitted concurrently. Bound concurrency to reduce round trips without
         // flooding the storage account.
         const int cleanupConcurrency = 8;
+        const int blobCleanupConcurrency = 32;
         foreach (var partition in entitiesToDelete.GroupBy(entity => entity.PartitionKey))
         {
             var transactions = partition
@@ -1061,7 +1062,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 batchesToClean,
                 new ParallelOptions
                 {
-                    MaxDegreeOfParallelism = cleanupConcurrency,
+                    MaxDegreeOfParallelism = blobCleanupConcurrency,
                     CancellationToken = cancellationToken
                 },
                 async (batchId, token) =>
