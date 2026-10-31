@@ -13,8 +13,10 @@ The application checks the authenticated principal supplied by Container Apps an
 - `/requests`
 - `/requests/averages`
 - `/requests/{id}`
+- `/requests/cleanup/preview`
+- `DELETE /requests`
 
-The page redirects unauthenticated users to Entra sign-in; API endpoints return unauthorized, and authenticated users without the role receive forbidden. This check depends on Container Apps authentication being enabled and supplying a trusted `X-MS-CLIENT-PRINCIPAL` header. Do not expose an alternate route that bypasses that trusted authentication layer.
+The page redirects unauthenticated users to Entra sign-in; API endpoints return unauthorized, and authenticated users without the role receive forbidden. This check depends on Container Apps authentication being enabled and supplying a trusted `X-MS-CLIENT-PRINCIPAL` header. Do not expose an alternate route that bypasses that trusted authentication layer. History deletion is also admin-only and requires a same-origin request header; the UI previews the record count and confirms before sending the destructive request.
 
 The landing page (`/`), `/pulse-health`, and `/live` are intentionally unauthenticated in the current design. The health endpoint returns dependency booleans, runtime role, and check time. It tests App API/APIM HTTP health and TCP connectivity to Service Bus port 5671; it does not prove successful downstream authentication, authorization, or message sending. Keep it network-restricted or protect it if its exposure is not acceptable.
 
@@ -46,9 +48,9 @@ Request history separates searchable transaction metadata in Azure Table Storage
 - `PARTIAL`: mask common identifiers and personal-name fields before storage/logging; unparseable payloads are masked completely.
 - `FULL`: retain and emit unredacted payloads. Use only with synthetic data or under an explicitly approved data-handling process.
 
-Partial masking is targeted; it is not a complete de-identification guarantee. Identifiers and transaction metadata may still be sensitive even with payload mode OFF. Changing modes does not purge existing payload blobs. The deprecated `LOG_POLL_PAYLOADS` setting is consulted only if `REQUEST_HISTORY_PAYLOAD_MODE` is unset (`true` maps to FULL, `false` to OFF).
+Partial masking is targeted; it is not a complete de-identification guarantee. Identifiers and transaction metadata may still be sensitive even with payload mode OFF. Changing modes does not purge existing payload blobs. The secured request-history UI offers confirmed manual cleanup for the last 24 hours, 7 days, 30 days, or all history. Payload blobs are deleted only when no retained history record references the batch. The deprecated `LOG_POLL_PAYLOADS` setting is consulted only if `REQUEST_HISTORY_PAYLOAD_MODE` is unset (`true` maps to FULL, `false` to OFF).
 
-Restrict access to storage, Service Bus, Application Insights, and exported logs. Define and enforce a retention/deletion policy for table rows, payload blobs, retry messages, and dead-letter messages; the application does not automatically purge history after a fixed age.
+Restrict access to storage, Service Bus, Application Insights, and exported logs. Manual request-history cleanup is available to admins; the application does not automatically purge history after a fixed age. Define separate retention and deletion policies for Service Bus retry/dead-letter messages, Application Insights, and exported logs.
 
 ## TLS and certificates
 

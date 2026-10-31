@@ -69,7 +69,7 @@ The averages view supports preset and custom time ranges. Explanations of delays
 - The POC's single-replica setting avoids some coordination concerns but does not establish scale-out safety.
 - `/pulse-health` reports application health and is not a full proof of every downstream authentication or send operation.
 - Service Bus TLS trust and RTA client-certificate requirements are separate integration concerns.
-- Payload-mode changes do not purge existing history. Retention and deletion need a separate operational policy.
+- Payload-mode changes do not purge existing history. Admins can manually delete request-history records for the last 24 hours, 7 days, 30 days, or all time from the secured history UI. Cleanup removes unreferenced batch payload blobs while preserving blobs still used by retained records. Automated retention remains a separate operational policy.
 - APIM POC success, RTA writeback success, and Service Bus recovery success must be measured independently per environment.
 
 ## Product goals
