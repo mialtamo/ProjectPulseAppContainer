@@ -64,6 +64,8 @@ The configured storage account must be reachable from the Container App environm
 | `RtaPageSize` | RTA | No | `100` | No | Requested RTA page size. Clamped to 1-100. |
 | `RtaPagesPerPoll` | RTA | No | `1` | No | Number of pages processed per poll. Clamped to 1-3. |
 | `RtaStatusWritebackEnabled` | Both | No | `false` in code | No | Enables result writeback to RTA. |
+| `RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED` | RTA | No | `false` | No | When enabled, overlaps RTA status PUTs for records in a polled batch. APIM/DOCMP POSTs remain serialized within each batch. |
+| `RTA_STATUS_WRITEBACK_MAX_CONCURRENCY` | RTA | No | `5` (clamped to 1-100) | No | Maximum number of concurrent per-record processing workers for an RTA polling batch. It limits parallel RTA writebacks; concurrency across multiple Container App replicas is additive. |
 | `ApimBaseUrl` | Both | Yes | APIM base URL | No | Base URL for APIM. |
 | `ApimHealthPath` | Both | No | `/health` | No | APIM health endpoint path. |
 | `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path. |
@@ -78,6 +80,8 @@ The configured storage account must be reachable from the Container App environm
 | `ApimFieldMapping` | Both | No | built-in JSON mapping | No | Fallback JSON mapping for request types without a dedicated mapping. |
 | `ApimInitialRequestFieldMapping` | Both | No | built-in initial-request mapping | No | JSON mapping for `INITIAL_REQUEST` fields. |
 | `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields, including nested adjustment deltas. |
+
+By default, the RTA poller processes records sequentially. When `RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED=true`, it can overlap completed records' RTA status PUTs up to `RTA_STATUS_WRITEBACK_MAX_CONCURRENCY` per polled batch. APIM/DOCMP POSTs remain one at a time per batch. The Service Bus worker currently processes one queued record at a time, so these settings do not increase its concurrency. Across multiple RTA Container App replicas, each replica has its own cap.
 
 For `INITIAL_REQUEST`, Project Pulse sends one APIM request per RTA record. The body is a root JSON object containing only APIM's six initial-request fields: `patientIcn`, `sponsorIcn`, `startDateOfService`, `endDateOfService`, `program`, and `includeDetails`; it is not wrapped in a `claims` array. Initial-request source fields are read from RTA `INITIAL_REQUEST_METADATA`. DOCMP's response fields are read from the root response object (for example, `patientIcn`, `benefitPeriod`, and the accumulator objects), then translated to RTA's uppercase `INITIAL_REQUEST_RESPONSE` shape. The update-request mapping remains independently configurable. Correlation is sent in the `X-Correlation-ID` HTTP header, and `IDEMPOTENCY_KEY` is sent in the `Idempotency-Key` HTTP header. Query parameters such as `pageSize` and `sort` are not part of the JSON body.
 
