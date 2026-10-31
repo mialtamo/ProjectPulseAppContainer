@@ -944,6 +944,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
 
         await Report("Deleting history records", 0, records.Count + orphanedRecordIds.Count);
+        // Azure Table transactions are limited to 100 entities and one partition. Build valid
+        // transactions first, then submit independent transactions concurrently to reduce wall time.
+        var deleteTransactions = new List<IReadOnlyList<TableTransactionAction>>();
         foreach (var partition in entitiesToDelete.GroupBy(entity => entity.PartitionKey))
         {
             var actions = new List<TableTransactionAction>(100);
@@ -952,22 +955,69 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 actions.Add(new TableTransactionAction(TableTransactionActionType.Delete, entity));
                 if (actions.Count == 100)
                 {
-                    var count = actions.Count;
-                    await _table.SubmitTransactionAsync(actions, cancellationToken);
+                    deleteTransactions.Add(actions.ToArray());
                     actions.Clear();
-                    processedItems += count;
-                    await Report("Deleting history records", totalItems == 0 ? 95 : Math.Min(95, processedItems * 95 / totalItems), records.Count + orphanedRecordIds.Count);
                 }
             }
 
             if (actions.Count > 0)
             {
-                var count = actions.Count;
-                await _table.SubmitTransactionAsync(actions, cancellationToken);
-                processedItems += count;
-                await Report("Deleting history records", totalItems == 0 ? 95 : Math.Min(95, processedItems * 95 / totalItems), records.Count + orphanedRecordIds.Count);
+                deleteTransactions.Add(actions.ToArray());
             }
         }
+
+        var progressWriteLock = new SemaphoreSlim(1, 1);
+        var lastReportedProcessedItems = 0;
+        await Parallel.ForEachAsync(
+            deleteTransactions,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = 8,
+                CancellationToken = cancellationToken
+            },
+            async (actions, token) =>
+            {
+                await _table.SubmitTransactionAsync(actions, token);
+                var currentProcessedItems = Interlocked.Add(ref processedItems, actions.Count);
+                if (currentProcessedItems - Volatile.Read(ref lastReportedProcessedItems) < 2000 &&
+                    currentProcessedItems != entitiesToDelete.Count)
+                {
+                    return;
+                }
+
+                await progressWriteLock.WaitAsync(token);
+                try
+                {
+                    currentProcessedItems = Volatile.Read(ref processedItems);
+                    var lastReported = Volatile.Read(ref lastReportedProcessedItems);
+                    if (currentProcessedItems - lastReported >= 2000 ||
+                        currentProcessedItems == entitiesToDelete.Count)
+                    {
+                        var percent = totalItems == 0
+                            ? 95
+                            : Math.Min(95, currentProcessedItems * 95 / totalItems);
+                        await Report(
+                            "Deleting history records",
+                            percent,
+                            records.Count + orphanedRecordIds.Count);
+                        Volatile.Write(ref lastReportedProcessedItems, currentProcessedItems);
+                    }
+                }
+                finally
+                {
+                    progressWriteLock.Release();
+                }
+            });
+
+        // Persist the exact end of the table-row phase, even when fewer than 2,000 rows
+        // were processed since the last progress update.
+        var tableRowsProgressPercent = totalItems == 0
+            ? 95
+            : Math.Min(95, processedItems * 95 / totalItems);
+        await Report(
+            "Deleting history records",
+            tableRowsProgressPercent,
+            records.Count + orphanedRecordIds.Count);
 
         var deletedPayloadBlobs = 0;
         var payloadCleanupFailures = 0;
