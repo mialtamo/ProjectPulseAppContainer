@@ -4,6 +4,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using System.Text.Json;
 using ProjectPulse.Processor.Models;
+using ProjectPulse.Processor.ContainerApp;
 using ProjectPulse.Processor.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
     private readonly ClaimProcessorOptions _options;
+    private readonly string _processingRole;
     private readonly ILogger<AzureStorageRequestHistoryStore> _logger;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
     private readonly SemaphoreSlim _recentIndexInitializeLock = new(1, 1);
@@ -35,6 +37,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         ILogger<AzureStorageRequestHistoryStore> logger)
     {
         _options = options.Value;
+        _processingRole = ProjectPulseRoleResolver.Resolve().ToConfigurationValue();
         _logger = logger;
 
         var connectionString =
@@ -111,6 +114,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             catch (RequestFailedException ex) when (ex.Status == 404)
             {
             }
+
+            entity.ProcessingRole = _processingRole;
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
             await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
@@ -198,6 +203,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 entity.BufferedToServiceBusAtUtc = completedAtUtc;
             }
 
+            entity.ProcessingRole = _processingRole;
+
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
             await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
         }
@@ -247,6 +254,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             var previousIndexRowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey);
+            entity.ProcessingRole = _processingRole;
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
             await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
         }
@@ -300,6 +308,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
             entity.RtaStatusPayloadBlob = blobName;
             entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
+            entity.ProcessingRole = _processingRole;
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
         }
     }
@@ -359,6 +368,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.BufferedToServiceBusAtUtc = bufferedAtUtc;
             entity.RtaResponsePayloadBlobs = rtaResponseBlobs;
             entity.PayloadLoggingEnabled = _options.ShouldCaptureRequestHistoryPayloads();
+
+            entity.ProcessingRole = _processingRole;
 
             await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
             await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
@@ -1071,6 +1082,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.UpdatedAtUtc,
             entity.Status,
             entity.Destination,
+            entity.ProcessingRole,
             entity.HttpStatusCode,
             entity.BusinessResponseCode,
             entity.Reason,
@@ -1382,6 +1394,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public DateTimeOffset UpdatedAtUtc { get; set; }
         public string Status { get; set; } = string.Empty;
         public string Destination { get; set; } = string.Empty;
+        public string? ProcessingRole { get; set; }
         public int? HttpStatusCode { get; set; }
         public string? BusinessResponseCode { get; set; }
         public string? Reason { get; set; }

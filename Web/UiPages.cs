@@ -541,6 +541,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
         <th data-key="UniqueId">Unique ID ↕</th>
         <th data-key="Status">Status ↕</th>
         <th data-key="Destination">Destination ↕</th>
+        <th data-key="ProcessingRole">Processed by ↕</th>
         <th data-key="HttpStatusCode">HTTP ↕</th>
         <th data-key="BusinessResponseCode">Business Code ↕</th>
         <th data-key="Reason">Reason ↕</th>
@@ -573,6 +574,11 @@ function groupByBatch(source){
   });
 }
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function processorLabel(role){
+  if(role==='RTA')return 'RTA Poller';
+  if(role==='SERVICEBUS')return 'Service Bus Worker';
+  return 'Unknown (legacy record)';
+}
 function syntaxHighlight(value){
   if(value===null||value===undefined||value==='') return '<span class="muted">No payload recorded</span>';
   let text=String(value);
@@ -634,7 +640,7 @@ function compare(a,b){
 function filtered(){
   const q=document.getElementById('search').value.trim().toLowerCase();
   const dest=document.getElementById('destination').value;
-  return groupByBatch(items).filter(x=>(!dest||x.Destination===dest)&&(!q||[x.UniqueId,x.RtaRequestIds?.join(' '),x.Status,x.Destination,x.HttpStatusCode,x.BusinessResponseCode,x.Reason,x.BatchId,x.ClaimCount].some(v=>String(v??'').toLowerCase().includes(q)))).sort(compare);
+  return groupByBatch(items).filter(x=>(!dest||x.Destination===dest)&&(!q||[x.UniqueId,x.RtaRequestIds?.join(' '),x.Status,x.Destination,x.ProcessingRole,x.HttpStatusCode,x.BusinessResponseCode,x.Reason,x.BatchId,x.ClaimCount].some(v=>String(v??'').toLowerCase().includes(q)))).sort(compare);
 }
 function renderSummary(list){
   const apim=list.filter(x=>x.Destination==='APIM').length, sb=list.filter(x=>x.Destination==='ServiceBus').length;
@@ -651,7 +657,7 @@ function renderSummary(list){
 function render(){
   const list=filtered(); renderSummary(list);
   const tbody=document.getElementById('rows');
-  if(!list.length){expandedRecordId=null;tbody.innerHTML='<tr><td colspan="8" class="empty">No matching requests</td></tr>';return}
+  if(!list.length){expandedRecordId=null;tbody.innerHTML='<tr><td colspan="9" class="empty">No matching requests</td></tr>';return}
   tbody.innerHTML=list.map((x,i)=>{
     const key='row-'+i+'-'+esc(x.RecordId);
     return '<tr class="data-row" onclick="toggleDetail(\''+key+'\',\''+esc(x.RecordId)+'\')">'+
@@ -660,10 +666,11 @@ function render(){
       '<td class="id" title="'+esc('Correlation ID: '+x.UniqueId+'; RTA request ID: '+(x.RtaRequestIds||[]).join(', '))+'">'+esc(x.UniqueId)+((x.RtaRequestIds||[]).length?'<span class="id-secondary">RTA request ID: '+esc(x.RtaRequestIds.join(', '))+'</span>':'')+'</td>'+
       '<td class="status-'+esc(x.Status)+'">'+esc(x.Status)+'</td>'+
       '<td><span class="tag '+esc(x.Destination)+'">'+esc(x.Destination)+'</span></td>'+
+      '<td><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></td>'+
       '<td>'+esc(x.HttpStatusCode??'')+'</td>'+
       '<td>'+esc(x.BusinessResponseCode??'')+'</td>'+
       '<td>'+esc(x.Reason??'')+'</td></tr>'+
-      '<tr id="'+key+'" class="expand-row" data-record-id="'+esc(x.RecordId)+'"><td colspan="8" class="expand-cell"><div class="muted">Loading details...</div></td></tr>';
+      '<tr id="'+key+'" class="expand-row" data-record-id="'+esc(x.RecordId)+'"><td colspan="9" class="expand-cell"><div class="muted">Loading details...</div></td></tr>';
   }).join('');
   if(expandedRecordId){
     const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.recordId===expandedRecordId);
@@ -771,6 +778,7 @@ async function renderDetail(row,recordId){
     writebackFailure+
     '<div class="detail-grid">'+
       '<div class="card"><div class="label">Batch ID</div><div class="id">'+esc(x.BatchId)+'</div></div>'+
+      '<div class="card"><div class="label">Processed by</div><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></div>'+
       '<div class="card"><div class="label">Claims in Batch</div>'+esc(groupByBatch(items).find(b=>b.BatchId===x.BatchId)?.ClaimCount??1)+'</div>'+
       '<div class="card"><div class="label">Sent to APIM</div>'+(x.SentToApimAtUtc?new Date(x.SentToApimAtUtc).toLocaleString():'N/A')+'</div>'+
       '<div class="card"><div class="label">APIM Response</div>'+(x.ApimResponseAtUtc?new Date(x.ApimResponseAtUtc).toLocaleString():'N/A')+'</div>'+

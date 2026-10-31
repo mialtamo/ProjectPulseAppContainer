@@ -7,6 +7,8 @@ The same image supports two runtime roles:
 - `PROJECT_PULSE_ROLE=RTA` starts the continuous RTA/App API polling worker.
 - `PROJECT_PULSE_ROLE=SERVICEBUS` starts the Service Bus retry worker.
 
+Request history also stores the runtime role that handled each attempt (`RTA` or `SERVICEBUS`). The Requests page displays this as **RTA Poller** or **Service Bus Worker**, separately from the request destination. Existing records without the field are shown as unknown.
+
 Values shown as defaults are the defaults implemented by the application unless noted otherwise.
 
 ## Secrets

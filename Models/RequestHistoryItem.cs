@@ -10,6 +10,7 @@ public sealed record RequestHistoryItem(
     DateTimeOffset UpdatedAtUtc,
     string Status,
     string Destination,
+    string? ProcessingRole,
     int? HttpStatusCode,
     string? BusinessResponseCode,
     string? Reason,
