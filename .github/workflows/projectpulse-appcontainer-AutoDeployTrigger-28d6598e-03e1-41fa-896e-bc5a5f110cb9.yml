@@ -54,3 +54,12 @@ jobs:
           imageToBuild: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
+
+      # Reuse the image built above so both runtime roles run the same version.
+      - name: Deploy image to Service Bus Container App
+        shell: bash
+        run: |
+          az containerapp update \
+            --name projectpulse-sb-appcontainer \
+            --resource-group NewWorld-RSG \
+            --image "projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}"
