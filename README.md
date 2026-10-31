@@ -32,6 +32,8 @@ PROJECT_PULSE_ROLE=SERVICEBUS
 
 The Service Bus role does not poll RTA. It receives `RetryEnvelope` messages from the configured Service Bus queue, waits for RTA/APIM health, retries processing through the shared `ClaimProcessor`, completes successful/requeued messages, and dead-letters malformed payloads.
 
+Request history records which runtime handled each processing attempt: `RTA` for the poller and `SERVICEBUS` for the retry worker. The Requests page shows this as **RTA Poller** or **Service Bus Worker**, separately from the destination (APIM or Service Bus). Older history rows without this field appear as unknown.
+
 For backward compatibility, if `PROJECT_PULSE_ROLE` is not yet configured the container starts in `RTA` mode. Any non-empty unsupported role value fails startup.
 
 ### Service Bus retry worker setup
