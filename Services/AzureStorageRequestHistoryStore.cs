@@ -16,7 +16,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private const string PartitionKeyValue = "requests";
     private const string RecentPartitionKeyValue = "!recent";
     private const string IndexMetadataPartitionKey = "!index";
-    private const string IndexVersionRowKey = "recent-v2";
+    private const string IndexVersionRowKey = "recent-v3";
 
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
@@ -1347,6 +1347,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             UpdatedAtUtc = entity.UpdatedAtUtc,
             Status = entity.Status,
             Destination = entity.Destination,
+            ProcessingRole = entity.ProcessingRole,
             HttpStatusCode = entity.HttpStatusCode,
             BusinessResponseCode = entity.BusinessResponseCode,
             Reason = entity.Reason,
