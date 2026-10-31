@@ -234,6 +234,8 @@ This repository intentionally does not contain the legacy Function App GitHub Ac
 
 For the POC, connect this repository directly from Azure Container Apps Continuous Deployment and allow Azure to generate the GitHub Actions workflow.
 
+The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run.
+
 Recommended settings:
 
 ```text
