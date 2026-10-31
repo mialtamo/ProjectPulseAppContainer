@@ -654,8 +654,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var count = 0;
+        var recordIds = new HashSet<string>(StringComparer.Ordinal);
 
+        // Count canonical records and recent-index entries by record ID. A timed-out
+        // cleanup can remove a primary row before its recent-index row, leaving
+        // visible history that the old preview incorrectly reported as zero.
         await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
             x => x.PartitionKey == PartitionKeyValue,
             maxPerPage: 1000,
@@ -663,11 +666,26 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         {
             if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
             {
-                count++;
+                recordIds.Add(entity.RowKey);
             }
         }
 
-        return count;
+        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == RecentPartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (createdAfterUtc is not null && entity.CreatedAtUtc < createdAfterUtc.Value)
+            {
+                continue;
+            }
+
+            recordIds.Add(string.IsNullOrWhiteSpace(entity.PrimaryRecordId)
+                ? "index:" + entity.RowKey
+                : entity.PrimaryRecordId);
+        }
+
+        return recordIds.Count;
     }
 
     public async Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
@@ -678,42 +696,67 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         await EnsureRecentIndexReadyAsync(cancellationToken);
 
         var records = new List<RequestHistoryEntity>();
+        var allPrimaryRecordIds = new HashSet<string>(StringComparer.Ordinal);
+        var selectedRecordIds = new HashSet<string>(StringComparer.Ordinal);
+
         await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
             x => x.PartitionKey == PartitionKeyValue,
             maxPerPage: 1000,
             cancellationToken: cancellationToken))
         {
+            allPrimaryRecordIds.Add(entity.RowKey);
             if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
             {
                 records.Add(entity);
+                selectedRecordIds.Add(entity.RowKey);
             }
         }
 
-        if (records.Count == 0)
-        {
-            return new RequestHistoryCleanupResult(0, 0, 0);
-        }
-
-        var recordIds = records
-            .Select(entity => entity.RowKey)
-            .ToHashSet(StringComparer.Ordinal);
-        var entitiesToDelete = new List<TableEntity>(records.Count * 2);
-        entitiesToDelete.AddRange(records.Select(
-            entity => new TableEntity(entity.PartitionKey, entity.RowKey) { ETag = ETag.All }));
+        var indexRecords = new List<RequestHistoryEntity>();
+        var orphanedRecordIds = new HashSet<string>(StringComparer.Ordinal);
 
         await foreach (var indexEntity in _table.QueryAsync<RequestHistoryEntity>(
             x => x.PartitionKey == RecentPartitionKeyValue,
             maxPerPage: 1000,
             cancellationToken: cancellationToken))
         {
-            if (indexEntity.PrimaryRecordId is { } primaryId && recordIds.Contains(primaryId))
+            if (createdAfterUtc is not null && indexEntity.CreatedAtUtc < createdAfterUtc.Value)
             {
-                entitiesToDelete.Add(new TableEntity(indexEntity.PartitionKey, indexEntity.RowKey)
-                {
-                    ETag = ETag.All
-                });
+                continue;
+            }
+
+            var primaryId = indexEntity.PrimaryRecordId;
+            var primaryExists = !string.IsNullOrWhiteSpace(primaryId)
+                && allPrimaryRecordIds.Contains(primaryId);
+
+            // Remove matching index rows and orphaned rows left by an interrupted
+            // cleanup. Keep index rows for primary records outside the selected range.
+            if (primaryExists && !selectedRecordIds.Contains(primaryId!))
+            {
+                continue;
+            }
+
+            indexRecords.Add(indexEntity);
+            if (!primaryExists)
+            {
+                orphanedRecordIds.Add(string.IsNullOrWhiteSpace(primaryId)
+                    ? "index:" + indexEntity.RowKey
+                    : primaryId!);
             }
         }
+
+        if (records.Count == 0 && indexRecords.Count == 0)
+        {
+            return new RequestHistoryCleanupResult(0, 0, 0);
+        }
+
+        // Delete index entries first so a timeout cannot leave deleted primary rows
+        // appearing in the request list. A retry can still remove any remaining rows.
+        var entitiesToDelete = new List<TableEntity>(records.Count + indexRecords.Count);
+        entitiesToDelete.AddRange(indexRecords.Select(
+            entity => new TableEntity(entity.PartitionKey, entity.RowKey) { ETag = ETag.All }));
+        entitiesToDelete.AddRange(records.Select(
+            entity => new TableEntity(entity.PartitionKey, entity.RowKey) { ETag = ETag.All }));
 
         foreach (var partition in entitiesToDelete.GroupBy(entity => entity.PartitionKey))
         {
@@ -736,10 +779,13 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         var deletedPayloadBlobs = 0;
         var payloadCleanupFailures = 0;
-        foreach (var batchId in records
-                     .Select(entity => entity.BatchId)
-                     .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
-                     .Distinct(StringComparer.Ordinal))
+        var batchIds = records
+            .Select(entity => entity.BatchId)
+            .Concat(indexRecords.Select(entity => entity.BatchId))
+            .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
+            .Distinct(StringComparer.Ordinal);
+
+        foreach (var batchId in batchIds)
         {
             var hasRetainedRows = false;
             await foreach (var _ in _table.QueryAsync<RequestHistoryEntity>(
@@ -757,7 +803,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             await foreach (var blob in _container.GetBlobsAsync(
-                               prefix: $"{batchId}/",
+                               prefix: batchId + "/",
                                cancellationToken: cancellationToken))
             {
                 try
@@ -777,7 +823,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         _cachedTimingAverages = null;
         _cachedTimingAveragesRangeKey = null;
-        return new RequestHistoryCleanupResult(records.Count, deletedPayloadBlobs, payloadCleanupFailures);
+        return new RequestHistoryCleanupResult(records.Count + orphanedRecordIds.Count, deletedPayloadBlobs, payloadCleanupFailures);
     }
 
     public async Task<RequestHistoryItem?> GetAsync(
