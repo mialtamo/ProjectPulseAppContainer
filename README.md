@@ -271,6 +271,8 @@ RtaQueuedPath=/claims/pending
 RtaHealthPath=/health
 RtaStatusPathTemplate=/requests/{correlationId}/status
 RtaStatusWritebackEnabled=true
+RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED=false
+RTA_STATUS_WRITEBACK_MAX_CONCURRENCY=5
 
 ApimResponseHeaderName=X-Pulse-Response-Token
 ApimResponseToken=<secret reference>
@@ -278,6 +280,17 @@ ApimResponseToken=<secret reference>
 RequestHistoryStorageConnectionString=<secret reference>
 REQUEST_HISTORY_PAYLOAD_MODE=OFF
 ```
+
+### RTA writeback concurrency
+
+By default, the RTA poller processes records sequentially. Set
+`RTA_STATUS_WRITEBACK_CONCURRENCY_ENABLED=true` to overlap completed records' RTA status PUTs.
+`RTA_STATUS_WRITEBACK_MAX_CONCURRENCY` sets the per-batch worker cap (default `5`, clamped to
+`1–100`). APIM/DOCMP POSTs remain serialized within each batch, so this setting does not increase
+the number of simultaneous APIM/DOCMP requests from a poller instance. Concurrent PUT pressure
+can still multiply across active Container App replicas; start with a low cap and increase it only
+after confirming the RTA API can handle it. This setting applies to the RTA polling batch; the
+Service Bus worker handles one queued record at a time.
 
 ### Request-history payload capture
 
