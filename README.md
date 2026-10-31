@@ -112,12 +112,16 @@ The request-history page reports per-batch averages across stored history. When 
 /requests
 /requests/averages
 /requests/poll (POST, RTA role only)
+/requests/cleanup/preview (GET)
+/requests (DELETE, history cleanup)
 /requests/{id}
 /requests.html
 /live
 ```
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
+
+The request-history page also lets admins delete history created in the last 24 hours, last 7 days, last 30 days, or all time. The page previews the matching record count and requires confirmation. Cleanup deletes Azure Table history rows and their recent-history index entries, then removes a batch's Blob payloads only after no retained history row references that batch. It does not delete Service Bus messages or platform logs.
 
 Container Apps ingress target port:
 
@@ -179,6 +183,8 @@ Container Apps authentication exposes authenticated identity information in the 
 | `/requests.html` | Redirects unauthenticated browsers to the Entra sign-in page; requires the `ProjectPulse.Admin` role after sign-in. |
 | `/requests` | Returns `401` without an authenticated principal and `403` when the caller lacks `ProjectPulse.Admin`. |
 | `/requests/averages` | Returns average timing metrics for `range=7d`, `30d`, `365d`, or `all`; `range=custom` accepts `fromUtc` and `toUtc` ISO timestamps. Uses the same authorization behavior as `/requests`. |
+| `/requests/cleanup/preview?range=24h|7d|30d|all` | Admin-only preview count for the selected history cleanup range. |
+| `DELETE /requests?range=24h|7d|30d|all` | Admin-only, same-origin cleanup of request history and eligible payload blobs. |
 | `/requests/{id}` | Same authorization behavior as `/requests`. |
 | `/`, `/pulse`, `/pulse-health`, `/live` | Not restricted by the application role check in the current implementation. |
 
