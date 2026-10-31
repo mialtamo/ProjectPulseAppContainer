@@ -936,7 +936,32 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var totalItems = entitiesToDelete.Count + batchIds.Length;
+        var selectedBatchIds = new HashSet<string>(batchIds, StringComparer.Ordinal);
+        var retainedBatchIds = primaryRecordsById
+            .Where(entry => !selectedRecordIds.Contains(entry.Key))
+            .Select(entry => entry.Value.BatchId)
+            .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Scan the blob container once and keep only files belonging to selected batches.
+        // This avoids one table query and one blob listing per batch during cleanup.
+        var payloadBlobs = new List<string>();
+        await foreach (var blob in _container.GetBlobsAsync(cancellationToken: cancellationToken))
+        {
+            var separator = blob.Name.IndexOf('/');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var batchId = blob.Name[..separator];
+            if (selectedBatchIds.Contains(batchId) && !retainedBatchIds.Contains(batchId))
+            {
+                payloadBlobs.Add(blob.Name);
+            }
+        }
+
+        var totalItems = entitiesToDelete.Count + payloadBlobs.Count;
         var processedItems = 0;
         async Task Report(string phase, int percent, int deletedRecords = 0, int deletedBlobs = 0, int failures = 0)
         {
@@ -1034,45 +1059,104 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         var deletedPayloadBlobs = 0;
         var payloadCleanupFailures = 0;
-        var completedBatchCount = 0;
-        foreach (var batchId in batchIds)
-        {
-            var hasRetainedRows = false;
-            await foreach (var _ in _table.QueryAsync<RequestHistoryEntity>(
-                entity => entity.PartitionKey == PartitionKeyValue && entity.BatchId == batchId,
-                maxPerPage: 1,
-                cancellationToken: cancellationToken))
-            {
-                hasRetainedRows = true;
-                break;
-            }
 
-            if (!hasRetainedRows)
+        // Recheck once after table deletion to protect a batch that gained a retained
+        // history row while cleanup was running. A single scan replaces per-batch queries.
+        var retainedBatchIdsAfterDelete = new HashSet<string>(StringComparer.Ordinal);
+        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == PartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (!string.IsNullOrWhiteSpace(entity.BatchId))
             {
-                await foreach (var blob in _container.GetBlobsAsync(
-                                   prefix: batchId + "/",
-                                   cancellationToken: cancellationToken))
+                retainedBatchIdsAfterDelete.Add(entity.BatchId);
+            }
+        }
+
+        var payloadsToDelete = payloadBlobs
+            .Where(blobName =>
+            {
+                var separator = blobName.IndexOf('/');
+                return separator > 0 && !retainedBatchIdsAfterDelete.Contains(blobName[..separator]);
+            })
+            .ToArray();
+        var skippedPayloads = payloadBlobs.Length - payloadsToDelete.Length;
+        if (skippedPayloads > 0)
+        {
+            Interlocked.Add(ref processedItems, skippedPayloads);
+        }
+
+        Volatile.Write(ref lastReportedProcessedItems, Volatile.Read(ref processedItems));
+        const int payloadDeleteConcurrency = 16;
+        const int payloadProgressInterval = 250;
+
+        await Parallel.ForEachAsync(
+            payloadsToDelete,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = payloadDeleteConcurrency,
+                CancellationToken = cancellationToken
+            },
+            async (blobName, token) =>
+            {
+                try
                 {
-                    try
+                    var deleted = await _container.GetBlobClient(blobName).DeleteIfExistsAsync(
+                        DeleteSnapshotsOption.IncludeSnapshots,
+                        cancellationToken: token);
+                    if (deleted.Value)
                     {
-                        await _container.GetBlobClient(blob.Name).DeleteIfExistsAsync(
-                            DeleteSnapshotsOption.IncludeSnapshots,
-                            cancellationToken: cancellationToken);
-                        deletedPayloadBlobs++;
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        payloadCleanupFailures++;
-                        _logger.LogWarning(ex, "Could not delete request-history payload blob {BlobName}", blob.Name);
+                        Interlocked.Increment(ref deletedPayloadBlobs);
                     }
                 }
-            }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Interlocked.Increment(ref payloadCleanupFailures);
+                    _logger.LogWarning(ex, "Could not delete request-history payload blob {BlobName}", blobName);
+                }
 
-            completedBatchCount++;
-            processedItems++;
-            var percent = totalItems == 0 ? 99 : Math.Min(99, processedItems * 99 / totalItems);
-            await Report("Removing unreferenced payloads", percent, records.Count + orphanedRecordIds.Count, deletedPayloadBlobs, payloadCleanupFailures);
-        }
+                var currentProcessedItems = Interlocked.Increment(ref processedItems);
+                if (currentProcessedItems - Volatile.Read(ref lastReportedProcessedItems) < payloadProgressInterval &&
+                    currentProcessedItems != totalItems)
+                {
+                    return;
+                }
+
+                await progressWriteLock.WaitAsync(token);
+                try
+                {
+                    currentProcessedItems = Volatile.Read(ref processedItems);
+                    var lastReported = Volatile.Read(ref lastReportedProcessedItems);
+                    if (currentProcessedItems - lastReported >= payloadProgressInterval ||
+                        currentProcessedItems == totalItems)
+                    {
+                        var percent = totalItems == 0
+                            ? 99
+                            : Math.Min(99, currentProcessedItems * 99 / totalItems);
+                        await Report(
+                            "Removing unreferenced payload files",
+                            percent,
+                            records.Count + orphanedRecordIds.Count,
+                            Volatile.Read(ref deletedPayloadBlobs),
+                            Volatile.Read(ref payloadCleanupFailures));
+                        Volatile.Write(ref lastReportedProcessedItems, currentProcessedItems);
+                    }
+                }
+                finally
+                {
+                    progressWriteLock.Release();
+                }
+            });
+
+        var finalProcessedItems = Volatile.Read(ref processedItems);
+        var finalPercent = totalItems == 0 ? 99 : Math.Min(99, finalProcessedItems * 99 / totalItems);
+        await Report(
+            "Removing unreferenced payload files",
+            finalPercent,
+            records.Count + orphanedRecordIds.Count,
+            Volatile.Read(ref deletedPayloadBlobs),
+            Volatile.Read(ref payloadCleanupFailures));
 
         _cachedTimingAverages = null;
         _cachedTimingAveragesRangeKey = null;
