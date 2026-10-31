@@ -867,7 +867,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         {
             var primaryId = indexEntity.PrimaryRecordId;
             var primaryExists = !string.IsNullOrWhiteSpace(primaryId)
-                && primaryRecordsById.TryGetValue(primaryId, out var primaryRecord);
+                && primaryRecordsById.ContainsKey(primaryId);
             var primarySelected = primaryExists && selectedRecordIds.Contains(primaryId!);
             var indexSelected = createdAfterUtc is null || indexEntity.CreatedAtUtc >= createdAfterUtc.Value;
 
@@ -878,9 +878,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 continue;
             }
 
-            if (primaryExists && !primarySelected && primaryRecord is not null)
+            if (primaryExists && !primarySelected)
             {
-                records.Add(primaryRecord);
+                records.Add(primaryRecordsById[primaryId!]);
                 selectedRecordIds.Add(primaryId!);
             }
 
