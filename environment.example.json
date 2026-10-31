@@ -23,6 +23,7 @@
   "ApimScope": "",
   "ApimResponseHeaderName": "X-Pulse-Response-Token",
   "ApimResponseToken": "",
+  "APIM_MOCK_SCENARIO": "",
   "APIM_OUTAGE_MODE": "BUFFER_THEN_STOP",
   "APIM_OUTAGE_POLL_STOP_SECONDS": "300",
   "CorrelationIdField": "CORRELATION_ID",
