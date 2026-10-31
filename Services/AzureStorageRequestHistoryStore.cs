@@ -1,6 +1,7 @@
 using Azure;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using System.Text.Json;
 using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Options;
@@ -646,6 +647,137 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         return new RequestHistoryTimingAverage(
             sampleCount == 0 ? null : sum / sampleCount,
             sampleCount);
+    }
+
+    public async Task<int> CountForCleanupAsync(
+        DateTimeOffset? createdAfterUtc,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        var count = 0;
+
+        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == PartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    public async Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
+        DateTimeOffset? createdAfterUtc,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        await EnsureRecentIndexReadyAsync(cancellationToken);
+
+        var records = new List<RequestHistoryEntity>();
+        await foreach (var entity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == PartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
+            {
+                records.Add(entity);
+            }
+        }
+
+        if (records.Count == 0)
+        {
+            return new RequestHistoryCleanupResult(0, 0, 0);
+        }
+
+        var recordIds = records
+            .Select(entity => entity.RowKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var entitiesToDelete = new List<TableEntity>(records.Count * 2);
+        entitiesToDelete.AddRange(records.Select(
+            entity => new TableEntity(entity.PartitionKey, entity.RowKey) { ETag = ETag.All }));
+
+        await foreach (var indexEntity in _table.QueryAsync<RequestHistoryEntity>(
+            x => x.PartitionKey == RecentPartitionKeyValue,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (indexEntity.PrimaryRecordId is { } primaryId && recordIds.Contains(primaryId))
+            {
+                entitiesToDelete.Add(new TableEntity(indexEntity.PartitionKey, indexEntity.RowKey)
+                {
+                    ETag = ETag.All
+                });
+            }
+        }
+
+        foreach (var partition in entitiesToDelete.GroupBy(entity => entity.PartitionKey))
+        {
+            var actions = new List<TableTransactionAction>(100);
+            foreach (var entity in partition)
+            {
+                actions.Add(new TableTransactionAction(TableTransactionActionType.Delete, entity));
+                if (actions.Count == 100)
+                {
+                    await _table.SubmitTransactionAsync(actions, cancellationToken);
+                    actions.Clear();
+                }
+            }
+
+            if (actions.Count > 0)
+            {
+                await _table.SubmitTransactionAsync(actions, cancellationToken);
+            }
+        }
+
+        var deletedPayloadBlobs = 0;
+        var payloadCleanupFailures = 0;
+        foreach (var batchId in records
+                     .Select(entity => entity.BatchId)
+                     .Where(batchId => !string.IsNullOrWhiteSpace(batchId))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var hasRetainedRows = false;
+            await foreach (var _ in _table.QueryAsync<RequestHistoryEntity>(
+                entity => entity.PartitionKey == PartitionKeyValue && entity.BatchId == batchId,
+                maxPerPage: 1,
+                cancellationToken: cancellationToken))
+            {
+                hasRetainedRows = true;
+                break;
+            }
+
+            if (hasRetainedRows)
+            {
+                continue;
+            }
+
+            await foreach (var blob in _container.GetBlobsAsync(
+                               prefix: $"{batchId}/",
+                               cancellationToken: cancellationToken))
+            {
+                try
+                {
+                    await _container.GetBlobClient(blob.Name).DeleteIfExistsAsync(
+                        DeleteSnapshotsOption.IncludeSnapshots,
+                        cancellationToken: cancellationToken);
+                    deletedPayloadBlobs++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    payloadCleanupFailures++;
+                    _logger.LogWarning(ex, "Could not delete request-history payload blob {BlobName}", blob.Name);
+                }
+            }
+        }
+
+        _cachedTimingAverages = null;
+        _cachedTimingAveragesRangeKey = null;
+        return new RequestHistoryCleanupResult(records.Count, deletedPayloadBlobs, payloadCleanupFailures);
     }
 
     public async Task<RequestHistoryItem?> GetAsync(
