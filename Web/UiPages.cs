@@ -459,6 +459,13 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       <option value="APIM">APIM</option>
       <option value="ServiceBus">Service Bus</option>
     </select>
+    <select id="historyRange" aria-label="Filter request history by time" onchange="changeHistoryRange()">
+      <option value="5m">Last 5 minutes</option>
+      <option value="1h">Last hour</option>
+      <option value="24h" selected>Last 24 hours</option>
+      <option value="7d">Last week</option>
+      <option value="all">All time</option>
+    </select>
     <button onclick="load()">Refresh</button>
     {{POLL_CONTROL}}
     <label class="refresh-control">Auto refresh
@@ -552,7 +559,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -789,6 +796,7 @@ async function renderDetail(row,recordId){
       '<div class="card"><div class="label">Translation</div>'+durationLabel(x.TranslationDurationMs)+'</div>'+
       '<div class="card"><div class="label">DOCMP Round Trip</div>'+durationLabel(x.ApimRoundTripDurationMs)+'</div>'+
       '<div class="card"><div class="label">RTA Writeback</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
+      '<div class="card"><div class="label">Other processing</div>'+durationLabel(x.OtherProcessingDurationMs)+'</div>'+
       '<div class="card"><div class="label">Total</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
     '</div>'+
     renderExchangeOutcomes(x)+
@@ -902,16 +910,25 @@ function queueSearch(){
   if(searchTimer)clearTimeout(searchTimer);
   searchTimer=setTimeout(()=>void load(),300);
 }
+function historyRangeLabel(){
+  return {'5m':'the last 5 minutes','1h':'the last hour','24h':'the last 24 hours','7d':'the last week','all':'all time'}[document.getElementById('historyRange').value]||'the selected time period';
+}
+function changeHistoryRange(){
+  historyTotalCount=null;
+  rangeStartUtc=null;
+  void load();
+}
 function historyUrl(pageToken=null){
-  const params=new URLSearchParams({limit:'100'});
+  const params=new URLSearchParams({limit:'100',range:document.getElementById('historyRange').value});
   if(activeSearch)params.set('search',activeSearch);
   if(pageToken)params.set('pageToken',pageToken);
+  if(pageToken&&rangeStartUtc)params.set('fromUtc',rangeStartUtc);
   return '/requests?'+params.toString();
 }
 function historyStatusText(){
-  return activeSearch
-    ? items.length+' matching claim record(s) for "'+activeSearch+'" across request history'
-    : groupByBatch(items).length+' recent batch(es), '+items.length+' claim record(s) loaded';
+  const count=historyTotalCount===null?'…':historyTotalCount.toLocaleString();
+  const searchSuffix=activeSearch?' matching "'+activeSearch+'"':'';
+  return 'Showing '+items.length.toLocaleString()+' of '+count+' request record(s) in '+historyRangeLabel()+searchSuffix+' · '+groupByBatch(items).length.toLocaleString()+' batch(es) loaded';
 }
 async function requestPoll(){
   const button=document.getElementById('pollNowButton');
@@ -1019,6 +1036,9 @@ async function load(){
     const r=await fetch(historyUrl(),{cache:'no-store'});
     if(!r.ok)throw new Error('Request history returned HTTP '+r.status);
     items=await r.json(); nextPageToken=r.headers.get('X-Next-Page-Token');
+    const totalHeader=r.headers.get('X-Total-Count');
+    historyTotalCount=totalHeader===null?null:Number(totalHeader);
+    rangeStartUtc=r.headers.get('X-Range-Start-Utc');
     status.textContent=historyStatusText();
     render();
   }catch(error){status.textContent='Could not load request history: '+error.message}

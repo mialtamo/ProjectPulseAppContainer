@@ -28,6 +28,7 @@ public sealed record RequestHistoryItem(
     long? ApimRoundTripDurationMs = null,
     long? RtaWritebackDurationMs = null,
     long? EndToEndDurationMs = null,
+    long? OtherProcessingDurationMs = null,
     bool? RtaWritebackEnabled = null,
     bool? RtaWritebackAttempted = null,
     bool? RtaWritebackSucceeded = null,
@@ -38,5 +39,6 @@ public sealed record RequestHistoryItem(
 
 public sealed record RequestHistoryPage(
     IReadOnlyList<RequestHistoryItem> Items,
-    string? NextPageToken);
+    string? NextPageToken,
+    long? TotalCount = null);
 

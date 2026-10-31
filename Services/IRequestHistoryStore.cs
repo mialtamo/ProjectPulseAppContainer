@@ -57,6 +57,7 @@ public interface IRequestHistoryStore
         int limit,
         string? continuationToken,
         string? search,
+        DateTimeOffset? updatedAfterUtc,
         CancellationToken cancellationToken);
 
     Task<RequestHistoryTimingAverages> GetTimingAveragesAsync(
