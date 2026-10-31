@@ -1,6 +1,6 @@
 # Project Pulse Security
 
-Last reviewed: 2026-10-22  
+Last reviewed: 2026-10-31  
 Scope: repository implementation and the Container Apps POC. Environment configuration must be checked independently.
 
 ## Access to the web application
@@ -29,7 +29,7 @@ The application uses `DefaultAzureCredential` for managed-identity token request
 Grant only the access required by each deployed role:
 
 - The RTA polling deployment needs Service Bus Data Sender access to its retry queue when buffering is enabled.
-- The Service Bus worker deployment needs Service Bus Data Receiver access to consume retry messages.
+- The Service Bus worker deployment needs Service Bus Data Receiver access to consume retry messages and Service Bus Data Sender access to schedule replacement messages for retries.
 - App API and APIM access must be limited to the configured audiences/scopes.
 
 The two roles use the same image but should have separate Container Apps identities where practical, with role-specific queue permissions. Confirm the actual identity assignment and RBAC scope in each environment.
