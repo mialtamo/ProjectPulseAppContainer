@@ -350,11 +350,18 @@ a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
+.history-cleanup{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 14px;padding:10px 12px;border:1px solid #3c2930;border-radius:9px;background:#120d12}
+.history-cleanup label{font-size:12px;color:var(--muted)}
+.history-cleanup select,.history-cleanup button{border:1px solid #49313a;border-radius:6px;background:#100f16;color:var(--text);padding:7px 9px;font:inherit}
+.history-cleanup button{color:#ff9aaa}
+.history-cleanup button:hover,.history-cleanup button:focus-visible{border-color:var(--red);outline:none}
+.history-cleanup button:disabled{opacity:.55;cursor:wait}
+.history-cleanup-status{font-size:12px;color:var(--muted)}
 input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text);padding:9px 11px;border-radius:7px}
 .load-more-wrap{display:flex;justify-content:center;padding:14px 0}
 .load-more-wrap button[hidden]{display:none}
 button{cursor:pointer}.muted{color:var(--muted)}
- .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
 .timing-summary{margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
 .timing-range-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 12px;color:var(--muted);font-size:12px}
 .timing-range-controls select,.timing-range-controls input,.timing-range-controls button{border:1px solid var(--border);border-radius:6px;background:#0a121c;color:var(--text);padding:7px 9px;font:inherit}
@@ -458,6 +465,17 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       </select>
     </label>
     <span id="status" class="muted"></span>
+  </div>
+  <div class="history-cleanup" role="group" aria-label="Delete request history">
+    <label for="cleanupRange">Delete history</label>
+    <select id="cleanupRange" aria-label="History to delete">
+      <option value="24h">Last 24 hours</option>
+      <option value="7d">Last week</option>
+      <option value="30d">Last 30 days</option>
+      <option value="all">All history</option>
+    </select>
+    <button id="cleanupButton" type="button" onclick="deleteHistory()">Delete…</button>
+    <span id="cleanupStatus" class="history-cleanup-status" role="status" aria-live="polite"></span>
   </div>
   <div id="summary" class="summary"></div>
   <section class="timing-summary" aria-label="Average request timings">
@@ -896,6 +914,48 @@ async function requestPoll(){
       : 'Poll queued; it will start after the current cycle, if one is running.';
   }catch(error){
     status.textContent='Could not queue poll: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
+}
+async function deleteHistory(){
+  const button=document.getElementById('cleanupButton');
+  const status=document.getElementById('cleanupStatus');
+  const range=document.getElementById('cleanupRange').value;
+  const rangeLabel={ '24h':'the last 24 hours','7d':'the last week','30d':'the last 30 days','all':'all history' }[range];
+  button.disabled=true;
+  status.textContent='Checking matching history…';
+  try{
+    const previewResponse=await fetch('/requests/cleanup/preview?range='+encodeURIComponent(range),{cache:'no-store'});
+    const preview=await previewResponse.json().catch(()=>({}));
+    if(!previewResponse.ok)throw new Error(preview.error||'Preview returned HTTP '+previewResponse.status);
+    const count=Number(preview.count||0);
+    if(count===0){
+      status.textContent='No records match '+rangeLabel+'.';
+      return;
+    }
+    const confirmation='Permanently delete '+count.toLocaleString()+' request-history record(s) created in '+rangeLabel+'? Their payloads will also be removed when no remaining record uses them.';
+    if(!window.confirm(confirmation)){
+      status.textContent='Deletion cancelled.';
+      return;
+    }
+    if(range==='all'&&window.prompt('Type DELETE ALL to confirm removing all request history.')!=='DELETE ALL'){
+      status.textContent='Deletion cancelled.';
+      return;
+    }
+    status.textContent='Deleting history and unreferenced payloads…';
+    const response=await fetch('/requests?range='+encodeURIComponent(range),{
+      method:'DELETE',
+      cache:'no-store',
+      headers:{'X-Requested-With':'XMLHttpRequest'}
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Delete returned HTTP '+response.status);
+    status.textContent='Deleted '+Number(result.deletedRecords||0).toLocaleString()+' record(s); removed '+Number(result.deletedPayloadBlobs||0).toLocaleString()+' payload file(s).'+(result.payloadCleanupFailures?' '+result.payloadCleanupFailures+' payload file(s) could not be removed.':'');
+    detailCache.clear();
+    await load();
+  }catch(error){
+    status.textContent='Could not delete history: '+error.message;
   }finally{
     button.disabled=false;
   }
