@@ -40,7 +40,7 @@ The GitHub Actions deployment workflow uses Azure federated identity/OIDC. Its A
 
 ## Request history, logs, and sensitive claim data
 
-Request history separates searchable transaction metadata in Azure Table Storage from captured request/response bodies in Blob Storage. Retry envelopes can include both the original RTA item and transformed APIM request, so the Service Bus queue and its dead-letter storage must also be treated as sensitive data stores.
+Request history separates searchable transaction metadata in Azure Table Storage from captured request/response bodies in Blob Storage. Claim retry envelopes can include the original RTA item and transformed APIM request. Direct RTA writeback retry messages contain the translated RTA status payload, including identifiers and response details. Treat the Service Bus queue and dead-letter storage as sensitive data stores.
 
 `REQUEST_HISTORY_PAYLOAD_MODE` controls payload capture for new history records:
 

@@ -30,7 +30,7 @@ The RTA role starts `ClaimPollingWorker`, polls the RTA/App API, sends claims to
 PROJECT_PULSE_ROLE=SERVICEBUS
 ```
 
-The Service Bus role does not poll RTA. It receives `RetryEnvelope` messages from the configured Service Bus queue, waits for RTA/APIM health, retries processing through the shared `ClaimProcessor`, completes successful/requeued messages, and dead-letters malformed payloads.
+The Service Bus role does not poll RTA. It receives claim-replay messages and `RtaWritebackRetryEnvelope` messages. Claim-replay messages go through the shared `ClaimProcessor` and APIM/DOCMP. A writeback retry message contains the exact translated RTA PUT body from the earlier APIM/DOCMP response; the worker sends that payload directly to RTA and never replays APIM/DOCMP. Direct writeback retries use increasing scheduled delays until the `ServiceBusMessageTtlMinutes` deadline (10 minutes by default), then move to the dead-letter queue if still unsuccessful. The worker requires RTA health for writeback retries; APIM health is not a gate for those messages.
 
 Request history records which runtime handled each processing attempt: `RTA` for the poller and `SERVICEBUS` for the retry worker. The Requests page shows this as **RTA Poller** or **Service Bus Worker**, separately from the destination (APIM or Service Bus). Older history rows without this field appear as unknown.
 
@@ -40,7 +40,7 @@ For backward compatibility, if `PROJECT_PULSE_ROLE` is not yet configured the co
 
 Create the retry queue, then configure the **same** `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on both Container Apps. The RTA app's managed identity needs **Azure Service Bus Data Sender** on the queue. The Service Bus app's identity needs **Azure Service Bus Data Receiver** and **Azure Service Bus Data Sender**, because a retry can be requeued. Project Pulse uses managed identity through `.NET DefaultAzureCredential`; no Service Bus connection string or SAS key is needed.
 
-The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It also requires the shared RTA/App API and APIM settings because it health-checks and processes through those services. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
+The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It requires RTA settings for direct status writebacks. Claim-replay messages go through APIM/DOCMP; stored RTA-writeback retry messages go directly to RTA and do not require APIM health. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
 
 ## Why Container Apps
 

@@ -572,6 +572,33 @@ public sealed class ClaimProcessor(
                         cancellationToken),
                     "RTA writeback timing");
 
+                if (!writebackResult.Success && writebackResult.Reason == "RtaWritebackQueued")
+                {
+                    await TryRecordHistoryAsync(
+                        () => requestHistoryStore.RecordApimResultAsync(
+                            batchId,
+                            correlationIds,
+                            "Buffered",
+                            statusCode,
+                            businessCode,
+                            responseJson,
+                            "RtaWritebackQueued",
+                            true,
+                            DateTimeOffset.UtcNow,
+                            cancellationToken,
+                            apimResponseReceivedAtUtc,
+                            apimRoundTripStopwatch.ElapsedMilliseconds),
+                        "RTA writeback retry buffer");
+
+                    CompleteTelemetry(operation.Telemetry, true, "RtaWritebackQueued", stopwatch.ElapsedMilliseconds);
+                    return BuildResults(
+                        correlationIds,
+                        ClaimProcessingDisposition.QueuedForWritebackRetry,
+                        "RtaWritebackQueued",
+                        statusCode,
+                        businessCode);
+                }
+
                 if (!writebackResult.Success)
                 {
                     await TryRecordHistoryAsync(
@@ -1102,6 +1129,7 @@ public sealed class ClaimProcessor(
             return (false, "CorrelationIdSetMismatch", null);
         }
 
+        var retryQueued = false;
         foreach (var (item, correlationId) in matchedResponses)
         {
             var originatingRequest = requestsByCorrelationId[correlationId];
@@ -1158,13 +1186,42 @@ public sealed class ClaimProcessor(
             if (rtaWritebackResult.Succeeded != true)
             {
                 logger.LogError(
-                    "RTA status writeback failed for correlation ID {CorrelationId}.",
+                    "RTA status writeback failed for correlation ID {CorrelationId}; queueing the exact translated RTA payload for direct retry.",
                     correlationId);
-                return (false, "RtaStatusWritebackFailed", rtaWritebackResult);
+
+                var queuedAtUtc = DateTimeOffset.UtcNow;
+                var envelope = new RtaWritebackRetryEnvelope(
+                    RtaWritebackRetryEnvelope.TypeName,
+                    correlationId,
+                    GetScalar(originatingRequest, "REQUEST_ID"),
+                    GetScalar(originatingRequest, "IDEMPOTENCY_KEY"),
+                    "RtaStatusWritebackFailed",
+                    queuedAtUtc,
+                    queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
+                    0,
+                    correlationId,
+                    statusPayloadJson);
+
+                try
+                {
+                    await retryQueue.EnqueueRtaWritebackAsync(envelope, cancellationToken);
+                    retryQueued = true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await NotifyServiceBusFailureAsync(
+                        [originatingRequest],
+                        "RtaWritebackRetry",
+                        ex,
+                        cancellationToken);
+                    return (false, "RtaWritebackRetryEnqueueFailed", rtaWritebackResult);
+                }
             }
         }
 
-        return (true, "WritebackCompleted", rtaWritebackResult);
+        return retryQueued
+            ? (false, "RtaWritebackQueued", rtaWritebackResult)
+            : (true, "WritebackCompleted", rtaWritebackResult);
     }
 
     private static JsonObject BuildInitialRtaStatusPayload(
