@@ -200,6 +200,12 @@ public sealed class ClaimProcessor(
             ? claimIdempotencyKey
             : batchId;
         request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        if (!string.IsNullOrWhiteSpace(_options.ApimMockScenario))
+        {
+            request.Headers.TryAddWithoutValidation(
+                "X-Mock-Scenario",
+                _options.ApimMockScenario.Trim());
+        }
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
