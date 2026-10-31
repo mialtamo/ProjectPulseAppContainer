@@ -963,6 +963,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         var totalItems = entitiesToDelete.Count + payloadBlobs.Count;
         var processedItems = 0;
+        var deletedHistoryRecords = 0;
         async Task Report(string phase, int percent, int deletedRecords = 0, int deletedBlobs = 0, int failures = 0)
         {
             if (reportProgress is null) return;
@@ -1016,6 +1017,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             async (actions, token) =>
             {
                 await _table.SubmitTransactionAsync(actions, token);
+                var deletedPrimaryRows = actions.Count(action =>
+                    string.Equals(action.Entity.PartitionKey, PartitionKeyValue, StringComparison.Ordinal));
+                Interlocked.Add(ref deletedHistoryRecords, deletedPrimaryRows);
                 var currentProcessedItems = Interlocked.Add(ref processedItems, actions.Count);
                 if (currentProcessedItems - Volatile.Read(ref lastReportedProcessedItems) < 2000 &&
                     currentProcessedItems != entitiesToDelete.Count)
@@ -1037,7 +1041,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                         await Report(
                             "Deleting history records",
                             percent,
-                            records.Count + orphanedRecordIds.Count);
+                            Volatile.Read(ref deletedHistoryRecords));
                         Volatile.Write(ref lastReportedProcessedItems, currentProcessedItems);
                     }
                 }
@@ -1055,7 +1059,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         await Report(
             "Deleting history records",
             tableRowsProgressPercent,
-            records.Count + orphanedRecordIds.Count);
+            Volatile.Read(ref deletedHistoryRecords));
 
         var deletedPayloadBlobs = 0;
         var payloadCleanupFailures = 0;
@@ -1137,7 +1141,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                         await Report(
                             "Removing unreferenced payload files",
                             percent,
-                            records.Count + orphanedRecordIds.Count,
+                            Volatile.Read(ref deletedHistoryRecords),
                             Volatile.Read(ref deletedPayloadBlobs),
                             Volatile.Read(ref payloadCleanupFailures));
                         Volatile.Write(ref lastReportedProcessedItems, currentProcessedItems);
@@ -1154,7 +1158,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         await Report(
             "Removing unreferenced payload files",
             finalPercent,
-            records.Count + orphanedRecordIds.Count,
+            Volatile.Read(ref deletedHistoryRecords),
             Volatile.Read(ref deletedPayloadBlobs),
             Volatile.Read(ref payloadCleanupFailures));
 
