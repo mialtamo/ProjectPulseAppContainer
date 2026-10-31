@@ -89,21 +89,46 @@ public sealed class ClaimProcessor(
         DateTimeOffset? pollStartedAtUtc = null,
         long? rtaPullDurationMs = null)
     {
-        var results = new List<ClaimProcessingResult>(claims.Count);
-        // Keep each RTA item on its own APIM/writeback path. DOCMP may omit correlation IDs,
-        // so the single-item response is associated with its originating RTA request.
-        foreach (var claim in claims)
-        {
-            var result = await ProcessSingleClaimAsync(
-                [claim],
-                rtaResponsePayloads,
-                cancellationToken,
-                pollStartedAtUtc,
-                rtaPullDurationMs);
-            results.AddRange(result);
-        }
+        var mode = _options.GetProcessingConcurrencyMode();
+        var maxConcurrency = mode == ProcessingConcurrencyMode.Sequential
+            ? 1
+            : _options.GetProcessingMaxConcurrency();
+        var apimConcurrency = mode is ProcessingConcurrencyMode.ApimOnly or ProcessingConcurrencyMode.Full
+            ? maxConcurrency
+            : 1;
+        var rtaConcurrency = mode is ProcessingConcurrencyMode.RtaOnly or ProcessingConcurrencyMode.Full
+            ? maxConcurrency
+            : 1;
+        var resultsByClaim = new IReadOnlyList<ClaimProcessingResult>?[claims.Count];
+        using var apimRequestGate = new SemaphoreSlim(apimConcurrency, apimConcurrency);
+        using var rtaWritebackGate = new SemaphoreSlim(rtaConcurrency, rtaConcurrency);
 
-        return results;
+        // Each record follows its own APIM/writeback path. DOCMP may omit correlation IDs,
+        // so the single-item response is associated with its originating RTA request.
+        // Separate gates make the selected concurrency mode explicit at each external boundary.
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, claims.Count),
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = maxConcurrency,
+                CancellationToken = cancellationToken
+            },
+            async (index, itemCancellationToken) =>
+            {
+                resultsByClaim[index] = await ProcessSingleClaimAsync(
+                    [claims[index]],
+                    rtaResponsePayloads,
+                    itemCancellationToken,
+                    pollStartedAtUtc,
+                    rtaPullDurationMs,
+                    apimRequestGate,
+                    rtaWritebackGate);
+            });
+
+        return resultsByClaim
+            .Where(result => result is not null)
+            .SelectMany(result => result!)
+            .ToArray();
     }
 
     private async Task<IReadOnlyList<ClaimProcessingResult>> ProcessSingleClaimAsync(
@@ -111,7 +136,9 @@ public sealed class ClaimProcessor(
         IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken,
         DateTimeOffset? pollStartedAtUtc,
-        long? rtaPullDurationMs)
+        long? rtaPullDurationMs,
+        SemaphoreSlim apimRequestGate,
+        SemaphoreSlim rtaWritebackGate)
     {
         if (claims.Count == 0)
         {
@@ -206,18 +233,23 @@ public sealed class ClaimProcessor(
                 "X-Mock-Scenario",
                 _options.ApimMockScenario.Trim());
         }
-        await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ApimRequestTimeoutSeconds));
-
         var apimRoundTripStopwatch = new Stopwatch();
+        var apimRequestGateHeld = false;
         try
         {
+            await apimRequestGate.WaitAsync(cancellationToken);
+            apimRequestGateHeld = true;
+            await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ApimRequestTimeoutSeconds));
+
             apimRoundTripStopwatch.Start();
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, timeoutCts.Token);
             var responseJson = await response.Content.ReadAsStringAsync(timeoutCts.Token);
             apimRoundTripStopwatch.Stop();
+            apimRequestGate.Release();
+            apimRequestGateHeld = false;
             var apimResponseReceivedAtUtc = DateTimeOffset.UtcNow;
             var statusCode = (int)response.StatusCode;
             var hasApimError = TryParseApimError(responseJson, statusCode, out var apimError);
@@ -405,6 +437,7 @@ public sealed class ClaimProcessor(
                         claims,
                         correlationIds,
                         cancellationToken,
+                        rtaWritebackGate,
                         apimError.Message,
                         apimError.Stack);
                     writebackStopwatch.Stop();
@@ -525,7 +558,8 @@ public sealed class ClaimProcessor(
                     batchId,
                     claims,
                     correlationIds,
-                    cancellationToken);
+                    cancellationToken,
+                    rtaWritebackGate);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                 await TryRecordHistoryAsync(
@@ -706,6 +740,18 @@ public sealed class ClaimProcessor(
             telemetry.TrackException(ex);
             CompleteTelemetry(operation.Telemetry, false, "InvalidJson", stopwatch.ElapsedMilliseconds);
             return BuildResults(correlationIds, ClaimProcessingDisposition.Alerted, "InvalidJsonResponse");
+        }
+        finally
+        {
+            if (apimRoundTripStopwatch.IsRunning)
+            {
+                apimRoundTripStopwatch.Stop();
+            }
+
+            if (apimRequestGateHeld)
+            {
+                apimRequestGate.Release();
+            }
         }
     }
 
@@ -969,6 +1015,7 @@ public sealed class ClaimProcessor(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> correlationIds,
         CancellationToken cancellationToken,
+        SemaphoreSlim rtaWritebackGate,
         string? apimErrorMessage = null,
         string? apimErrorStack = null)
     {
@@ -1095,10 +1142,18 @@ public sealed class ClaimProcessor(
                     [statusPayloadJson],
                     cancellationToken),
                 "RTA status payload");
-            rtaWritebackResult = await appApiClient.WriteStatusAsync(
-                correlationId,
-                statusPayloadJson,
-                cancellationToken);
+            await rtaWritebackGate.WaitAsync(cancellationToken);
+            try
+            {
+                rtaWritebackResult = await appApiClient.WriteStatusAsync(
+                    correlationId,
+                    statusPayloadJson,
+                    cancellationToken);
+            }
+            finally
+            {
+                rtaWritebackGate.Release();
+            }
 
             if (rtaWritebackResult.Succeeded != true)
             {

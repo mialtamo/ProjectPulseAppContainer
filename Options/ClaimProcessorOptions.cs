@@ -13,6 +13,14 @@ public enum ApimOutageMode
     BufferContinuously
 }
 
+public enum ProcessingConcurrencyMode
+{
+    Sequential,
+    RtaOnly,
+    ApimOnly,
+    Full
+}
+
 public sealed class ClaimProcessorOptions
 {
     [Required]
@@ -30,6 +38,10 @@ public sealed class ClaimProcessorOptions
     public int RtaPageSize { get; init; } = 100;
     public int RtaPagesPerPoll { get; init; } = 1;
     public bool RtaStatusWritebackEnabled { get; init; } = false;
+    [ConfigurationKeyName("PROCESSING_CONCURRENCY_MODE")]
+    public string ProcessingConcurrencyMode { get; init; } = "SEQUENTIAL";
+    [ConfigurationKeyName("PROCESSING_MAX_CONCURRENCY")]
+    public int ProcessingMaxConcurrency { get; init; } = 5;
     public string AppApiMode { get; init; } = "RTA";
     public bool LogPollPayloads { get; init; } = false;
     public string RequestHistoryPayloadMode { get; init; } = string.Empty;
@@ -124,6 +136,17 @@ public sealed class ClaimProcessorOptions
 
     public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, 100);
     public int GetClampedPagesPerPoll() => Math.Clamp(RtaPagesPerPoll, 1, 3);
+    public ProcessingConcurrencyMode GetProcessingConcurrencyMode() =>
+        ProcessingConcurrencyMode.Trim().Replace("-", "_", StringComparison.Ordinal).Replace(" ", "_", StringComparison.Ordinal).ToUpperInvariant() switch
+        {
+            "RTA_ONLY" => global::ProjectPulse.Processor.Options.ProcessingConcurrencyMode.RtaOnly,
+            "APIM_ONLY" => global::ProjectPulse.Processor.Options.ProcessingConcurrencyMode.ApimOnly,
+            "FULL" => global::ProjectPulse.Processor.Options.ProcessingConcurrencyMode.Full,
+            _ => global::ProjectPulse.Processor.Options.ProcessingConcurrencyMode.Sequential
+        };
+
+    public int GetProcessingMaxConcurrency() =>
+        Math.Clamp(ProcessingMaxConcurrency, 1, 100);
     public int GetServiceBusReceiveBatchSize() => Math.Clamp(ServiceBusReceiveBatchSize, 1, 100);
     public int GetServiceBusReceiveWaitSeconds() => Math.Clamp(ServiceBusReceiveWaitSeconds, 1, 60);
     public int GetServiceBusDependencyRetrySeconds() => Math.Clamp(ServiceBusDependencyRetrySeconds, 1, 300);
