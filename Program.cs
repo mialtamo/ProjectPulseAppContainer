@@ -19,6 +19,8 @@ builder.Services.AddApplicationInsightsTelemetry();
 builder.Services.AddOptions<ClaimProcessorOptions>()
     .BindConfiguration(string.Empty)
     .ValidateDataAnnotations()
+    .Validate(options => options.IsApimMockScenarioValid(),
+        "APIM_MOCK_SCENARIO must be blank or one of: success, docmp-not-found, docmp-error, http-404, http-429, http-500, http-503, http-504.")
     .ValidateOnStart();
 
 builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
