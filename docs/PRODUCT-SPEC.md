@@ -52,7 +52,7 @@ A multi-item polling envelope is not used as the per-record request payload. Tra
 
 ## History, timings, and UI
 
-The secured request-history pages show transaction status, destination, HTTP/business details when available, payload panels according to the selected payload mode, and per-batch durations for:
+The secured request-history pages show transaction status, destination, processor role, HTTP/business details when available, payload panels according to the selected payload mode, searchable time-range filters, matching-versus-loaded record counts, and per-batch durations for:
 
 - RTA pull
 - Translation
@@ -60,7 +60,7 @@ The secured request-history pages show transaction status, destination, HTTP/bus
 - RTA writeback
 - End-to-end processing
 
-The averages view supports preset and custom time ranges. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
+The averages view supports preset and custom time ranges. The request list supports 5-minute, 1-hour, 24-hour, 7-day, and all-time filters; the displayed match count reflects the selected range and search, while the loaded count reflects pagination. `Other processing` reports end-to-end elapsed time less the measured RTA pull, translation, APIM round trip, and RTA writeback stages. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
 
 ## Resilience and operational boundaries
 

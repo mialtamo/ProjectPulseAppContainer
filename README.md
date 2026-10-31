@@ -120,7 +120,9 @@ These values exercise different paths: DOCMP errors inside HTTP 200 responses ar
 
 ## Request timing diagnostics
 
-The request-history page reports per-batch averages across stored history. When RTA writeback is enabled, its duration includes status PUT calls, retries, and configured backoff delays. Its summary also counts batches recorded with an `RtaStatusWritebackFailed` reason; that count identifies failed status PUT outcomes, not proof that every such batch retried. Project Pulse logs include correlation IDs, attempt counts, and the final observed HTTP status or exception category for exhausted writebacks. Match a batch's correlation ID in those logs to investigate the specific failure. APIM round-trip duration combines APIM, DOCMP/backend, and network time and cannot isolate those components.
+The request-history page reports per-batch averages across stored history. When RTA writeback is enabled, its duration includes status PUT calls, retries, and configured backoff delays. The **Other processing** duration is end-to-end time minus the separately measured RTA pull, translation, APIM round trip, and RTA writeback stages; it accounts for orchestration and other uninstrumented work so the timing cards reconcile. Its summary also counts batches recorded with an `RtaStatusWritebackFailed` reason; that count identifies failed status PUT outcomes, not proof that every such batch retried. Project Pulse logs include correlation IDs, attempt counts, and the final observed HTTP status or exception category for exhausted writebacks. Match a batch's correlation ID in those logs to investigate the specific failure. APIM round-trip duration combines APIM, DOCMP/backend, and network time and cannot isolate those components.
+
+The Requests list can be filtered to the last 5 minutes, last hour, last 24 hours, last 7 days, or all time. It reports the number of records matching the selected time range and search, alongside the number currently loaded. Search narrows both the matching count and displayed rows; paging keeps the selected time cutoff fixed.
 
 ## HTTP endpoints
 
@@ -140,6 +142,8 @@ The request-history page reports per-batch averages across stored history. When 
 ```
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
+
+The RTA role can process records within a fetched batch using `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`) and `PROCESSING_MAX_CONCURRENCY`. These settings affect per-record APIM/DOCMP calls and/or RTA status PUTs; they do not overlap polling cycles. The limit applies per active batch and per replica, so replica counts multiply downstream load. They do not control the Service Bus worker, which currently handles one queued record at a time.
 
 The request-history page also lets admins delete history created in the last 24 hours, last 7 days, last 30 days, or all time. The page previews the matching record count and requires confirmation, then shows progress while cleanup runs in the background. The progress endpoint reports persisted operation status, phase, and cleanup-item counts so the browser can poll without waiting on a long-running delete request. Cleanup removes Azure Table history rows and their recent-history index entries in parallel transactions, scans the payload container once, and deletes selected batch payload files with bounded parallelism only when no retained history row references the batch. Progress separately shows how many history records and payload files have been removed. It does not delete Service Bus messages or platform logs.
 

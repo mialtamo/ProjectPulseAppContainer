@@ -30,6 +30,10 @@ ServiceBusWorker
 
 The worker does not overlap polling cycles within a single replica. For the POC, run exactly one replica.
 
+### Per-record concurrency
+
+Within an RTA polling batch, `PROCESSING_CONCURRENCY_MODE` selects which stages may overlap: `SEQUENTIAL` keeps APIM/DOCMP and RTA PUTs serial; `RTA_ONLY` overlaps RTA PUTs; `APIM_ONLY` overlaps APIM/DOCMP calls; `FULL` overlaps both. `PROCESSING_MAX_CONCURRENCY` caps each enabled stage (default 5, clamped to 1-100). The limit is per active batch and per replica, so replicas multiply potential downstream concurrency. Poll cycles remain non-overlapping. These settings do not control the Service Bus worker, which currently processes one queued record at a time.
+
 ## Container
 
 The application listens on port 8080.
