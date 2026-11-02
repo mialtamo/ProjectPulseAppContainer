@@ -1,5 +1,6 @@
 using Microsoft.ApplicationInsights;
 using Microsoft.Extensions.Hosting;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Services;
@@ -15,6 +16,9 @@ public sealed class ClaimPollingWorker(
     TelemetryClient telemetry,
     ILogger<ClaimPollingWorker> logger) : BackgroundService
 {
+    private static readonly TimeSpan DuplicateLookback = TimeSpan.FromMinutes(15);
+    private const int MaxTrackedRtaIdentities = 25_000;
+    private readonly Dictionary<string, DuplicateObservation> recentRtaIdentities = new(StringComparer.OrdinalIgnoreCase);
     private static TimeSpan GetPollingInterval()
     {
         var raw = Environment.GetEnvironmentVariable("POLL_INTERVAL_SECONDS");
@@ -81,7 +85,7 @@ public sealed class ClaimPollingWorker(
     private async Task RunPollAsync(CancellationToken cancellationToken)
     {
         var runId = Guid.NewGuid().ToString("N");
-        using var scope = logger.BeginScope(new Dictionary<string, object> { ["PollRunId"] = runId });
+        using var scope = logger.BeginScope(new Dictionary<string, object> { ["PollRunId"] = runId, ["WorkerInstance"] = Environment.MachineName });
 
         logger.LogInformation("RTA queued request poll started");
 
@@ -154,6 +158,8 @@ public sealed class ClaimPollingWorker(
             claims.Count,
             outageDecision.Action == ApimOutageAction.BufferToServiceBus ? "ServiceBusBuffer" : "APIM");
 
+        LogSuspectedDuplicateRtaRecords(claims, runId);
+
         IReadOnlyList<ClaimProcessingResult> results;
         try
         {
@@ -192,5 +198,121 @@ public sealed class ClaimPollingWorker(
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.Alerted), 0),
             summary.GetValueOrDefault(nameof(ClaimProcessingDisposition.FailedWriteback), 0));
     }
-}
 
+    private void LogSuspectedDuplicateRtaRecords(IReadOnlyList<JsonElement> claims, string pollRunId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var expiredKey in recentRtaIdentities
+                     .Where(x => now - x.Value.LastSeenUtc > DuplicateLookback)
+                     .Select(x => x.Key)
+                     .ToArray())
+        {
+            recentRtaIdentities.Remove(expiredKey);
+        }
+
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var claim in claims)
+        {
+            foreach (var (kind, value) in GetRtaIdentityValues(claim))
+            {
+                var key = $"{kind}:{value}";
+                counts[key] = counts.GetValueOrDefault(key) + 1;
+            }
+        }
+
+        foreach (var (key, count) in counts.Where(x => x.Value > 1))
+        {
+            var separator = key.IndexOf(':');
+            var kind = key[..separator];
+            var value = key[(separator + 1)..];
+            logger.LogWarning(
+                "Suspected duplicate RTA record in one poll batch. IdentifierType={IdentifierType}, Identifier={Identifier}, Occurrences={Occurrences}, PollRunId={PollRunId}",
+                kind,
+                value,
+                count,
+                pollRunId);
+            telemetry.TrackEvent("SuspectedDuplicateRtaRecord", new Dictionary<string, string>
+            {
+                ["identifierType"] = kind,
+                ["identifier"] = value,
+                ["occurrences"] = count.ToString(),
+                ["scope"] = "same-poll",
+                ["pollRunId"] = pollRunId,
+                ["workerInstance"] = Environment.MachineName
+            });
+        }
+
+        foreach (var (key, count) in counts)
+        {
+            if (recentRtaIdentities.TryGetValue(key, out var previous) &&
+                previous.PollRunId != pollRunId)
+            {
+                var separator = key.IndexOf(':');
+                var kind = key[..separator];
+                var value = key[(separator + 1)..];
+                logger.LogWarning(
+                    "Suspected RTA record returned in a later poll within the duplicate lookback window. IdentifierType={IdentifierType}, Identifier={Identifier}, PreviousPollRunId={PreviousPollRunId}, PollRunId={PollRunId}, SecondsSincePreviousSeen={SecondsSincePreviousSeen:F1}",
+                    kind,
+                    value,
+                    previous.PollRunId,
+                    pollRunId,
+                    (now - previous.LastSeenUtc).TotalSeconds);
+                telemetry.TrackEvent("SuspectedDuplicateRtaRecord", new Dictionary<string, string>
+                {
+                    ["identifierType"] = kind,
+                    ["identifier"] = value,
+                    ["occurrences"] = count.ToString(),
+                    ["scope"] = "later-poll",
+                    ["previousPollRunId"] = previous.PollRunId,
+                    ["pollRunId"] = pollRunId,
+                    ["workerInstance"] = Environment.MachineName
+                });
+            }
+
+            recentRtaIdentities[key] = new DuplicateObservation(now, pollRunId);
+        }
+
+        if (recentRtaIdentities.Count > MaxTrackedRtaIdentities)
+        {
+            foreach (var oldestKey in recentRtaIdentities
+                         .OrderBy(x => x.Value.LastSeenUtc)
+                         .Take(recentRtaIdentities.Count - MaxTrackedRtaIdentities)
+                         .Select(x => x.Key)
+                         .ToArray())
+            {
+                recentRtaIdentities.Remove(oldestKey);
+            }
+        }
+    }
+
+    private static IEnumerable<(string Kind, string Value)> GetRtaIdentityValues(JsonElement claim)
+    {
+        if (claim.ValueKind != JsonValueKind.Object)
+        {
+            yield break;
+        }
+
+        foreach (var property in claim.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, "REQUEST_ID", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(property.Name, "CORRELATION_ID", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = property.Value.ValueKind switch
+            {
+                JsonValueKind.String => property.Value.GetString(),
+                JsonValueKind.Number => property.Value.GetRawText(),
+                _ => null
+            };
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                yield return (property.Name.ToUpperInvariant(), value.Trim());
+            }
+        }
+    }
+
+    private sealed record DuplicateObservation(DateTimeOffset LastSeenUtc, string PollRunId);
+}
