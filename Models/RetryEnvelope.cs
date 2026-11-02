@@ -7,7 +7,16 @@ public sealed record RetryEnvelope(
     string Reason,
     DateTimeOffset QueuedAtUtc,
     string OriginalPayload,
-    string TransformedPayload);
+    string TransformedPayload)
+{
+    public DateTimeOffset? RetryUntilUtc { get; init; }
+    public int RetryAttempt { get; init; }
+    public int? LastHttpStatusCode { get; init; }
+    public string? LastHttpReasonPhrase { get; init; }
+    public string? LastHttpResponseBody { get; init; }
+    public string? LastHttpResponseHeaders { get; init; }
+    public long? LastResponseTimeMs { get; init; }
+}
 
 /// <summary>
 /// Carries the exact translated RTA status PUT body after APIM/DOCMP has already responded.
