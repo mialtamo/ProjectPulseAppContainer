@@ -846,45 +846,6 @@ public sealed class ClaimProcessor(
             $"Queued request JSON does not contain configured correlation ID field '{_options.CorrelationIdField}'.");
     }
 
-    private async Task NotifyApimHttpFailureAsync(
-        JsonElement claim,
-        int statusCode,
-        string? reasonPhrase,
-        string? apimUrl,
-        long responseTimeMs,
-        bool serviceBusQueued,
-        Exception? serviceBusFailure,
-        CancellationToken cancellationToken)
-    {
-        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["HTTP_STATUS_CODE"] = statusCode.ToString(),
-            ["HTTP_REASON_PHRASE"] = reasonPhrase ?? string.Empty,
-            ["APIM_URL"] = apimUrl ?? string.Empty,
-            ["RESPONSE_TIME_MS"] = responseTimeMs.ToString(),
-            ["SERVICE_BUS_QUEUE"] = _options.ServiceBusQueueName,
-            ["SERVICE_BUS_QUEUED"] = serviceBusQueued.ToString()
-        };
-
-        if (serviceBusFailure is not null)
-        {
-            attributes["SERVICE_BUS_FAILURE_TYPE"] = serviceBusFailure.GetType().Name;
-            attributes["SERVICE_BUS_FAILURE_MESSAGE"] = serviceBusFailure.Message;
-        }
-
-        var body = serviceBusFailure is null
-            ? $"Project Pulse received HTTP {statusCode} from APIM. The request {(serviceBusQueued ? "was queued for retry" : "was not queued because this status is not configured for retry")}."
-            : $"Project Pulse received HTTP {statusCode} from APIM and could not queue the request to Service Bus. Service Bus error: {serviceBusFailure.GetType().Name}: {serviceBusFailure.Message}";
-
-        await rtaNotificationClient.SendFailureAsync(
-            claim,
-            "APIM",
-            "HTTP_STATUS",
-            body,
-            attributes,
-            cancellationToken);
-    }
-
     private async Task NotifyServiceBusFailureAsync(
         IReadOnlyList<JsonElement> claims,
         string reason,
@@ -1000,7 +961,8 @@ public sealed class ClaimProcessor(
                 cancellationToken,
                 rtaWritebackGate,
                 errorMessage,
-                null);
+                null,
+                rawApimResponseBody: responseBody);
             succeeded = writeback.Success;
             finalReason = writeback.Reason == "RtaWritebackQueued"
                 ? "ApimRetryExhaustedWritebackQueued"
@@ -1149,7 +1111,8 @@ public sealed class ClaimProcessor(
         CancellationToken cancellationToken,
         SemaphoreSlim rtaWritebackGate,
         string? apimErrorMessage = null,
-        string? apimErrorStack = null)
+        string? apimErrorStack = null,
+        string? rawApimResponseBody = null)
     {
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -1244,7 +1207,7 @@ public sealed class ClaimProcessor(
                 ? BuildInitialRtaStatusPayload(
                     item,
                     originatingRequest,
-                    responseJson,
+                    rawApimResponseBody ?? responseJson,
                     apimStatusCode,
                     apimResponseReceivedAtUtc,
                     apimResponseTimeMs,
