@@ -375,7 +375,10 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         string? continuationToken,
         string? search,
         DateTimeOffset? updatedAfterUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? status = null,
+        string? destination = null,
+        string? processingRole = null)
     {
         await EnsureInitializedAsync(cancellationToken);
         await EnsureRecentIndexReadyAsync(cancellationToken);
@@ -393,6 +396,10 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         {
             searchTerm = null;
         }
+
+        var statusFilter = NormalizeFilter(status);
+        var destinationFilter = NormalizeFilter(destination);
+        var roleFilter = NormalizeFilter(processingRole);
 
         var items = new List<RequestHistoryItem>(pageSize);
         var seenRecordIds = new HashSet<string>(StringComparer.Ordinal);
@@ -447,6 +454,21 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
                 entity.RtaRequestId = recoveredRequestId;
             }
 
+            if (statusFilter is not null && !string.Equals(entity.Status, statusFilter, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (destinationFilter is not null && !string.Equals(entity.Destination, destinationFilter, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (roleFilter is not null && !string.Equals(entity.ProcessingRole, roleFilter, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             matchedCount++;
             if (items.Count < pageSize)
             {
@@ -471,6 +493,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             : null;
         return new RequestHistoryPage(items, nextPageToken, isFirstPage ? matchedCount : null);
     }
+
+    private static string? NormalizeFilter(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task<Dictionary<string, string>> LoadRtaRequestIdMapAsync(
         string blobNamesJson,
