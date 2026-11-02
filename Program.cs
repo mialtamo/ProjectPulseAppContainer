@@ -194,7 +194,10 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
         pageToken,
         context.Request.Query["search"].FirstOrDefault(),
         updatedAfterUtc,
-        cancellationToken);
+        cancellationToken,
+        context.Request.Query["status"].FirstOrDefault(),
+        context.Request.Query["destination"].FirstOrDefault(),
+        context.Request.Query["role"].FirstOrDefault());
     if (page.NextPageToken is not null)
     {
         context.Response.Headers["X-Next-Page-Token"] = page.NextPageToken;
@@ -384,6 +387,20 @@ app.MapGet("/requests.html", (HttpContext context) =>
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
     return Results.Content(UiPages.RequestHistoryPageFor(signedInUser, projectPulseRole == ProjectPulseRole.Rta), "text/html; charset=utf-8");
+});
+
+app.MapGet("/ledger.html", (HttpContext context) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: true);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+    return Results.Content(LifecycleLedgerPage.Html, "text/html; charset=utf-8");
 });
 
 app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRoleName }));

@@ -448,6 +448,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="header-actions">
     <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
     <a class="sign-out" href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
+    <a href="/ledger.html">Lifecycle ledger</a>
     <a href="/">Home</a>
   </div>
 </header>
