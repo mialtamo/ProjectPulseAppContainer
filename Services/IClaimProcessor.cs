@@ -10,7 +10,8 @@ public interface IClaimProcessor
         IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken,
         DateTimeOffset? pollStartedAtUtc = null,
-        long? rtaPullDurationMs = null);
+        long? rtaPullDurationMs = null,
+        RetryEnvelope? retryEnvelope = null);
 
     Task<IReadOnlyList<ClaimProcessingResult>> BufferBatchAsync(
         IReadOnlyList<JsonElement> claims,

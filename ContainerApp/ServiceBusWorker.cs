@@ -16,6 +16,7 @@ public sealed class ServiceBusWorker(
     IClaimProcessor claimProcessor,
     IAppApiClient appApiClient,
     IRetryQueue retryQueue,
+    IRtaNotificationClient rtaNotificationClient,
     IOptions<ClaimProcessorOptions> options,
     TelemetryClient telemetry,
     ILogger<ServiceBusWorker> logger) : BackgroundService
@@ -161,7 +162,7 @@ public sealed class ServiceBusWorker(
                 message.DeliveryCount,
                 envelope.Reason);
 
-            var results = await claimProcessor.ProcessBatchAsync([claim], [], cancellationToken);
+            var results = await claimProcessor.ProcessBatchAsync([claim], [], cancellationToken, retryEnvelope: envelope);
             var result = results.SingleOrDefault();
 
             if (result is null)
@@ -271,6 +272,12 @@ public sealed class ServiceBusWorker(
                 ["uniqueId"] = envelope.UniqueId,
                 ["correlationId"] = envelope.CorrelationId
             });
+            await NotifyWritebackFailureAsync(
+                envelope,
+                "WRITEBACK_RETRY_EXHAUSTED",
+                "RTA status writeback did not succeed within the configured 10-minute retry window.",
+                null,
+                cancellationToken);
             return;
         }
 
@@ -347,6 +354,12 @@ public sealed class ServiceBusWorker(
                 ["correlationId"] = envelope.CorrelationId
             });
             logger.LogError("RTA writeback retry window expired; moved to DLQ. CorrelationId={CorrelationId}", envelope.CorrelationId);
+            await NotifyWritebackFailureAsync(
+                envelope,
+                "WRITEBACK_RETRY_EXHAUSTED",
+                "RTA status writeback did not succeed within the configured retry window.",
+                null,
+                cancellationToken);
             return;
         }
 
@@ -373,7 +386,48 @@ public sealed class ServiceBusWorker(
                 "RtaWritebackRetryScheduleFailed",
                 "The next direct RTA writeback retry could not be scheduled.",
                 cancellationToken);
+            await NotifyWritebackFailureAsync(
+                envelope,
+                "SERVICE_BUS_RETRY_SCHEDULE_FAILED",
+                "Project Pulse could not schedule the next direct RTA status writeback retry.",
+                ex,
+                cancellationToken);
         }
+    }
+
+    private async Task NotifyWritebackFailureAsync(
+        RtaWritebackRetryEnvelope envelope,
+        string failureType,
+        string message,
+        Exception? exception,
+        CancellationToken cancellationToken)
+    {
+        using var itemDocument = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            REQUEST_ID = envelope.RequestId,
+            CORRELATION_ID = envelope.CorrelationId,
+            IDEMPOTENCY_KEY = envelope.IdempotencyKey
+        }));
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CORRELATION_ID"] = envelope.CorrelationId,
+            ["REQUEST_ID"] = envelope.RequestId ?? string.Empty,
+            ["RETRY_ATTEMPT"] = envelope.RetryAttempt.ToString(),
+            ["RETRY_UNTIL_UTC"] = envelope.RetryUntilUtc.ToString("O")
+        };
+        if (exception is not null)
+        {
+            attributes["SERVICE_BUS_FAILURE_TYPE"] = exception.GetType().Name;
+            attributes["SERVICE_BUS_FAILURE_MESSAGE"] = exception.Message;
+        }
+
+        await rtaNotificationClient.SendFailureAsync(
+            itemDocument.RootElement,
+            exception is null ? "RTA" : "SERVICE_BUS",
+            failureType,
+            message + (exception is null ? string.Empty : $" Error: {exception.GetType().Name}: {exception.Message}"),
+            attributes,
+            cancellationToken);
     }
 
 }

@@ -30,12 +30,22 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
     public async Task EnqueueAsync(RetryEnvelope envelope, CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Serialize(envelope);
+        var retryUntilUtc = envelope.RetryUntilUtc
+            ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
+        var remaining = retryUntilUtc - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException("The APIM retry window expired before the retry could be queued.");
+        }
+
         var message = new ServiceBusMessage(payload)
         {
             ContentType = "application/json",
-            MessageId = envelope.UniqueId,
+            MessageId = envelope.UniqueId + "-apim-" + envelope.RetryAttempt + "-" + Guid.NewGuid().ToString("N"),
             CorrelationId = envelope.UniqueId,
-            TimeToLive = TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes),
+            TimeToLive = remaining < TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes)
+                ? remaining
+                : TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes),
             Subject = "ClaimRetry"
         };
 
@@ -50,9 +60,20 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             message.ApplicationProperties["idempotencyKey"] = envelope.IdempotencyKey;
         }
 
+        var retryDelaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt - 1, 0, 10)));
+        var retryDelay = TimeSpan.FromSeconds(retryDelaySeconds);
+        var scheduled = envelope.RetryAttempt > 0 && remaining > retryDelay;
+
         try
         {
-            await _sender.SendMessageAsync(message, cancellationToken);
+            if (scheduled)
+            {
+                await _sender.ScheduleMessageAsync(message, DateTimeOffset.UtcNow.Add(retryDelay), cancellationToken);
+            }
+            else
+            {
+                await _sender.SendMessageAsync(message, cancellationToken);
+            }
         }
         catch (Exception ex)
         {
@@ -77,13 +98,18 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         {
             ["uniqueId"] = envelope.UniqueId,
             ["reason"] = envelope.Reason,
-            ["ttlMinutes"] = _options.ServiceBusMessageTtlMinutes.ToString()
+            ["retryAttempt"] = envelope.RetryAttempt.ToString(),
+            ["retryUntilUtc"] = retryUntilUtc.ToString("O"),
+            ["retryDelaySeconds"] = scheduled ? retryDelay.TotalSeconds.ToString("0") : "0"
         });
 
         _logger.LogWarning(
-            "Claim {UniqueId} buffered to Service Bus. Reason={Reason}",
+            "Claim {UniqueId} buffered to Service Bus. Reason={Reason} RetryAttempt={RetryAttempt} RetryUntilUtc={RetryUntilUtc} RetryDelaySeconds={RetryDelaySeconds}",
             envelope.UniqueId,
-            envelope.Reason);
+            envelope.Reason,
+            envelope.RetryAttempt,
+            retryUntilUtc,
+            scheduled ? retryDelay.TotalSeconds : 0);
     }
 
     public async Task EnqueueRtaWritebackAsync(
