@@ -30,7 +30,6 @@
   "APIM_OUTAGE_POLL_STOP_SECONDS": "300",
   "CorrelationIdField": "CORRELATION_ID",
   "ApimFieldMapping": "",
-  "RetryHttpStatusCodes": "404,408,429,500,502,503,504",
   "JsonResponseCodeField": "RESPONSE_CODE",
   "JsonRetryCodes": "",
   "JsonAlertCodes": "419",
