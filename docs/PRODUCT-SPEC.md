@@ -62,6 +62,8 @@ The secured request-history pages show transaction status, destination, processo
 
 The averages view supports preset and custom time ranges. The request list supports 5-minute, 1-hour, 24-hour, 7-day, and all-time filters; the displayed match count reflects the selected range and search, while the loaded count reflects pagination. `Other processing` reports end-to-end elapsed time less the measured RTA pull, translation, APIM round trip, and RTA writeback stages. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
 
+The admin-only `/ledger.html` page adds a lifecycle-oriented view over the same stored request-history API. It filters by time range, status, destination, and processor role; searches correlation/unique ID, RTA request ID, and batch ID; and reports total matches separately from the current page. Its timeline shows only stored milestones and intentionally omits payload bodies. The APIM timestamp marks when Project Pulse recorded an attempt before making the POST, not proof of receipt by APIM; a missing later outcome means that outcome is not present in stored history.
+
 ## Resilience and operational boundaries
 
 - Service Bus buffering is for configured outage cases; it is not a guarantee that every failure is buffered.

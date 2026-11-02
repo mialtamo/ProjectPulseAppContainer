@@ -1,6 +1,6 @@
 # Project Pulse Milestones
 
-Statuses reflect the repository and POC evidence reviewed on 2026-10-31. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
+Statuses reflect the repository and POC evidence reviewed on 2026-11-02. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
 
 ## M0 - Baseline and development framework — Complete
 
@@ -42,7 +42,7 @@ Remaining: production security review, least-privilege identity/access checks, n
 
 ## M7 - Observability and operations — In progress
 
-Request history, per-batch stage timings, selectable average windows, time-range/search counts, processor-role visibility, status-aware delay hints, Application Insights telemetry, and UI navigation are present. The timing view includes an `Other processing` remainder so stage durations reconcile to end-to-end time.
+Request history, per-batch stage timings, selectable average windows, time-range/search counts, processor-role visibility, status-aware delay hints, Application Insights telemetry, and UI navigation are present. The timing view includes an `Other processing` remainder so stage durations reconcile to end-to-end time. The admin-only lifecycle ledger filters by time range, status, destination, and role; searches IDs; paginates matching attempts; and reconstructs stage timelines from stored request-history milestones. It clearly distinguishes an APIM attempt timestamp from proof of APIM receipt.
 
 Remaining: validate metrics and explanations against real environment logs, define actionable alerts and automated retention, and complete operational runbooks. Admin-triggered history cleanup is available in the secured UI; Table deletion is batched and parallel, while blob cleanup uses a single container scan and bounded parallel deletes. Progress separately counts history rows and payload files. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
 

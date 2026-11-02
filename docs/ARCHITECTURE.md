@@ -54,7 +54,7 @@ The Container App identity needs its own downstream RBAC and permissions.
 
 APIM outage tracking and circuit-breaker state are process-local for the POC and reset when the container restarts or a new revision starts.
 
-Request history is stored in Azure Table and Blob storage.
+Request history is stored in Azure Table and Blob storage. The secured `/ledger.html` view reads the existing request-history API and reconstructs a lifecycle timeline from those stored milestones; it is not a separate event ledger. Search and filters operate over the indexed history API. An APIM send timestamp is recorded before the network POST, so the ledger reports an attempt, not confirmed APIM receipt; missing downstream milestones mean no outcome was stored.
 
 
 ## Service Bus retry message types
