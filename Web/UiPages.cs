@@ -457,7 +457,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
 .payload-note{color:var(--amber);font-size:12px;padding:10px;margin:0 0 12px;border:1px dashed #6d5728;border-radius:7px}
 .empty{padding:28px;text-align:center;color:var(--muted)}
 @media(max-width:1100px){.timing-averages{grid-template-columns:repeat(3,minmax(130px,1fr))}}
-@media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}.timing-averages{grid-template-columns:repeat(2,minmax(130px,1fr))}}
+@media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}.timing-averages{grid-template-columns:repeat(2,minmax(130px,1fr))}.lifecycle-track{overflow-x:auto;padding-bottom:6px}.lifecycle-stage{min-width:150px}.lifecycle-arrow{flex:0 0 auto}}
 @media(max-width:480px){.timing-averages{grid-template-columns:1fr}}
 </style>
 </head>
@@ -660,7 +660,7 @@ async function copyPayload(button){
 function compare(a,b){
   let av=a?.[sortKey], bv=b?.[sortKey];
   if(sortKey==='UpdatedAtUtc'){av=Date.parse(av||0);bv=Date.parse(bv||0)}
-  else if(sortKey==='HttpStatusCode'||sortKey==='ClaimCount'){av=Number(av??-1);bv=Number(bv??-1)}
+  else if(sortKey==='HttpStatusCode'||sortKey==='ClaimCount'||sortKey==='AttemptCount'){av=Number(av??-1);bv=Number(bv??-1)}
   else{av=String(av??'').toLowerCase();bv=String(bv??'').toLowerCase()}
   if(av<bv)return sortDir==='asc'?-1:1;if(av>bv)return sortDir==='asc'?1:-1;return 0;
 }
