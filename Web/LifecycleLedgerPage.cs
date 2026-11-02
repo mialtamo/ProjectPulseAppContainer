@@ -81,7 +81,7 @@ function timeline(x){
   const pullWhen=sent&&pull!=null?stamp(new Date(new Date(sent).getTime()-pull).toISOString()):'Before APIM send';
   const steps=[];
   steps.push(step('RTA GET',pull!=null?'Record received':'No pull timing recorded',pullText+' · '+pullWhen,pull!=null?'ok':'wait'));
-  steps.push(step('APIM / DOCMP POST',sent?'POST recorded':'No POST recorded',sent?stamp(sent):'No send timestamp is stored.',sent?'ok':'wait'));
+  steps.push(step('APIM / DOCMP POST',sent?'Attempt recorded':'No attempt recorded',sent?stamp(sent)+' · history timestamp is saved before the network POST':'No APIM attempt timestamp is stored.',sent?'ok':'wait'));
   const apimAt=x.ApimResponseAtUtc;
   const apimDetail=[x.HttpStatusCode!=null?'HTTP '+x.HttpStatusCode:null,x.BusinessResponseCode||null,x.Reason||null].filter(Boolean).join(' · ');
   steps.push(step('APIM response',apimAt?'Response recorded':'No response recorded',apimAt?stamp(apimAt)+(apimDetail?' · '+apimDetail:''):'No response timestamp or status is stored.',apimAt?(x.HttpStatusCode>=400?'fail':'ok'):'wait'));
@@ -91,7 +91,7 @@ function timeline(x){
   if(x.RtaWritebackEnabled===false){wbOutcome='Disabled';wbDetail='RTA status writeback was disabled for this attempt.'}
   else if(x.RtaWritebackAttempted===true){
     wbOutcome=x.RtaWritebackSucceeded?'Succeeded':'Failed';
-    wbDetail='HTTP '+(x.RtaWritebackHttpStatusCode??'not recorded')+' · '+(x.RtaWritebackAttempts??'unknown')+' attempt(s)'+(x.RtaWritebackFailureKind?' · '+x.RtaWritebackFailureKind:'');
+    wbDetail='HTTP '+(x.RtaWritebackHttpStatusCode??'not recorded')+' · '+(x.RtaWritebackAttempts??'unknown')+' attempt(s) · history updated '+stamp(x.UpdatedAtUtc)+(x.RtaWritebackFailureKind?' · '+x.RtaWritebackFailureKind:'');
     wbKind=x.RtaWritebackSucceeded?'ok':'fail';
   }
   steps.push(step('RTA status PUT',wbOutcome,wbDetail,wbKind));
@@ -102,7 +102,7 @@ function render(){
   if(!items.length){host.innerHTML='<div class="empty">No ledger records match these filters.</div>';return}
   host.innerHTML=items.map(x=>{
     const pending=x.Status==='SentToApim'&&!x.ApimResponseAtUtc;
-    const callout=pending?'<div class="missing">Last saved stage: APIM POST sent at '+esc(stamp(x.SentToApimAtUtc))+'. No APIM response or later outcome is recorded for this attempt.</div>':'';
+    const callout=pending?'<div class="missing">Last saved stage: APIM attempt recorded at '+esc(stamp(x.SentToApimAtUtc))+'. This timestamp is saved before the network POST, so it does not prove APIM received it. No APIM response or later outcome is recorded.</div>':'';
     return '<article class="record">'+
       '<div class="record-head"><div>'+esc(stamp(x.UpdatedAtUtc))+'<div class="muted">Updated</div></div>'+
       '<div><strong>'+esc(x.UniqueId)+'</strong><div class="muted">Correlation / unique ID</div></div>'+
