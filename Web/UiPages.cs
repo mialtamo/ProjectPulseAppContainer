@@ -418,6 +418,25 @@ td.id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;max-width:300px
 .detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
 .timing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}
 .exchange-outcomes{margin:0 0 14px}.exchange-title{font-size:12px;font-weight:700;margin:0 0 8px;color:#c7d9f2}.exchange-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.exchange-step{border:1px solid var(--border);border-radius:8px;background:#08111a;padding:10px}.exchange-step.success{border-color:#145a3d}.exchange-step.warning{border-color:#6d5728}.exchange-step.error{border-color:#6b3038}.exchange-step.neutral{border-color:var(--border)}.exchange-step-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px}.exchange-step-name{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.exchange-step-state{font-size:11px;font-weight:700}.exchange-step.success .exchange-step-state{color:var(--green)}.exchange-step.warning .exchange-step-state{color:var(--amber)}.exchange-step.error .exchange-step-state{color:var(--red)}.exchange-step-body{font-size:12px;line-height:1.45;color:#c7d9f2;overflow-wrap:anywhere}.exchange-note{font-size:11px;color:var(--muted);margin:8px 0 0}
+.lifecycle-run{margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:9px;background:#07101a}
+.lifecycle-run-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;font-size:12px}
+.lifecycle-track{display:flex;align-items:stretch;gap:7px}
+.lifecycle-stage{flex:1 1 0;min-width:125px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#08111a}
+.lifecycle-stage-title{font-size:10px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;min-height:28px}
+.lifecycle-stage-state{font-size:12px;font-weight:700;margin:4px 0}
+.lifecycle-stage-detail{font-size:11px;line-height:1.4;color:#b4c3d5;overflow-wrap:anywhere}
+.lifecycle-stage.done{border-color:#17613b}.lifecycle-stage.done .lifecycle-stage-state{color:var(--green)}
+.lifecycle-stage.waiting{border-color:#806325}.lifecycle-stage.waiting .lifecycle-stage-state{color:var(--amber)}
+.lifecycle-stage.failed{border-color:#743535}.lifecycle-stage.failed .lifecycle-stage-state{color:var(--red)}
+.lifecycle-stage.unknown .lifecycle-stage-state{color:var(--muted)}
+.lifecycle-arrow{align-self:center;color:var(--cyan);font-size:24px;line-height:1}
+.transaction-intro{margin:0 0 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.transaction-intro strong{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--text)}
+.run-details{margin:8px 0 12px;border:1px solid var(--border);border-radius:8px;background:#09111b}
+.run-details summary{padding:10px 12px;color:var(--cyan);cursor:pointer;font-size:12px}
+.run-details[open] summary{border-bottom:1px solid var(--border)}
+.run-details .detail-grid,.run-details .timing-grid,.run-details .exchange-outcomes,.run-details .payload-grid,.run-details .payload-note{margin-left:12px;margin-right:12px}
+
 .card{border:1px solid var(--border);padding:10px;background:#08111a;border-radius:7px}
 .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px}
 .payload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -545,9 +564,9 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     <table>
       <thead><tr>
         <th data-key="UpdatedAtUtc">Updated ↕</th>
-        <th data-key="ClaimCount">Claims ↕</th>
-        <th data-key="UniqueId">Unique ID ↕</th>
-        <th data-key="Status">Status ↕</th>
+        <th data-key="AttemptCount">Runs ↕</th>
+        <th data-key="UniqueId">Transaction / Unique ID ↕</th>
+        <th data-key="Status">Latest status ↕</th>
         <th data-key="Destination">Destination ↕</th>
         <th data-key="ProcessingRole">Processed by ↕</th>
         <th data-key="HttpStatusCode">HTTP ↕</th>
@@ -560,7 +579,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -645,43 +664,75 @@ function compare(a,b){
   else{av=String(av??'').toLowerCase();bv=String(bv??'').toLowerCase()}
   if(av<bv)return sortDir==='asc'?-1:1;if(av>bv)return sortDir==='asc'?1:-1;return 0;
 }
+function groupByUniqueId(source){
+  const groups=new Map();
+  for(const item of source){
+    const displayId=String(item.UniqueId||'').trim();
+    const key=(displayId||String(item.RecordId||'unknown')).toLowerCase();
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(item);
+  }
+  return Array.from(groups.entries()).map(([key,records])=>{
+    const attempts=records.slice().sort((a,b)=>Date.parse(a.UpdatedAtUtc||a.CreatedAtUtc||0)-Date.parse(b.UpdatedAtUtc||b.CreatedAtUtc||0));
+    const latest=attempts[attempts.length-1];
+    return {
+      ...latest,
+      GroupKey:key,
+      AttemptItems:attempts,
+      AttemptCount:attempts.length,
+      RtaRequestIds:[...new Set(attempts.map(x=>x.RtaRequestId).filter(Boolean))]
+    };
+  });
+}
 function filtered(){
   const q=document.getElementById('search').value.trim().toLowerCase();
   const dest=document.getElementById('destination').value;
-  return groupByBatch(items).filter(x=>(!dest||x.Destination===dest)&&(!q||[x.UniqueId,x.RtaRequestIds?.join(' '),x.Status,x.Destination,x.ProcessingRole,x.HttpStatusCode,x.BusinessResponseCode,x.Reason,x.BatchId,x.ClaimCount].some(v=>String(v??'').toLowerCase().includes(q)))).sort(compare);
+  return groupByUniqueId(items).filter(x=>{
+    const records=x.AttemptItems||[x];
+    const matchesDestination=!dest||records.some(record=>record.Destination===dest);
+    const matchesSearch=!q||records.some(record=>[
+      record.UniqueId,record.RtaRequestId,record.Status,record.Destination,record.ProcessingRole,
+      record.HttpStatusCode,record.BusinessResponseCode,record.Reason,record.BatchId
+    ].some(value=>String(value??'').toLowerCase().includes(q)));
+    return matchesDestination&&matchesSearch;
+  }).sort(compare);
 }
 function renderSummary(list){
   const apim=list.filter(x=>x.Destination==='APIM').length, sb=list.filter(x=>x.Destination==='ServiceBus').length;
   const completed=list.filter(x=>x.Status==='Completed').length, buffered=list.filter(x=>x.Status==='Buffered').length;
-  const rejected=list.filter(x=>x.Status==='Rejected').length;
+  const alerted=list.filter(x=>x.Status==='Alerted').length;
   document.getElementById('summary').innerHTML=
-    '<span class="pill">'+list.length+' batch(es) visible</span>'+
-    '<span class="pill">'+apim+' APIM</span>'+
-    '<span class="pill">'+sb+' Service Bus</span>'+
-    '<span class="pill">'+completed+' completed</span>'+
-    '<span class="pill">'+buffered+' buffered</span>'+
-    '<span class="pill">'+rejected+' rejected</span>';
+    '<span class="pill">'+list.length.toLocaleString()+' transaction(s) visible</span>'+
+    '<span class="pill">'+items.length.toLocaleString()+' history record(s) loaded</span>'+
+    '<span class="pill">'+apim.toLocaleString()+' APIM</span>'+
+    '<span class="pill">'+sb.toLocaleString()+' Service Bus</span>'+
+    '<span class="pill">'+completed.toLocaleString()+' completed</span>'+
+    '<span class="pill">'+buffered.toLocaleString()+' buffered</span>'+
+    '<span class="pill">'+alerted.toLocaleString()+' alerted</span>';
 }
 function render(){
   const list=filtered(); renderSummary(list);
+  visibleGroups=new Map(list.map(group=>[group.GroupKey,group]));
   const tbody=document.getElementById('rows');
-  if(!list.length){expandedRecordId=null;tbody.innerHTML='<tr><td colspan="9" class="empty">No matching requests</td></tr>';return}
+  if(!list.length){expandedRecordId=null;tbody.innerHTML='<tr><td colspan="9" class="empty">No matching transactions</td></tr>';return}
   tbody.innerHTML=list.map((x,i)=>{
-    const key='row-'+i+'-'+esc(x.RecordId);
-    return '<tr class="data-row" onclick="toggleDetail(\''+key+'\',\''+esc(x.RecordId)+'\')">'+
+    const key='row-'+i;
+    const attemptLabel=x.AttemptCount===1?'1 run':x.AttemptCount.toLocaleString()+' runs';
+    return '<tr class="data-row" data-expand-id="'+key+'" data-group-key="'+esc(x.GroupKey)+'">'+
       '<td>'+new Date(x.UpdatedAtUtc).toLocaleString()+'</td>'+
-      '<td>'+esc(x.ClaimCount)+'</td>'+
-      '<td class="id" title="'+esc('Correlation ID: '+x.UniqueId+'; RTA request ID: '+(x.RtaRequestIds||[]).join(', '))+'">'+esc(x.UniqueId)+((x.RtaRequestIds||[]).length?'<span class="id-secondary">RTA request ID: '+esc(x.RtaRequestIds.join(', '))+'</span>':'')+'</td>'+
+      '<td>'+esc(attemptLabel)+'</td>'+
+      '<td class="id" title="'+esc('Unique ID: '+x.UniqueId+'; RTA request IDs: '+(x.RtaRequestIds||[]).join(', '))+'">'+esc(x.UniqueId)+((x.RtaRequestIds||[]).length?'<span class="id-secondary">RTA request ID: '+esc(x.RtaRequestIds.join(', '))+'</span>':'')+'</td>'+
       '<td class="status-'+esc(x.Status)+'">'+esc(x.Status)+'</td>'+
       '<td><span class="tag '+esc(x.Destination)+'">'+esc(x.Destination)+'</span></td>'+
       '<td><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></td>'+
       '<td>'+esc(x.HttpStatusCode??'')+'</td>'+
       '<td>'+esc(x.BusinessResponseCode??'')+'</td>'+
       '<td>'+esc(x.Reason??'')+'</td></tr>'+
-      '<tr id="'+key+'" class="expand-row" data-record-id="'+esc(x.RecordId)+'"><td colspan="9" class="expand-cell"><div class="muted">Loading details...</div></td></tr>';
+      '<tr id="'+key+'" class="expand-row" data-group-key="'+esc(x.GroupKey)+'"><td colspan="9" class="expand-cell"><div class="muted">Loading lifecycle...</div></td></tr>';
   }).join('');
+  tbody.querySelectorAll('.data-row').forEach(row=>row.addEventListener('click',()=>toggleDetail(row.dataset.expandId,row.dataset.groupKey)));
   if(expandedRecordId){
-    const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.recordId===expandedRecordId);
+    const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.groupKey===expandedRecordId);
     if(expandedRow){
       expandedRow.classList.add('open');
       void renderDetail(expandedRow,expandedRecordId);
@@ -754,22 +805,76 @@ function renderExchangeOutcomes(x){
   const writeback=exchangeStep('RTA status PUT',writeState,writeBody,writeTone);
   return '<section class="exchange-outcomes"><h3 class="exchange-title">Exchange outcomes</h3><div class="exchange-grid">'+pull+apim+writeback+'</div><div class="exchange-note">HTTP codes and retry details are shown when Project Pulse stored them. Exception text is the final failure message; full stack traces remain in the log stream.</div></section>';
 }
-async function toggleDetail(rowId,recordId){
+function lifecycleStage(name,state,detail,tone){
+  return '<article class="lifecycle-stage '+tone+'"><div class="lifecycle-stage-title">'+esc(name)+'</div>'+
+    '<div class="lifecycle-stage-state">'+esc(state)+'</div><div class="lifecycle-stage-detail">'+detail+'</div></article>';
+}
+function lifecycleRun(x,index){
+  const source=x.InputSource==='MOCK'?'Mock API':'RTA';
+  const receivedWhen=x.CreatedAtUtc?new Date(x.CreatedAtUtc).toLocaleString():'Not recorded';
+  const received=lifecycleStage('Received from '+source,'Record captured',esc(receivedWhen)+(x.RtaPullDurationMs==null?'':' · pull '+durationLabel(x.RtaPullDurationMs)),'done');
+
+  const sent=x.SentToApimAtUtc;
+  const sentStep=lifecycleStage('Sent to APIM / DOCMP',sent?'Attempt recorded':'Not recorded',
+    sent?esc(new Date(sent).toLocaleString())+' · timestamp is saved before the network POST':'No APIM send timestamp is stored.',
+    sent?'done':'unknown');
+
+  const responseAt=x.ApimResponseAtUtc;
+  const http=x.HttpStatusCode;
+  let responseState='No response recorded',responseTone='unknown',responseDetail='No response timestamp or HTTP status is stored.';
+  if(responseAt||http!=null){
+    responseState=http==null?'Response recorded':'HTTP '+http;
+    responseTone=http!=null&&(http<200||http>=300)?'failed':(x.Status==='Alerted'&&x.BusinessResponseCode?'failed':'done');
+    responseDetail=(responseAt?esc(new Date(responseAt).toLocaleString()):'Response time not recorded')+
+      (x.BusinessResponseCode?' · business code '+esc(x.BusinessResponseCode):'')+
+      (x.Reason?' · '+esc(x.Reason):'');
+  }else if(sent){
+    responseState='Waiting / not recorded';responseTone='waiting';
+    responseDetail=x.Status==='Buffered'?'No response was recorded before the item was buffered.':'No APIM response is stored for this run.';
+  }
+  const responseStep=lifecycleStage('Returned from APIM',responseState,responseDetail,responseTone);
+
+  let busState='No event recorded',busTone='unknown',busDetail='No Service Bus milestone is stored for this run.';
+  if(x.BufferedToServiceBusAtUtc){
+    busState='Queued';busTone='done';busDetail=esc(new Date(x.BufferedToServiceBusAtUtc).toLocaleString())+(x.Reason?' · '+esc(x.Reason):'');
+  }else if(x.Status==='BufferFailed'||x.Reason==='ServiceBusBufferFailed'){
+    busState='Queue attempt failed';busTone='failed';busDetail=x.Reason?esc(x.Reason):'Service Bus enqueue failed.';
+  }else if(x.ProcessingRole==='SERVICEBUS'){
+    busState='Worker processed';busTone='done';busDetail='Service Bus worker handled this run · '+esc(new Date(x.UpdatedAtUtc).toLocaleString());
+  }
+  const busStep=lifecycleStage('Service Bus',busState,busDetail,busTone);
+
+  let putState='Outcome not recorded',putTone='unknown',putDetail='No RTA status PUT outcome is stored for this run.';
+  if(x.RtaWritebackEnabled===false){
+    putState='Disabled';putDetail='RTA writeback was disabled by configuration.';
+  }else if(x.RtaWritebackAttempted===false){
+    putState='Not attempted';putDetail='This run did not attempt an RTA status PUT.';
+  }else if(x.RtaWritebackAttempted===true||x.RtaWritebackSucceeded!=null){
+    const succeeded=x.RtaWritebackSucceeded===true;
+    putState=succeeded?'Succeeded':'Failed';putTone=succeeded?'done':'failed';
+    putDetail=(x.RtaWritebackHttpStatusCode==null?'HTTP status not recorded':'HTTP '+x.RtaWritebackHttpStatusCode)+
+      (x.RtaWritebackAttempts==null?'':' · '+x.RtaWritebackAttempts+' attempt(s)')+
+      (x.RtaWritebackFailureKind?' · '+esc(x.RtaWritebackFailureKind):'')+
+      (x.RtaWritebackFailureMessage?' · '+esc(x.RtaWritebackFailureMessage):'');
+  }
+  const putStep=lifecycleStage('Sent back to RTA',putState,putDetail,putTone);
+  const batch=' · Batch '+esc(x.BatchId||'unknown');
+  return '<section class="lifecycle-run"><div class="lifecycle-run-heading"><strong>Run '+(index+1)+batch+'</strong>'+
+    '<span class="status-'+esc(x.Status)+'">'+esc(x.Status)+'</span></div>'+
+    '<div class="lifecycle-track">'+received+'<span class="lifecycle-arrow" aria-hidden="true">›</span>'+
+    sentStep+'<span class="lifecycle-arrow" aria-hidden="true">›</span>'+responseStep+
+    '<span class="lifecycle-arrow" aria-hidden="true">›</span>'+busStep+
+    '<span class="lifecycle-arrow" aria-hidden="true">›</span>'+putStep+'</div></section>';
+}
+async function toggleDetail(rowId,groupKey){
   const row=document.getElementById(rowId); const opening=!row.classList.contains('open');
   document.querySelectorAll('.expand-row.open').forEach(r=>r.classList.remove('open'));
-  if(!opening){if(expandedRecordId===recordId)expandedRecordId=null;return}
-  expandedRecordId=recordId;
+  if(!opening){if(expandedRecordId===groupKey)expandedRecordId=null;return}
+  expandedRecordId=groupKey;
   row.classList.add('open');
-  await renderDetail(row,recordId);
+  await renderDetail(row,groupKey);
 }
-async function renderDetail(row,recordId){
-  let x=detailCache.get(recordId);
-  if(!x){
-    row.querySelector('td').innerHTML='<div class="muted">Loading details...</div>';
-    const r=await fetch('/requests/'+encodeURIComponent(recordId),{cache:'no-store'});
-    if(!r.ok){row.querySelector('td').innerHTML='<div class="payload-note">Could not load request details.</div>';return}
-    x=await r.json();detailCache.set(recordId,x);
-  }
+function renderRecordDetails(x){
   const validationFailure=x.Status==='Rejected'&&x.Reason==='InvalidApimResponseToken'
     ? '<div class="payload-note"><strong>APIM response rejected:</strong> response-token validation failed. The response was not processed and no RTA writeback was attempted.</div>'
     : '';
@@ -781,7 +886,7 @@ async function renderDetail(row,recordId){
     ? rtaPayloads.map((payload,index)=>payloadPanel('Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):''),payload)).join('')
     : payloadPanel('Raw JSON received from RTA',null);
   const rtaStatusPayloadPanel=payloadPanel('JSON sent back to RTA',x.RtaStatusPayload);
-  row.querySelector('td').innerHTML=
+  return
     validationFailure+
     writebackFailure+
     '<div class="detail-grid">'+
@@ -805,6 +910,31 @@ async function renderDetail(row,recordId){
       ? (x.PayloadMode==='PARTIAL' ? '<div class="payload-note">Partial payload mode: common identifiers and personal-name fields are masked.</div>' : '')+
         '<div class="payload-grid">'+rtaPayloadPanels+rtaStatusPayloadPanel+payloadPanel('JSON sent to APIM',x.ApimRequestPayload)+payloadPanel('JSON received from APIM',x.ApimResponsePayload)+'</div>'
       : '<div class="payload-note">Payload capture and display are disabled because REQUEST_HISTORY_PAYLOAD_MODE=OFF.</div>');
+
+}
+async function renderDetail(row,groupKey){
+  const group=visibleGroups.get(groupKey);
+  if(!group){row.querySelector('td').innerHTML='<div class="payload-note">This transaction is no longer in the loaded history window. Refresh to load it again.</div>';return}
+  let details=detailCache.get(groupKey);
+  if(!details){
+    row.querySelector('td').innerHTML='<div class="muted">Loading lifecycle and attempt details...</div>';
+    const responses=await Promise.all((group.AttemptItems||[]).map(async item=>{
+      const response=await fetch('/requests/'+encodeURIComponent(item.RecordId),{cache:'no-store'});
+      if(!response.ok)throw new Error('Could not load run details (HTTP '+response.status+').');
+      return response.json();
+    }));
+    details=responses.sort((a,b)=>Date.parse(a.UpdatedAtUtc||a.CreatedAtUtc||0)-Date.parse(b.UpdatedAtUtc||b.CreatedAtUtc||0));
+    detailCache.set(groupKey,details);
+  }
+  const runs=details.map((x,index)=>lifecycleRun(x,index)).join('');
+  const attemptDetails=details.map((x,index)=>
+    '<details class="run-details"><summary>Run '+(index+1)+' diagnostics and payloads · '+esc(x.Status)+' · '+esc(x.BatchId)+'</summary>'+
+    renderRecordDetails(x)+'</details>'
+  ).join('');
+  row.querySelector('td').innerHTML=
+    '<div class="transaction-intro"><strong>'+esc(group.UniqueId)+'</strong> · '+details.length.toLocaleString()+' recorded run(s). '+
+    'The timeline shows milestones Project Pulse stored; a missing outcome means no outcome was recorded for that stage.</div>'+
+    runs+attemptDetails;
   requestAnimationFrame(()=>syncCopyButtonOffsets(row));
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
@@ -929,7 +1059,7 @@ function historyUrl(pageToken=null){
 function historyStatusText(){
   const count=historyTotalCount===null?'…':historyTotalCount.toLocaleString();
   const searchSuffix=activeSearch?' matching "'+activeSearch+'"':'';
-  return 'Showing '+items.length.toLocaleString()+' of '+count+' request record(s) in '+historyRangeLabel()+searchSuffix+' · '+groupByBatch(items).length.toLocaleString()+' batch(es) loaded';
+  return 'Showing '+groupByUniqueId(items).length.toLocaleString()+' transaction(s) from '+items.length.toLocaleString()+' loaded history record(s), of '+count+' history record(s) in '+historyRangeLabel()+searchSuffix+(nextPageToken?' · load more to include older runs':'');
 }
 async function requestPoll(){
   const button=document.getElementById('pollNowButton');
