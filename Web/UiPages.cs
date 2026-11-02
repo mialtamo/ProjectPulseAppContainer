@@ -810,7 +810,7 @@ function lifecycleStage(name,state,detail,tone){
     '<div class="lifecycle-stage-state">'+esc(state)+'</div><div class="lifecycle-stage-detail">'+detail+'</div></article>';
 }
 function lifecycleRun(x,index){
-  const source=x.InputSource==='MOCK'?'Mock API':'RTA';
+  const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'request source';
   const receivedDetail=(x.RtaPullDurationMs==null?'RTA pull duration not recorded':'RTA pull took '+durationLabel(x.RtaPullDurationMs))+' · exact receive timestamp is not stored';
   const received=lifecycleStage('Received from '+source,'Captured by poller',esc(receivedDetail),'done');
 
@@ -840,6 +840,8 @@ function lifecycleRun(x,index){
     busState='Queued';busTone='done';busDetail=esc(new Date(x.BufferedToServiceBusAtUtc).toLocaleString())+(x.Reason?' · '+esc(x.Reason):'');
   }else if(x.Status==='BufferFailed'||x.Reason==='ServiceBusBufferFailed'){
     busState='Queue attempt failed';busTone='failed';busDetail=x.Reason?esc(x.Reason):'Service Bus enqueue failed.';
+  }else if(x.Status==='Buffered'){
+    busState='Buffered · time not recorded';busTone='waiting';busDetail='The record is marked Buffered, but no queue timestamp is stored.';
   }else if(x.ProcessingRole==='SERVICEBUS'){
     busState='Worker processed';busTone='done';busDetail='This run was handled by the Service Bus worker · outcome updated '+esc(new Date(x.UpdatedAtUtc).toLocaleString());
   }
@@ -850,7 +852,10 @@ function lifecycleRun(x,index){
     putState='Disabled';putDetail='RTA writeback was disabled by configuration.';
   }else if(x.RtaWritebackAttempted===false){
     putState='Not attempted';putDetail='This run did not attempt an RTA status PUT.';
-  }else if(x.RtaWritebackAttempted===true||x.RtaWritebackSucceeded!=null){
+  }else if(x.RtaWritebackAttempted===true&&x.RtaWritebackSucceeded==null){
+    putState='Attempted · outcome unknown';putTone='waiting';
+    putDetail='A PUT attempt is recorded, but its success/failure result was not stored.';
+  }else if(x.RtaWritebackSucceeded!=null){
     const succeeded=x.RtaWritebackSucceeded===true;
     putState=succeeded?'Succeeded':'Failed';putTone=succeeded?'done':'failed';
     putDetail=(x.RtaWritebackHttpStatusCode==null?'HTTP status not recorded':'HTTP '+x.RtaWritebackHttpStatusCode)+
@@ -917,14 +922,19 @@ async function renderDetail(row,groupKey){
   if(!group){row.querySelector('td').innerHTML='<div class="payload-note">This transaction is no longer in the loaded history window. Refresh to load it again.</div>';return}
   let details=detailCache.get(groupKey);
   if(!details){
-    row.querySelector('td').innerHTML='<div class="muted">Loading lifecycle and attempt details...</div>';
-    const responses=await Promise.all((group.AttemptItems||[]).map(async item=>{
-      const response=await fetch('/requests/'+encodeURIComponent(item.RecordId),{cache:'no-store'});
-      if(!response.ok)throw new Error('Could not load run details (HTTP '+response.status+').');
-      return response.json();
-    }));
-    details=responses.sort((a,b)=>Date.parse(a.UpdatedAtUtc||a.CreatedAtUtc||0)-Date.parse(b.UpdatedAtUtc||b.CreatedAtUtc||0));
-    detailCache.set(groupKey,details);
+    row.querySelector('td').innerHTML='<div class="muted">Loading lifecycle and run details...</div>';
+    try{
+      const responses=await Promise.all((group.AttemptItems||[]).map(async item=>{
+        const response=await fetch('/requests/'+encodeURIComponent(item.RecordId),{cache:'no-store'});
+        if(!response.ok)throw new Error('Could not load run details (HTTP '+response.status+').');
+        return response.json();
+      }));
+      details=responses.sort((a,b)=>Date.parse(a.UpdatedAtUtc||a.CreatedAtUtc||0)-Date.parse(b.UpdatedAtUtc||b.CreatedAtUtc||0));
+      detailCache.set(groupKey,details);
+    }catch(error){
+      row.querySelector('td').innerHTML='<div class="payload-note">Could not load transaction details: '+esc(error.message)+'</div>';
+      return;
+    }
   }
   const runs=details.map((x,index)=>lifecycleRun(x,index)).join('');
   const attemptDetails=details.map((x,index)=>
