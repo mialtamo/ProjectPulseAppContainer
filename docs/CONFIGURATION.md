@@ -87,7 +87,6 @@ For `INITIAL_REQUEST`, Project Pulse sends one APIM request per RTA record. The 
 
 For enabled initial-request writeback, Project Pulse builds the RTA status PUT body with an `API_CALL_HISTORY` object. Its request and response bodies are JSON strings: `REQUEST_BODY` contains the individual raw RTA item and `RESPONSE_BODY` contains the raw APIM response. `HTTP_METHOD` is `POST`; `API_URL` is the APIM base URL from `ApimBaseUrl`, normalized to end with a slash; `API_ENDPOINT` is `ApimAdjudicationPath` with leading and trailing slashes removed (for example, `pulse/pending`). `REQUEST_HEADER` (singular) contains the serialized headers received from APIM, with the configured APIM response-token value redacted. `RESPONSE_HTTP_STATUS_CODE` and `RESPONSE_TIME_MS` describe the APIM response. `EXTERNAL_CORRELATION_ID`, `REQUEST_QUERY_PARAMETER`, `ERROR_MESSAGE`, and `ERROR_STACK` are null.
 
-| `RetryHttpStatusCodes` | Both | No | `404,408,429,500,502,503,504` | No | Actual APIM HTTP status codes considered retryable. A status value inside a JSON response body is never treated as an HTTP status. |
 | `JsonResponseCodeField` | Both | No | `RESPONSE_CODE` | No | JSON field inspected for application response codes. |
 | `JsonRetryCodes` | Both | No | empty | No | Optional comma-separated application response codes that should be retried. |
 | `JsonAlertCodes` | Both | No | `419` | No | Comma-separated application response codes that should be alerted. |
