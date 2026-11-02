@@ -124,6 +124,8 @@ The request-history page reports per-batch averages across stored history. When 
 
 The Requests list can be filtered to the last 5 minutes, last hour, last 24 hours, last 7 days, or all time. It reports the number of records matching the selected time range and search, alongside the number currently loaded. Search narrows both the matching count and displayed rows; paging keeps the selected time cutoff fixed.
 
+The admin-only `/ledger.html` page presents a searchable lifecycle view of stored request-history attempts. Filter by time range, status, destination, or processing role; search by correlation/unique ID, RTA request ID, or batch ID. It reports matching attempts separately from those loaded and paginates older results. The timeline is reconstructed from milestones already recorded in request history, not a separate event log. “APIM attempt recorded” means the attempt timestamp was saved before the outbound POST; it does not prove APIM received the request. A missing later milestone means no outcome is stored for that stage. The ledger does not display payload bodies.
+
 ## HTTP endpoints
 
 ```text
@@ -138,6 +140,7 @@ The Requests list can be filtered to the last 5 minutes, last hour, last 24 hour
 /requests/cleanup/{operationId} (GET, cleanup progress)
 /requests/{id}
 /requests.html
+/ledger.html (admin-only lifecycle ledger)
 /live
 ```
 
@@ -205,6 +208,7 @@ Container Apps authentication exposes authenticated identity information in the 
 | Route | Behavior |
 | --- | --- |
 | `/requests.html` | Redirects unauthenticated browsers to the Entra sign-in page; requires the `ProjectPulse.Admin` role after sign-in. |
+| `/ledger.html` | Admin-only lifecycle ledger; uses the same Entra role gate and displays stored milestones without payload bodies. |
 | `/requests` | Returns `401` without an authenticated principal and `403` when the caller lacks `ProjectPulse.Admin`. |
 | `/requests/averages` | Returns average timing metrics for `range=7d`, `30d`, `365d`, or `all`; `range=custom` accepts `fromUtc` and `toUtc` ISO timestamps. Uses the same authorization behavior as `/requests`. |
 | `/requests/cleanup/preview?range=24h|7d|30d|all` | Admin-only preview count for the selected history cleanup range. |
@@ -238,7 +242,7 @@ This repository intentionally does not contain the legacy Function App GitHub Ac
 
 For the POC, connect this repository directly from Azure Container Apps Continuous Deployment and allow Azure to generate the GitHub Actions workflow.
 
-The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run.
+The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.86`); it is distinct from the `PROJECT_PULSE_VERSION` display setting and from Azure's revision counter. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
 
 Recommended settings:
 
