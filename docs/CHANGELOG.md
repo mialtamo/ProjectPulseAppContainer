@@ -1,3 +1,10 @@
+## 2026-11-02 — Build 0.0.87
+
+- Grouped request history by Unique ID so repeated processing runs appear as one transaction summary instead of separate top-level status rows.
+- Added an expandable visual lifecycle for each loaded run: received from RTA/mock source, APIM/DOCMP attempt, APIM response, Service Bus activity, and RTA status PUT. HTTP status and business response code remain separate, and missing milestones are shown as unrecorded rather than assumed outcomes.
+- Counts distinguish visible transactions from loaded history records and the total matching history-record count. Loading more pages can add earlier runs to an existing transaction.
+- Bumped the ACR image tag in `VERSION` to `0.0.87`; the deployment workflow uses this tag for both RTA and Service Bus Container Apps.
+
 # Change log
 
 ## 2026-11-02 — Build 0.0.86
