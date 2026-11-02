@@ -811,8 +811,8 @@ function lifecycleStage(name,state,detail,tone){
 }
 function lifecycleRun(x,index){
   const source=x.InputSource==='MOCK'?'Mock API':'RTA';
-  const receivedWhen=x.CreatedAtUtc?new Date(x.CreatedAtUtc).toLocaleString():'Not recorded';
-  const received=lifecycleStage('Received from '+source,'Record captured',esc(receivedWhen)+(x.RtaPullDurationMs==null?'':' · pull '+durationLabel(x.RtaPullDurationMs)),'done');
+  const receivedDetail=(x.RtaPullDurationMs==null?'RTA pull duration not recorded':'RTA pull took '+durationLabel(x.RtaPullDurationMs))+' · exact receive timestamp is not stored';
+  const received=lifecycleStage('Received from '+source,'Captured by poller',esc(receivedDetail),'done');
 
   const sent=x.SentToApimAtUtc;
   const sentStep=lifecycleStage('Sent to APIM / DOCMP',sent?'Attempt recorded':'Not recorded',
@@ -823,8 +823,9 @@ function lifecycleRun(x,index){
   const http=x.HttpStatusCode;
   let responseState='No response recorded',responseTone='unknown',responseDetail='No response timestamp or HTTP status is stored.';
   if(responseAt||http!=null){
-    responseState=http==null?'Response recorded':'HTTP '+http;
-    responseTone=http!=null&&(http<200||http>=300)?'failed':(x.Status==='Alerted'&&x.BusinessResponseCode?'failed':'done');
+    const businessFailure=x.Status==='Alerted'&&!!x.BusinessResponseCode;
+    responseState=http==null?'Response recorded':'HTTP '+http+(businessFailure?' · business error':'');
+    responseTone=http!=null&&(http<200||http>=300)?'failed':(businessFailure?'failed':'done');
     responseDetail=(responseAt?esc(new Date(responseAt).toLocaleString()):'Response time not recorded')+
       (x.BusinessResponseCode?' · business code '+esc(x.BusinessResponseCode):'')+
       (x.Reason?' · '+esc(x.Reason):'');
@@ -840,7 +841,7 @@ function lifecycleRun(x,index){
   }else if(x.Status==='BufferFailed'||x.Reason==='ServiceBusBufferFailed'){
     busState='Queue attempt failed';busTone='failed';busDetail=x.Reason?esc(x.Reason):'Service Bus enqueue failed.';
   }else if(x.ProcessingRole==='SERVICEBUS'){
-    busState='Worker processed';busTone='done';busDetail='Service Bus worker handled this run · '+esc(new Date(x.UpdatedAtUtc).toLocaleString());
+    busState='Worker processed';busTone='done';busDetail='This run was handled by the Service Bus worker · outcome updated '+esc(new Date(x.UpdatedAtUtc).toLocaleString());
   }
   const busStep=lifecycleStage('Service Bus',busState,busDetail,busTone);
 
@@ -886,8 +887,7 @@ function renderRecordDetails(x){
     ? rtaPayloads.map((payload,index)=>payloadPanel('Raw JSON received from RTA'+(rtaPayloads.length>1?' — page '+(index+1):''),payload)).join('')
     : payloadPanel('Raw JSON received from RTA',null);
   const rtaStatusPayloadPanel=payloadPanel('JSON sent back to RTA',x.RtaStatusPayload);
-  return
-    validationFailure+
+  return validationFailure+
     writebackFailure+
     '<div class="detail-grid">'+
       '<div class="card"><div class="label">Batch ID</div><div class="id">'+esc(x.BatchId)+'</div></div>'+
