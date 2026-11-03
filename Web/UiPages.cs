@@ -399,13 +399,6 @@ button{cursor:pointer}.muted{color:var(--muted)}
 .timing-help-popover dt{font-weight:700;color:#c7d9f2}
 .timing-help-popover dd{margin:0;color:#b4c3d5}
 .timing-averages{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px}
-.throughput-estimator{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;align-items:end;gap:12px;margin-top:12px;padding:12px;border:1px solid #24405a;border-radius:8px;background:#08111a}
-.throughput-estimator h3{margin:0 0 5px;font-size:12px;color:#c7d9f2}
-.throughput-estimator p{margin:0;color:var(--muted);font-size:11px;line-height:1.45}
-.throughput-estimator-field{display:grid;gap:5px;color:var(--muted);font-size:10px}
-.throughput-estimator-field input{width:150px;padding:7px 8px;font-variant-numeric:tabular-nums}
-.throughput-estimate-result{min-width:150px;color:var(--cyan);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
-.throughput-estimate-caption{display:block;margin-top:3px;color:var(--muted);font-size:10px;font-weight:400}
 .timing-average-card{border:1px solid var(--border);border-radius:8px;padding:10px;background:#08111a}
 .timing-average-card.green{border-color:#17613b}.timing-average-card.yellow{border-color:#806325}.timing-average-card.red{border-color:#743535}
 .timing-average-label{font-size:11px;color:var(--muted);margin-bottom:6px}
@@ -473,8 +466,8 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
 .payload-note{color:var(--amber);font-size:12px;padding:10px;margin:0 0 12px;border:1px dashed #6d5728;border-radius:7px}
 .empty{padding:28px;text-align:center;color:var(--muted)}
 @media(max-width:1100px){.timing-averages{grid-template-columns:repeat(3,minmax(130px,1fr))}}
-@media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}.timing-averages{grid-template-columns:repeat(2,minmax(130px,1fr))}.throughput-estimator{grid-template-columns:1fr 1fr}.throughput-estimator-copy{grid-column:1/-1}.lifecycle-track{overflow-x:auto;padding-bottom:6px}.lifecycle-stage{min-width:150px}.lifecycle-arrow{flex:0 0 auto}}
-@media(max-width:480px){.timing-averages{grid-template-columns:1fr}.throughput-estimator{grid-template-columns:1fr}}
+@media(max-width:900px){.toolbar{grid-template-columns:1fr 1fr}.payload-grid{grid-template-columns:1fr}.timing-averages{grid-template-columns:repeat(2,minmax(130px,1fr))}.lifecycle-track{overflow-x:auto;padding-bottom:6px}.lifecycle-stage{min-width:150px}.lifecycle-arrow{flex:0 0 auto}}
+@media(max-width:480px){.timing-averages{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -575,19 +568,6 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     </div>
     <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
     <div id="timingDiagnostics" class="timing-diagnostic-note">Loading diagnostic summary…</div>
-    <div class="throughput-estimator" aria-label="Throughput duration estimate">
-      <div class="throughput-estimator-copy">
-        <h3>Wall-clock volume estimate</h3>
-        <p>Estimate total runtime from a measured run. Enter wall-clock seconds per completed record (run duration ÷ records completed); the timing cards above are per-batch averages and don't establish overall throughput.</p>
-      </div>
-      <label class="throughput-estimator-field" for="secondsPerRecord">Measured wall-clock seconds per completed record
-        <input id="secondsPerRecord" type="number" min="0.001" step="0.01" placeholder="Enter measured rate" oninput="updateThroughputEstimate()">
-      </label>
-      <label class="throughput-estimator-field" for="targetRecordCount">Records to process
-        <input id="targetRecordCount" type="number" min="1" step="1000" placeholder="e.g. 100,000" oninput="updateThroughputEstimate()">
-      </label>
-      <div id="throughputEstimate" class="throughput-estimate-result" aria-live="polite">Enter a measured rate and record count.<span class="throughput-estimate-caption">Both fields remain editable</span></div>
-    </div>
     <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
   </section>
   <div class="table-wrap">
@@ -993,34 +973,6 @@ function formatAverage(ms){
 }
 function setTimingTitle(label){
   document.getElementById('timingTitle').textContent='Average processing time per batch — '+label;
-}
-function formatEstimateDuration(totalSeconds){
-  if(!Number.isFinite(totalSeconds)||totalSeconds<0)return 'N/A';
-  const seconds=Math.round(totalSeconds);
-  const hours=Math.floor(seconds/3600);
-  const minutes=Math.floor((seconds%3600)/60);
-  const remainder=seconds%60;
-  if(hours>0)return hours+' hr'+(hours===1?'':'s')+(minutes?' '+minutes+' min':'');
-  if(minutes>0)return minutes+' min'+(remainder?' '+remainder+' sec':'');
-  return remainder+' sec';
-}
-function updateThroughputEstimate(){
-  const secondsValue=document.getElementById('secondsPerRecord').value;
-  const countValue=document.getElementById('targetRecordCount').value;
-  const secondsPerRecord=Number(secondsValue);
-  const recordCount=Number(countValue);
-  const output=document.getElementById('throughputEstimate');
-  if(!secondsValue||!countValue){
-    output.innerHTML='Enter a measured rate and record count.<span class="throughput-estimate-caption">Use wall-clock run duration ÷ records completed</span>';
-    return;
-  }
-  if(!Number.isFinite(secondsPerRecord)||secondsPerRecord<=0||!Number.isFinite(recordCount)||recordCount<=0){
-    output.textContent='Enter valid positive values.';
-    return;
-  }
-  const estimate=formatEstimateDuration(secondsPerRecord*recordCount);
-  output.innerHTML=esc(estimate)+'<span class="throughput-estimate-caption">'+
-    secondsPerRecord.toFixed(2)+' sec/record × '+Math.round(recordCount).toLocaleString()+' records</span>';
 }
 function onTimingRangeChange(){
   const range=document.getElementById('timingRange').value;
