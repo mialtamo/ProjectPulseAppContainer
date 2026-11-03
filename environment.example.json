@@ -23,7 +23,7 @@
   "ApimHealthPath": "/health",
   "ApimAdjudicationPath": "pulse/pending",
   "ApimRequestTimeoutSeconds": "15",
-  "ApimScope": "",
+  "ApimScope": "api://<Project-Pulse-API-Verify-client-id>/.default",
   "ApimResponseHeaderName": "X-Pulse-Response-Token",
   "ApimResponseToken": "",
   "APIM_MOCK_SCENARIO": "",
