@@ -169,7 +169,7 @@ public sealed class ClaimPollingWorker(
                     claims,
                     pollResult.RtaResponsePayloads,
                     cancellationToken,
-                    pollResult.PollStartedAtUtc,
+                    pollResult.RecordsReceivedAtUtc,
                     pollResult.RtaPullDurationMs);
         }
         catch (Exception ex)
