@@ -235,6 +235,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             }
 
             entity.RtaWritebackDurationMs = Math.Max(0, writebackDurationMs);
+            entity.RtaWritebackCompletedAtUtc = completedAtUtc;
             if (writebackResult is not null)
             {
                 entity.RtaWritebackAttempted = writebackResult.Attempted;
@@ -1303,7 +1304,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.RtaWritebackHttpStatusCode,
             entity.RtaWritebackAttempts,
             entity.RtaWritebackFailureKind,
-            entity.RtaWritebackFailureMessage);
+            entity.RtaWritebackFailureMessage,
+            entity.RtaWritebackCompletedAtUtc);
 
     private async Task<string?> SaveRtaResponsePayloadsAsync(
         string batchId,
@@ -1605,6 +1607,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public long? TranslationDurationMs { get; set; }
         public long? ApimRoundTripDurationMs { get; set; }
         public long? RtaWritebackDurationMs { get; set; }
+        public DateTimeOffset? RtaWritebackCompletedAtUtc { get; set; }
         public long? EndToEndDurationMs { get; set; }
         public long? OtherProcessingDurationMs { get; set; }
         public bool? RtaWritebackEnabled { get; set; }
