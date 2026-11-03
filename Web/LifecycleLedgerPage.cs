@@ -96,26 +96,57 @@ function roleName(value){return value==='SERVICEBUS'?'Service Bus Worker':value=
 function statusClass(value){if(['Completed'].includes(value))return 'good';if(['SentToApim','Buffered'].includes(value))return 'warn';return 'bad'}
 function step(title,outcome,detail,kind=''){return '<article class="step '+kind+'"><h3>'+esc(title)+'</h3><div class="outcome">'+esc(outcome)+'</div><p>'+esc(detail)+'</p></article>'}
 function timeline(x){
-  const sent=x.SentToApimAtUtc;
+  const source=String(x.InputSource||'').toUpperCase();
+  const sourceLabel=source==='MOCK'?'MOCK API':source==='RTA'?'RTA':'SOURCE';
   const pull=x.RtaPullDurationMs;
-  const pullText=pull==null?'Timing not recorded':'Pull took '+pull+' ms';
-  const pullWhen=sent&&pull!=null?stamp(new Date(new Date(sent).getTime()-pull).toISOString()):'Before APIM send';
   const steps=[];
-  steps.push(step('RTA GET',pull!=null?'Record received':'No pull timing recorded',pullText+' · '+pullWhen,pull!=null?'ok':'wait'));
-  steps.push(step('APIM / DOCMP POST',sent?'Attempt recorded':'No attempt recorded',sent?stamp(sent)+' · history timestamp is saved before the network POST':'No APIM attempt timestamp is stored.',sent?'ok':'wait'));
+  steps.push(step(
+    'RECEIVED FROM '+sourceLabel,
+    pull!=null?'GET completed':'No GET timing recorded',
+    pull!=null?(sourceLabel==='SOURCE'?'Pull took ':'GET took ')+pull+' ms':'No poll duration is stored for this record.',
+    pull!=null?'ok':'wait'));
+  const sent=x.SentToApimAtUtc;
+  steps.push(step(
+    'SENT TO APIM / DOCMP',
+    sent?'POST started':'No POST recorded',
+    sent?stamp(sent):'No POST start time is stored.',
+    sent?'ok':'wait'));
   const apimAt=x.ApimResponseAtUtc;
-  const apimDetail=[x.HttpStatusCode!=null?'HTTP '+x.HttpStatusCode:null,x.BusinessResponseCode||null,x.Reason||null].filter(Boolean).join(' · ');
-  steps.push(step('APIM response',apimAt?'Response recorded':'No response recorded',apimAt?stamp(apimAt)+(apimDetail?' · '+apimDetail:''):'No response timestamp or status is stored.',apimAt?(x.HttpStatusCode>=400?'fail':'ok'):'wait'));
+  const apimDetails=[];
+  if(apimAt)apimDetails.push('Returned '+stamp(apimAt));
+  if(x.ApimRoundTripDurationMs!=null)apimDetails.push('APIM round trip '+x.ApimRoundTripDurationMs+' ms');
+  if(x.BusinessResponseCode&&x.BusinessResponseCode!=='BatchCompleted')apimDetails.push(x.BusinessResponseCode);
+  if(x.Reason&&x.Reason!=='BatchCompleted'&&!apimDetails.includes(x.Reason))apimDetails.push(x.Reason);
+  const businessFailure=String(x.Reason||'').startsWith('ApimJsonError:');
+  const apimKind=!apimAt?'wait':(x.HttpStatusCode>=400||businessFailure?'fail':'ok');
+  steps.push(step(
+    'RETURNED FROM APIM',
+    apimAt?(x.HttpStatusCode!=null?'HTTP '+x.HttpStatusCode:'Response received'):'No response recorded',
+    apimAt?(apimDetails.join(' · ')||'Response timestamp recorded.'):'No APIM response time or status is stored.',
+    apimKind));
   const sbAt=x.BufferedToServiceBusAtUtc;
-  steps.push(step('Service Bus',sbAt?'Buffered':'Not recorded',sbAt?stamp(sbAt)+' · '+(x.Reason||'Retry message queued'):'No Service Bus enqueue timestamp is stored.',sbAt?'ok':'wait'));
-  let wbOutcome='Not recorded',wbDetail='No RTA writeback outcome is stored.',wbKind='wait';
-  if(x.RtaWritebackEnabled===false){wbOutcome='Disabled';wbDetail='RTA status writeback was disabled for this attempt.'}
-  else if(x.RtaWritebackAttempted===true){
+  steps.push(step(
+    'SERVICE BUS',
+    sbAt?'Enqueued':'No event recorded',
+    sbAt?'Enqueued '+stamp(sbAt):'No Service Bus enqueue time was stored for this run.',
+    sbAt?'ok':'wait'));
+  let wbOutcome='Not recorded',wbKind='wait';
+  const wbDetails=[];
+  if(x.RtaWritebackEnabled===false){
+    wbOutcome='Disabled';
+    wbDetails.push('RTA status writeback was disabled.');
+  }else if(x.RtaWritebackAttempted===true){
     wbOutcome=x.RtaWritebackSucceeded?'Succeeded':'Failed';
-    wbDetail='HTTP '+(x.RtaWritebackHttpStatusCode??'not recorded')+' · '+(x.RtaWritebackAttempts??'unknown')+' attempt(s) · history updated '+stamp(x.UpdatedAtUtc)+(x.RtaWritebackFailureKind?' · '+x.RtaWritebackFailureKind:'');
+    if(x.RtaWritebackHttpStatusCode!=null)wbDetails.push('HTTP '+x.RtaWritebackHttpStatusCode);
+    if(x.RtaWritebackAttempts!=null)wbDetails.push(x.RtaWritebackAttempts+' attempt(s)');
+    if(x.RtaWritebackDurationMs!=null)wbDetails.push('Writeback took '+x.RtaWritebackDurationMs+' ms');
+    wbDetails.push(x.RtaWritebackCompletedAtUtc?'Completed '+stamp(x.RtaWritebackCompletedAtUtc):'Completion time unavailable for this record');
+    if(x.RtaWritebackFailureKind)wbDetails.push(x.RtaWritebackFailureKind);
     wbKind=x.RtaWritebackSucceeded?'ok':'fail';
+  }else{
+    wbDetails.push('No RTA writeback outcome is stored.');
   }
-  steps.push(step('RTA status PUT',wbOutcome,wbDetail,wbKind));
+  steps.push(step('SENT BACK TO RTA',wbOutcome,wbDetails.join(' · '),wbKind));
   return steps.join('');
 }
 function render(){
@@ -123,7 +154,7 @@ function render(){
   if(!items.length){host.innerHTML='<div class="empty">No ledger records match these filters.</div>';return}
   host.innerHTML=items.map(x=>{
     const pending=x.Status==='SentToApim'&&!x.ApimResponseAtUtc;
-    const callout=pending?'<div class="missing">Last saved stage: APIM attempt recorded at '+esc(stamp(x.SentToApimAtUtc))+'. This timestamp is saved before the network POST, so it does not prove APIM received it. No APIM response or later outcome is recorded.</div>':'';
+    const callout=pending?'<div class="missing">APIM POST was started at '+esc(stamp(x.SentToApimAtUtc))+', but no response or later outcome is recorded.</div>':'';
     return '<article class="record">'+
       '<div class="record-head"><div>'+esc(stamp(x.UpdatedAtUtc))+'<div class="muted">Updated</div></div>'+
       '<div><strong>'+esc(x.UniqueId)+'</strong><div class="muted">Correlation / unique ID</div></div>'+
