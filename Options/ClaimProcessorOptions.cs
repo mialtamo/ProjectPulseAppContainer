@@ -134,7 +134,7 @@ public sealed class ClaimProcessorOptions
     public int ResultWriteMaxAttempts { get; init; } = 3;
     public int ResultWriteRetryDelayMilliseconds { get; init; } = 500;
 
-    public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, 100);
+    public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, 5000);
     public int GetClampedPagesPerPoll() => Math.Clamp(RtaPagesPerPoll, 1, 3);
     public ProcessingConcurrencyMode GetProcessingConcurrencyMode() =>
         ProcessingConcurrencyMode.Trim().Replace("-", "_", StringComparison.Ordinal).Replace(" ", "_", StringComparison.Ordinal).ToUpperInvariant() switch
