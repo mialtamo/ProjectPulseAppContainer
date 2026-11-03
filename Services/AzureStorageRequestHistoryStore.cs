@@ -1251,8 +1251,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         var endToEndMs = Math.Max(0, (long)(completedAtUtc - pipelineStartedAtUtc).TotalMilliseconds);
         var measuredStagesMs =
-            (entity.RtaPullDurationMs ?? 0)
-            + (entity.TranslationDurationMs ?? 0)
+            (entity.TranslationDurationMs ?? 0)
             + (entity.ApimRoundTripDurationMs ?? 0)
             + (entity.RtaWritebackDurationMs ?? 0);
 
