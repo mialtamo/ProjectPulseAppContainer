@@ -35,7 +35,8 @@ public sealed record RequestHistoryItem(
     int? RtaWritebackHttpStatusCode = null,
     int? RtaWritebackAttempts = null,
     string? RtaWritebackFailureKind = null,
-    string? RtaWritebackFailureMessage = null);
+    string? RtaWritebackFailureMessage = null,
+    DateTimeOffset? RtaWritebackCompletedAtUtc = null);
 
 public sealed record RequestHistoryPage(
     IReadOnlyList<RequestHistoryItem> Items,
