@@ -548,7 +548,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
               <dt>Translation</dt><dd>Time to map the RTA item into the outbound DOCMP JSON. App CPU pressure or larger, more complex payloads can increase it.</dd>
               <dt>APIM round trip</dt><dd>Time to send the request through APIM and read the response body. It includes APIM, DOCMP/backend, and network time, so this metric does not separate those parts.</dd>
               <dt>RTA writeback</dt><dd>Time to translate the response and send the status/result PUT to RTA. RTA processing, network latency, and retries can add time.</dd>
-              <dt>End-to-end</dt><dd>Elapsed processing time for one batch from the start of the RTA poll to its recorded outcome. It includes other processing overhead and can be longer than the sum of the four stage cards.</dd>
+              <dt>End-to-end</dt><dd>Elapsed time from when the RTA poll response has been read and parsed and its records are available to when this record's outcome is recorded. It excludes the RTA pull card and includes other processing overhead, so it can be longer than the translation, APIM, and writeback cards combined.</dd>
             </dl>
             <p>When RTA writeback is enabled, its timer includes the PUT calls, retries, and configured retry delays. The summary below counts batches recorded status PUT failures; that count does not prove retries occurred in every case.</p>
             <p>Use the batch's correlation ID to find the writeback warning/error logs, which record the observed HTTP status or exception category and attempt count. Averages alone cannot identify the cause, and APIM round-trip time still combines APIM, DOCMP/backend, and network time.</p>
@@ -841,7 +841,7 @@ function lifecycleStage(name,state,detail,tone){
 }
 function lifecycleRun(x,index){
   const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'request source';
-  const receivedDetail=(x.RtaPullDurationMs==null?'RTA pull duration not recorded':'RTA pull took '+durationLabel(x.RtaPullDurationMs))+' · exact receive timestamp is not stored';
+  const receivedDetail=(x.RtaPullDurationMs==null?'RTA pull duration not recorded':'RTA pull took '+durationLabel(x.RtaPullDurationMs))+' · processing clock starts after the poll response is read and parsed';
   const received=lifecycleStage('Received from '+source,'Captured by poller',esc(receivedDetail),'done');
 
   const sent=x.SentToApimAtUtc;
