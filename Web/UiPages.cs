@@ -311,16 +311,24 @@ public static class UiPages
 """;
     }
 
-    public static string RequestHistoryPageFor(string? signedInUser, bool canManuallyPoll)
+    public static string RequestHistoryPageFor(
+        string? signedInUser,
+        bool canManuallyPoll,
+        string? buildVersion,
+        string? roleValue)
     {
         var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
+        var version = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(buildVersion) ? "unknown" : buildVersion);
+        var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
         var pollControls = canManuallyPoll
             ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
             : string.Empty;
 
         return RequestHistoryPage
             .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
-            .Replace("{{POLL_CONTROL}}", pollControls, StringComparison.Ordinal);
+            .Replace("{{POLL_CONTROL}}", pollControls, StringComparison.Ordinal)
+            .Replace("{{BUILD_VERSION}}", version, StringComparison.Ordinal)
+            .Replace("{{ROLE}}", role, StringComparison.Ordinal);
     }
 
     private const string RequestHistoryPage = """
@@ -344,6 +352,7 @@ h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-siz
 .header-actions{display:flex;align-items:center;justify-content:flex-end;gap:16px;flex-wrap:wrap}
 .signed-in-user{color:var(--muted);font-size:12px}
 .signed-in-user strong{color:var(--text);font-weight:600}
+.build-version{display:inline-flex;align-items:center;padding:6px 9px;border:1px solid rgba(25,221,255,.35);border-radius:999px;background:rgba(25,221,255,.08);color:var(--cyan);font-size:11px;font-weight:700;letter-spacing:.04em;white-space:nowrap}
 .sign-out{padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--panel2)}
 .sign-out:hover,.sign-out:focus-visible{border-color:var(--cyan);outline:none}
 a{color:var(--cyan);text-decoration:none}
@@ -472,6 +481,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
 <header>
   <div><h1>PROJECT PULSE REQUESTS</h1><div class="sub">Recent APIM and Service Bus activity</div></div>
   <div class="header-actions">
+    <span class="build-version" title="Version baked into this container image">BUILD v{{BUILD_VERSION}} · {{ROLE}}</span>
     <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
     <a class="sign-out" href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
     <a href="/ledger.html">Lifecycle ledger</a>
