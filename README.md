@@ -242,7 +242,7 @@ This repository intentionally does not contain the legacy Function App GitHub Ac
 
 For the POC, connect this repository directly from Azure Container Apps Continuous Deployment and allow Azure to generate the GitHub Actions workflow.
 
-The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.89`); it is distinct from the `PROJECT_PULSE_VERSION` display setting and from Azure's revision counter. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
+The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.90`); it is distinct from the `PROJECT_PULSE_VERSION` display setting and from Azure's revision counter. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
 
 Recommended settings:
 
@@ -277,6 +277,8 @@ ServiceBusQueueName=projectpulsequeue
 
 RtaQueuedPath=/claims/pending
 RtaHealthPath=/health
+RtaPageSize=100
+RtaPagesPerPoll=1
 RtaStatusPathTemplate=/requests/{correlationId}/status
 RtaStatusWritebackEnabled=true
 PROCESSING_CONCURRENCY_MODE=SEQUENTIAL
@@ -288,6 +290,10 @@ ApimResponseToken=<secret reference>
 RequestHistoryStorageConnectionString=<secret reference>
 REQUEST_HISTORY_PAYLOAD_MODE=OFF
 ```
+
+### RTA page size
+
+`RtaPageSize` controls how many records Project Pulse requests in each RTA GET page. The application accepts values from 1 to 5,000 (default 100), but the RTA endpoint can enforce a lower maximum; use only a page size supported by that API. Larger pages increase response and in-memory batch size, while `PROCESSING_MAX_CONCURRENCY` controls how many records are processed at once. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical maximum returned in one poll is 15,000 records. Increase page size only after confirming the RTA limit and checking memory and request duration.
 
 ### Processing concurrency
 
