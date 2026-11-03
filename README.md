@@ -278,11 +278,13 @@ ServiceBusQueueName=projectpulsequeue
 RtaQueuedPath=/claims/pending
 RtaHealthPath=/health
 RtaPageSize=100
+RtaMaxPageSize=5000
 RtaPagesPerPoll=1
 RtaStatusPathTemplate=/requests/{correlationId}/status
 RtaStatusWritebackEnabled=true
 PROCESSING_CONCURRENCY_MODE=SEQUENTIAL
 PROCESSING_MAX_CONCURRENCY=5
+PROCESSING_MAX_CONCURRENCY_LIMIT=300
 
 ApimResponseHeaderName=X-Pulse-Response-Token
 ApimResponseToken=<secret reference>
@@ -293,7 +295,7 @@ REQUEST_HISTORY_PAYLOAD_MODE=OFF
 
 ### RTA page size
 
-`RtaPageSize` controls how many records Project Pulse requests in each RTA GET page. The application accepts values from 1 to 5,000 (default 100), but the RTA endpoint can enforce a lower maximum; use only a page size supported by that API. Larger pages increase response and in-memory batch size, while `PROCESSING_MAX_CONCURRENCY` controls how many records are processed at once. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical maximum returned in one poll is 15,000 records. Increase page size only after confirming the RTA limit and checking memory and request duration.
+`RtaPageSize` controls how many records Project Pulse requests in each RTA GET page (default 100). `RtaMaxPageSize` sets the configurable upper bound (default 5,000); set it higher if the RTA endpoint supports larger pages. The RTA endpoint may impose its own lower maximum. Larger pages increase response size and memory use but do not increase processing concurrency. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical per-poll maximum is `RtaMaxPageSize × RtaPagesPerPoll`. Increase the page limit only after confirming the RTA limit and checking container memory and request duration.
 
 ### Processing concurrency
 
@@ -304,7 +306,7 @@ Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
 - `APIM_ONLY`: APIM/DOCMP calls may overlap; RTA status PUTs stay serial.
 - `FULL`: both APIM/DOCMP and RTA status PUTs may overlap.
 
-`PROCESSING_MAX_CONCURRENCY` sets the per-batch cap (default `5`, clamped to `1–300`). For batches larger than this value, the remaining records wait while up to the configured number are processed concurrently. APIM
+`PROCESSING_MAX_CONCURRENCY` sets the per-batch concurrency (default `5`). `PROCESSING_MAX_CONCURRENCY_LIMIT` sets its configurable upper bound (default `300`); the effective concurrency is clamped between 1 and that limit. Raise both values when intentionally increasing concurrency. For batches larger than the configured concurrency, remaining records wait while the configured number are processed concurrently. APIM
 concurrency also increases the number of simultaneous requests that can reach DOCMP through APIM;
 use it only after checking APIM and DOCMP capacity. RTA concurrency increases simultaneous status
 PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
