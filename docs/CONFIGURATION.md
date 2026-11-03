@@ -9,7 +9,7 @@ The same image supports two runtime roles:
 
 Request history also stores the runtime role that handled each attempt (`RTA` or `SERVICEBUS`). The Requests page displays this as **RTA Poller** or **Service Bus Worker**, separately from the request destination. Existing records without the field are shown as unknown.
 
-Values shown as defaults are the defaults implemented by the application unless noted otherwise. The deployed image tag is read from the repository root `VERSION` file; this is separate from the `PROJECT_PULSE_VERSION` display label and Azure Container Apps revision counters.
+Values shown as defaults are the defaults implemented by the application unless noted otherwise. The deployed image tag comes from the repository root `VERSION` file. The same value is baked into the image during the build and displayed on the home page, on `requests.html` with the runtime role, and as JSON at `/version`; no per-deployment version environment setting is needed. Azure Container Apps revision counters are separate.
 
 ## Secrets
 
@@ -48,7 +48,6 @@ The configured storage account must be reachable from the Container App environm
 | Variable | Role | Required | Default / example | Secret | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | `PROJECT_PULSE_ENVIRONMENT` | Both | No | `POC` | No | Display/environment label used by the UI. |
-| `PROJECT_PULSE_VERSION` | Both | No | `0.1.0` | No | Display version shown by the application. This is independent of the ACR image tag. |
 | `PROJECT_PULSE_ROLE` | Both | Recommended | `RTA` | No | Selects `RTA` or `SERVICEBUS`. Missing value defaults to `RTA`. |
 | `POLL_INTERVAL_SECONDS` | RTA | No | `5` | No | Minimum delay between RTA polling cycles. Supported range is 1-300 seconds. |
 | `APP_API_MODE` | RTA | No | `RTA` in code; `MOCK` for POC | No | Selects mock API behavior when set to `MOCK`. |
