@@ -31,7 +31,11 @@ jobs:
       - name: Read image version
         id: version
         shell: bash
-        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          base_version=$(tr -d '[:space:]' < VERSION)
+          build_version="${base_version}-build.${GITHUB_RUN_NUMBER}"
+          echo "version=$base_version" >> "$GITHUB_OUTPUT"
+          echo "build_version=$build_version" >> "$GITHUB_OUTPUT"
 
       - name: Azure Login
         uses: azure/login@v3
@@ -46,8 +50,8 @@ jobs:
           REGISTRY_URL: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io
           REGISTRY_USERNAME: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.PROJECTPULSEAPPCONTAINER_REGISTRY_PASSWORD }}
-          IMAGE_NAME: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}
-          PROJECT_PULSE_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          IMAGE_NAME: projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.build_version }}
+          PROJECT_PULSE_BUILD_VERSION: ${{ steps.version.outputs.build_version }}
         run: |
           printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
           docker build --build-arg PROJECT_PULSE_BUILD_VERSION="$PROJECT_PULSE_BUILD_VERSION" --tag "$IMAGE_NAME" .
@@ -64,4 +68,4 @@ jobs:
           az containerapp update \
             --name projectpulse-sb-appcontainer \
             --resource-group NewWorld-RSG \
-            --image "projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.version }}"
+            --image "projectpulsectrregistry-hgc2freaekb8h8ag.azurecr.io/projectpulse-appcontainer:${{ steps.version.outputs.build_version }}"
