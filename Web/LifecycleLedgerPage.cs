@@ -106,6 +106,7 @@ function timeline(x){
     pull!=null?(sourceLabel==='SOURCE'?'Pull took ':'GET took ')+pull+' ms':'No poll duration is stored for this record.',
     pull!=null?'ok':'wait'));
   const sent=x.SentToApimAtUtc;
+  const apimAt=x.ApimResponseAtUtc;
   const postOutcome=apimAt?'POST sent':sent?'Attempt logged':'No POST recorded';
   const postDetail=apimAt
     ?'Started '+stamp(sent||apimAt)
@@ -115,7 +116,6 @@ function timeline(x){
     postOutcome,
     postDetail,
     apimAt?'ok':sent?'wait':'wait'));
-  const apimAt=x.ApimResponseAtUtc;
   const apimDetails=[];
   if(apimAt)apimDetails.push('Returned '+stamp(apimAt));
   if(x.ApimRoundTripDurationMs!=null)apimDetails.push('APIM round trip '+x.ApimRoundTripDurationMs+' ms');
