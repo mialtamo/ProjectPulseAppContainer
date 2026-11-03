@@ -146,7 +146,7 @@ public sealed class ClaimProcessorOptions
         };
 
     public int GetProcessingMaxConcurrency() =>
-        Math.Clamp(ProcessingMaxConcurrency, 1, 100);
+        Math.Clamp(ProcessingMaxConcurrency, 1, 300);
     public int GetServiceBusReceiveBatchSize() => Math.Clamp(ServiceBusReceiveBatchSize, 1, 100);
     public int GetServiceBusReceiveWaitSeconds() => Math.Clamp(ServiceBusReceiveWaitSeconds, 1, 60);
     public int GetServiceBusDependencyRetrySeconds() => Math.Clamp(ServiceBusDependencyRetrySeconds, 1, 300);
