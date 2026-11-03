@@ -1,7 +1,21 @@
+using System.Net;
+
 namespace ProjectPulse.Processor.Web;
 
 public static class LifecycleLedgerPage
 {
+    public static string HtmlFor(string? signedInUser, string? buildVersion, string? roleValue)
+    {
+        var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
+        var version = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(buildVersion) ? "unknown" : buildVersion);
+        var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
+
+        return Html
+            .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
+            .Replace("{{BUILD_VERSION}}", version, StringComparison.Ordinal)
+            .Replace("{{ROLE}}", role, StringComparison.Ordinal);
+    }
+
     public static string Html => """
 <!doctype html>
 <html lang="en">
@@ -17,6 +31,9 @@ header{position:sticky;top:0;z-index:5;padding:16px 22px;border-bottom:1px solid
 h1{font-size:18px;letter-spacing:.08em;margin:0}.sub{font-size:12px;color:var(--muted);margin-top:5px}
 a{color:var(--cyan);text-decoration:none}
 .actions{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.signed-in-user{color:var(--muted);font-size:12px}
+.signed-in-user strong{color:var(--text);font-weight:600}
+.build-version{display:inline-flex;align-items:center;padding:6px 9px;border:1px solid rgba(25,221,255,.35);border-radius:999px;background:rgba(25,221,255,.08);color:var(--cyan);font-size:11px;font-weight:700;letter-spacing:.04em;white-space:nowrap}
 main{max-width:1800px;padding:20px 22px 48px;margin:auto}
 .note,.toolbar,.summary,.record{border:1px solid var(--border);background:var(--panel);border-radius:10px}
 .note{padding:12px 14px;color:var(--muted);font-size:13px;margin-bottom:14px}
@@ -48,7 +65,11 @@ button{cursor:pointer}button:hover,a.button:hover{border-color:var(--cyan)}
 <body>
 <header>
   <div><h1>PROJECT PULSE LIFECYCLE LEDGER</h1><div class="sub">Recorded milestones for each processing attempt</div></div>
-  <div class="actions"><a href="/requests.html">Request history</a><a href="/">Home</a><a href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a></div>
+  <div class="actions">
+    <span class="build-version" title="Version baked into this container image">BUILD v{{BUILD_VERSION}} · {{ROLE}}</span>
+    <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
+    <a href="/requests.html">Request history</a><a href="/">Home</a><a href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
+  </div>
 </header>
 <main>
   <div class="note">This view uses the milestones saved in request history. A missing later milestone means Project Pulse has no outcome recorded for that stage; it does not prove what APIM, Service Bus, or RTA did afterward. Payloads are not shown here.</div>
