@@ -5,6 +5,6 @@ namespace ProjectPulse.Processor.Models;
 public sealed record AppApiPollResult(
     IReadOnlyList<JsonElement> Claims,
     IReadOnlyList<string> RtaResponsePayloads,
-    DateTimeOffset? PollStartedAtUtc = null,
+    DateTimeOffset? RecordsReceivedAtUtc = null,
     long? RtaPullDurationMs = null);
 

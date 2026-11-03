@@ -22,7 +22,6 @@ public sealed class AppApiClient(
 
     public async Task<AppApiPollResult> GetPendingClaimsAsync(CancellationToken cancellationToken)
     {
-        var pollStartedAtUtc = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         var result = _options.IsMockApiMode()
             ? await GetMockPendingClaimsAsync(cancellationToken)
@@ -31,7 +30,7 @@ public sealed class AppApiClient(
 
         return result with
         {
-            PollStartedAtUtc = pollStartedAtUtc,
+            RecordsReceivedAtUtc = DateTimeOffset.UtcNow,
             RtaPullDurationMs = stopwatch.ElapsedMilliseconds
         };
     }

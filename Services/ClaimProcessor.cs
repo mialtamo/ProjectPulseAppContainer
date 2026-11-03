@@ -86,7 +86,7 @@ public sealed class ClaimProcessor(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken,
-        DateTimeOffset? pollStartedAtUtc = null,
+        DateTimeOffset? recordsReceivedAtUtc = null,
         long? rtaPullDurationMs = null,
         RetryEnvelope? retryEnvelope = null)
     {
@@ -120,7 +120,7 @@ public sealed class ClaimProcessor(
                     [claims[index]],
                     rtaResponsePayloads,
                     itemCancellationToken,
-                    pollStartedAtUtc,
+                    recordsReceivedAtUtc,
                     rtaPullDurationMs,
                     apimRequestGate,
                     rtaWritebackGate,
@@ -137,7 +137,7 @@ public sealed class ClaimProcessor(
         IReadOnlyList<JsonElement> claims,
         IReadOnlyList<string> rtaResponsePayloads,
         CancellationToken cancellationToken,
-        DateTimeOffset? pollStartedAtUtc,
+        DateTimeOffset? recordsReceivedAtUtc,
         long? rtaPullDurationMs,
         SemaphoreSlim apimRequestGate,
         SemaphoreSlim rtaWritebackGate,
@@ -148,7 +148,7 @@ public sealed class ClaimProcessor(
             return [];
         }
 
-        var pipelineStartedAtUtc = pollStartedAtUtc ?? DateTimeOffset.UtcNow;
+        var pipelineStartedAtUtc = recordsReceivedAtUtc ?? DateTimeOffset.UtcNow;
         var correlationIds = claims.Select(GetCorrelationId).ToArray();
         var rtaRequestIds = claims.Select(claim =>
             TryGetScalar(claim, "REQUEST_ID", out var requestId) ? requestId : null).ToArray();
