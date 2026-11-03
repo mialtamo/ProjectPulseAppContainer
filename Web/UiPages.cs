@@ -578,15 +578,15 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     <div class="throughput-estimator" aria-label="Throughput duration estimate">
       <div class="throughput-estimator-copy">
         <h3>Wall-clock volume estimate</h3>
-        <p>Estimate total runtime from an observed completion rate. This is separate from the per-batch processing times above. Adjust the baseline to match a measured run.</p>
+        <p>Estimate total runtime from a measured run. Enter wall-clock seconds per completed record (run duration ÷ records completed); the timing cards above are per-batch averages and don't establish overall throughput.</p>
       </div>
-      <label class="throughput-estimator-field" for="secondsPerRecord">Observed seconds per completed record
-        <input id="secondsPerRecord" type="number" min="0.001" step="0.01" value="0.12" oninput="updateThroughputEstimate()">
+      <label class="throughput-estimator-field" for="secondsPerRecord">Measured wall-clock seconds per completed record
+        <input id="secondsPerRecord" type="number" min="0.001" step="0.01" placeholder="Enter measured rate" oninput="updateThroughputEstimate()">
       </label>
       <label class="throughput-estimator-field" for="targetRecordCount">Records to process
-        <input id="targetRecordCount" type="number" min="1" step="1000" value="100000" oninput="updateThroughputEstimate()">
+        <input id="targetRecordCount" type="number" min="1" step="1000" placeholder="e.g. 100,000" oninput="updateThroughputEstimate()">
       </label>
-      <div id="throughputEstimate" class="throughput-estimate-result" aria-live="polite">3 hr 20 min<span class="throughput-estimate-caption">at the entered rate</span></div>
+      <div id="throughputEstimate" class="throughput-estimate-result" aria-live="polite">Enter a measured rate and record count.<span class="throughput-estimate-caption">Both fields remain editable</span></div>
     </div>
     <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
   </section>
@@ -1005,9 +1005,15 @@ function formatEstimateDuration(totalSeconds){
   return remainder+' sec';
 }
 function updateThroughputEstimate(){
-  const secondsPerRecord=Number(document.getElementById('secondsPerRecord').value);
-  const recordCount=Number(document.getElementById('targetRecordCount').value);
+  const secondsValue=document.getElementById('secondsPerRecord').value;
+  const countValue=document.getElementById('targetRecordCount').value;
+  const secondsPerRecord=Number(secondsValue);
+  const recordCount=Number(countValue);
   const output=document.getElementById('throughputEstimate');
+  if(!secondsValue||!countValue){
+    output.innerHTML='Enter a measured rate and record count.<span class="throughput-estimate-caption">Use wall-clock run duration ÷ records completed</span>';
+    return;
+  }
   if(!Number.isFinite(secondsPerRecord)||secondsPerRecord<=0||!Number.isFinite(recordCount)||recordCount<=0){
     output.textContent='Enter valid positive values.';
     return;

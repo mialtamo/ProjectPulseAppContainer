@@ -9,7 +9,7 @@ The same image supports two runtime roles:
 
 Request history also stores the runtime role that handled each attempt (`RTA` or `SERVICEBUS`). The Requests page displays this as **RTA Poller** or **Service Bus Worker**, separately from the request destination. Existing records without the field are shown as unknown.
 
-Values shown as defaults are the defaults implemented by the application unless noted otherwise. The deployment workflow reads the base release from the repository root `VERSION` file and appends the GitHub Actions run number to create a unique image tag for every run (for example, `0.0.92-build.123`). That exact tag is baked into the image and displayed on the home page, on `requests.html` with the runtime role, and as JSON at `/version`; no per-deployment version environment setting or manual build-number edit is needed. Change `VERSION` when intentionally starting a new base release. Azure Container Apps revision counters are separate.
+Values shown as defaults are the defaults implemented by the application unless noted otherwise. The deployment workflow reads the base release from the repository root `VERSION` file and appends the GitHub Actions run number to create a unique image tag for every run (for example, `0.0.93-build.94`). That exact tag is baked into the image and displayed on the home page, on `requests.html` with the runtime role, and as JSON at `/version`; no per-deployment version environment setting or manual build-number edit is needed. Change `VERSION` when intentionally starting a new base release. Azure Container Apps revision counters are separate.
 
 ## Secrets
 
