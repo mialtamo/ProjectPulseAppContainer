@@ -10,7 +10,9 @@ RUN dotnet publish ProjectPulse.Processor.csproj -c Release -o /app/publish --no
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-ENV ASPNETCORE_URLS=http://+:8080
+ARG PROJECT_PULSE_BUILD_VERSION=unknown
+ENV ASPNETCORE_URLS=http://+:8080 \
+    PROJECT_PULSE_BUILD_VERSION=${PROJECT_PULSE_BUILD_VERSION}
 EXPOSE 8080
 
 COPY --from=build /app/publish .
