@@ -71,7 +71,7 @@ The configured storage account must be reachable from the Container App environm
 | `ApimHealthPath` | Both | No | `/health` | No | APIM health endpoint path. |
 | `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path. |
 | `ApimRequestTimeoutSeconds` | Both | No | `15` | No | APIM request timeout used by Project Pulse processing logic. |
-| `ApimScope` | Both | No | empty | No | Optional managed-identity OAuth scope for APIM. |
+| `ApimScope` | Both | Yes | `api://<API-application-client-id>/.default` | No | Required managed-identity OAuth scope for APIM. Project Pulse fails startup when it is missing. Use the Application ID URI of the APIM resource app registration with `/.default`. |
 | `ApimResponseHeaderName` | Both | No | `X-Pulse-Response-Token` | No | Response header containing the APIM response-validation token. |
 | `ApimResponseToken` | Both | Yes for validation | secret | **Yes** | Expected APIM response token. Use a Container Apps secret reference. |
 | `APIM_MOCK_SCENARIO` | Both | No | empty | No | Optional test control forwarded to APIM as `X-Mock-Scenario`. Supported values: `success`, `docmp-not-found`, `docmp-error`, `http-404`, `http-429`, `http-500`, `http-503`, and `http-504`. Blank omits the header. Configure only when the APIM policy supports mock scenarios. |
@@ -109,6 +109,58 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 | `REQUEST_HISTORY_PAYLOAD_MODE` | Both | No | `OFF` (when unset, falls back to legacy setting) | No | `OFF` suppresses payload bodies while preserving transaction metadata; `PARTIAL` masks common identifiers and personal-name fields; `FULL` captures unredacted payloads for synthetic POC data only. |
 | `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Deprecated compatibility setting. Used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset; `true` maps to `FULL`, `false` maps to `OFF`. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Both | Recommended | Azure-provided value | **Yes** | Standard Application Insights connection string consumed by ASP.NET Core Application Insights telemetry. |
+
+## APIM managed-identity authentication
+
+Project Pulse sends an Entra access token with every APIM adjudication POST. Configure this for **both** Container Apps (`PROJECT_PULSE_ROLE=RTA` and `PROJECT_PULSE_ROLE=SERVICEBUS`), because both roles can call APIM. The token is acquired through the Container App's managed identity; no client secret or certificate is stored by Project Pulse.
+
+Set this required environment variable on both apps:
+
+```text
+ApimScope=api://<Project-Pulse-API-Verify-application-client-id>/.default
+```
+
+Replace the placeholder with the Application (client) ID of the API registration named `Project-Pulse API Verify`. If the registration uses a custom Application ID URI, use that URI followed by `/.default`. The scope must identify the API resource that APIM validates, not the Container App's managed identity client ID.
+
+In **App registrations → Project-Pulse API Verify → App roles**, define an enabled application role:
+
+- Display name: `Project Pulse API Invoke`
+- Allowed member types: `Applications`
+- Value: `ProjectPulse.Invoke`
+
+Assign this app role to the managed identity service principal for **each** Container App in **Enterprise applications → Project-Pulse API Verify → Users and groups** (or the equivalent app-role assignment workflow). Use the identity each app actually runs as. Role assignments may take several minutes to propagate.
+
+In APIM, add JWT validation to the inbound policy before the existing DOCMP client-certificate policy. Keep the existing `<base />` and backend certificate policy. For example:
+
+```xml
+<inbound>
+    <base />
+    <validate-azure-ad-token tenant-id="{{entra-tenant-id}}"
+                             failed-validation-httpcode="401"
+                             failed-validation-error-message="Unauthorized">
+        <audiences>
+            <audience>api://<Project-Pulse-API-Verify-application-client-id></audience>
+        </audiences>
+        <required-claims>
+            <claim name="roles" match="any">
+                <value>ProjectPulse.Invoke</value>
+            </claim>
+        </required-claims>
+        <!-- Recommended: restrict this to the RTA and SERVICEBUS managed-identity client IDs. -->
+        <!--
+        <client-application-ids>
+            <application-id>{{project-pulse-rta-managed-identity-client-id}}</application-id>
+            <application-id>{{project-pulse-servicebus-managed-identity-client-id}}</application-id>
+        </client-application-ids>
+        -->
+    </validate-azure-ad-token>
+    <authentication-certificate certificate-id="docmp-dev" />
+</inbound>
+```
+
+Set the audience to the API registration's Application ID URI (for the default URI, `api://<application-client-id>`). The tenant named value must contain the tenant ID that issued the token. Restricting accepted client application IDs to the two managed identities is recommended defense in depth; use the managed identity **client IDs**, not their principal/object IDs. Keep APIM's existing backend authentication and policies in place. The certificate shown above is APIM-to-DOCMP backend authentication; it is separate from Pulse-to-APIM bearer authentication.
+
+After configuration, a request without a valid token or without the `ProjectPulse.Invoke` role should receive HTTP 401 from APIM before reaching DOCMP. A valid request should continue to the existing backend flow. The RTA/App API authentication scope remains separate and is not enabled by this APIM change.
 
 ## Azure Service Bus retry setup
 
