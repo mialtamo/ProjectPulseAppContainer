@@ -106,11 +106,15 @@ function timeline(x){
     pull!=null?(sourceLabel==='SOURCE'?'Pull took ':'GET took ')+pull+' ms':'No poll duration is stored for this record.',
     pull!=null?'ok':'wait'));
   const sent=x.SentToApimAtUtc;
+  const postOutcome=apimAt?'POST sent':sent?'Attempt logged':'No POST recorded';
+  const postDetail=apimAt
+    ?'Started '+stamp(sent||apimAt)
+    :sent?'Attempt logged '+stamp(sent)+' · no APIM response recorded':'No APIM POST attempt is stored.';
   steps.push(step(
     'SENT TO APIM / DOCMP',
-    sent?'POST started':'No POST recorded',
-    sent?stamp(sent):'No POST start time is stored.',
-    sent?'ok':'wait'));
+    postOutcome,
+    postDetail,
+    apimAt?'ok':sent?'wait':'wait'));
   const apimAt=x.ApimResponseAtUtc;
   const apimDetails=[];
   if(apimAt)apimDetails.push('Returned '+stamp(apimAt));
@@ -154,7 +158,7 @@ function render(){
   if(!items.length){host.innerHTML='<div class="empty">No ledger records match these filters.</div>';return}
   host.innerHTML=items.map(x=>{
     const pending=x.Status==='SentToApim'&&!x.ApimResponseAtUtc;
-    const callout=pending?'<div class="missing">APIM POST was started at '+esc(stamp(x.SentToApimAtUtc))+', but no response or later outcome is recorded.</div>':'';
+    const callout=pending?'<div class="missing">Project Pulse recorded an APIM POST attempt at '+esc(stamp(x.SentToApimAtUtc))+', but no response was stored. This does not confirm APIM received the request.</div>':'';
     return '<article class="record">'+
       '<div class="record-head"><div>'+esc(stamp(x.UpdatedAtUtc))+'<div class="muted">Updated</div></div>'+
       '<div><strong>'+esc(x.UniqueId)+'</strong><div class="muted">Correlation / unique ID</div></div>'+
