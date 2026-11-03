@@ -36,6 +36,10 @@ Request history records which runtime handled each processing attempt: `RTA` for
 
 For backward compatibility, if `PROJECT_PULSE_ROLE` is not yet configured the container starts in `RTA` mode. Any non-empty unsupported role value fails startup.
 
+### APIM authentication
+
+Project Pulse uses each Container App's managed identity to get an Entra bearer token for APIM. Configure the required `ApimScope` and assign the `ProjectPulse.Invoke` app role to the managed identities used by both the RTA and SERVICEBUS apps. Then configure APIM inbound token validation for the tenant, API audience, and role claim. The [APIM managed-identity setup and inbound policy example](docs/CONFIGURATION.md#apim-managed-identity-authentication) explains the steps. RTA API authentication is a separate later configuration.
+
 ### Service Bus retry worker setup
 
 Create the retry queue, then configure the **same** `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on both Container Apps. The RTA app's managed identity needs **Azure Service Bus Data Sender** on the queue. The Service Bus app's identity needs **Azure Service Bus Data Receiver** and **Azure Service Bus Data Sender**, because a retry can be requeued. Project Pulse uses managed identity through `.NET DefaultAzureCredential`; no Service Bus connection string or SAS key is needed.
