@@ -440,7 +440,8 @@ public sealed class ClaimProcessor(
                         cancellationToken,
                         rtaWritebackGate,
                         apimError.Message,
-                        apimError.Stack);
+                        apimError.Stack,
+                        outboundApimRequestBody: outboundPayloadJson);
                     writebackStopwatch.Stop();
                     var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
 
@@ -560,7 +561,8 @@ public sealed class ClaimProcessor(
                     claims,
                     correlationIds,
                     cancellationToken,
-                    rtaWritebackGate);
+                    rtaWritebackGate,
+                    outboundApimRequestBody: outboundPayloadJson);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                 await TryRecordHistoryAsync(
@@ -962,7 +964,8 @@ public sealed class ClaimProcessor(
                 rtaWritebackGate,
                 errorMessage,
                 null,
-                rawApimResponseBody: responseBody);
+                rawApimResponseBody: responseBody,
+                outboundApimRequestBody: envelope.TransformedPayload);
             succeeded = writeback.Success;
             finalReason = writeback.Reason == "RtaWritebackQueued"
                 ? "ApimRetryExhaustedWritebackQueued"
@@ -1112,7 +1115,8 @@ public sealed class ClaimProcessor(
         SemaphoreSlim rtaWritebackGate,
         string? apimErrorMessage = null,
         string? apimErrorStack = null,
-        string? rawApimResponseBody = null)
+        string? rawApimResponseBody = null,
+        string? outboundApimRequestBody = null)
     {
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -1214,6 +1218,7 @@ public sealed class ClaimProcessor(
                     _options.ApimBaseUrl,
                     _options.ApimAdjudicationPath,
                     apimResponseHeaders,
+                    outboundApimRequestBody ?? string.Empty,
                     apimErrorMessage,
                     apimErrorStack,
                     isErrorResponse: true)
@@ -1227,7 +1232,8 @@ public sealed class ClaimProcessor(
                         apimResponseTimeMs,
                         _options.ApimBaseUrl,
                         _options.ApimAdjudicationPath,
-                        apimResponseHeaders)
+                        apimResponseHeaders,
+                        outboundApimRequestBody ?? string.Empty)
                     : BuildLegacyRtaStatusPayload(item, originatingRequest);
             var statusPayloadJson = statusPayload.ToJsonString();
 
@@ -1302,6 +1308,7 @@ public sealed class ClaimProcessor(
         string apimBaseUrl,
         string apimEndpoint,
         string apimResponseHeaders,
+        string outboundApimRequestBody,
         string? errorMessage = null,
         string? errorStack = null,
         bool isErrorResponse = false)
@@ -1329,7 +1336,7 @@ public sealed class ClaimProcessor(
         apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
         apiCallHistory["REQUEST_HEADER"] = apimResponseHeaders;
         apiCallHistory["REQUEST_QUERY_PARAMETER"] = null;
-        apiCallHistory["REQUEST_BODY"] = originatingRequest.GetRawText();
+        apiCallHistory["REQUEST_BODY"] = outboundApimRequestBody;
         apiCallHistory["RESPONSE_HTTP_STATUS_CODE"] = apimStatusCode;
         apiCallHistory["RESPONSE_BODY"] = rawApimResponse;
         apiCallHistory["RESPONSE_TIME_MS"] = apimResponseTimeMs;

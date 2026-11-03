@@ -87,7 +87,7 @@ public sealed class AppApiClient(
         var client = httpClientFactory.CreateClient("AppApi");
         var pageSize = _options.GetClampedPageSize();
         var pagesPerPoll = _options.GetClampedPagesPerPoll();
-        var records = new List<JsonElement>(pageSize * pagesPerPoll);
+        var records = new List<JsonElement>();
         var responsePayloads = new List<string>(pagesPerPoll);
 
         for (var page = 1; page <= pagesPerPoll; page++)
