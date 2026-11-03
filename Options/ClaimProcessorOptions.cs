@@ -36,12 +36,15 @@ public sealed class ClaimProcessorOptions
     public string RTANotificationsBaseURL { get; init; } = string.Empty;
     public string RTANotificationsPath { get; init; } = "/admin/notifications";
     public int RtaPageSize { get; init; } = 100;
+    public int RtaMaxPageSize { get; init; } = 5000;
     public int RtaPagesPerPoll { get; init; } = 1;
     public bool RtaStatusWritebackEnabled { get; init; } = false;
     [ConfigurationKeyName("PROCESSING_CONCURRENCY_MODE")]
     public string ProcessingConcurrencyMode { get; init; } = "SEQUENTIAL";
     [ConfigurationKeyName("PROCESSING_MAX_CONCURRENCY")]
     public int ProcessingMaxConcurrency { get; init; } = 5;
+    [ConfigurationKeyName("PROCESSING_MAX_CONCURRENCY_LIMIT")]
+    public int ProcessingMaxConcurrencyLimit { get; init; } = 300;
     public string AppApiMode { get; init; } = "RTA";
     public bool LogPollPayloads { get; init; } = false;
     public string RequestHistoryPayloadMode { get; init; } = string.Empty;
@@ -134,7 +137,7 @@ public sealed class ClaimProcessorOptions
     public int ResultWriteMaxAttempts { get; init; } = 3;
     public int ResultWriteRetryDelayMilliseconds { get; init; } = 500;
 
-    public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, 5000);
+    public int GetClampedPageSize() => Math.Clamp(RtaPageSize, 1, Math.Max(1, RtaMaxPageSize));
     public int GetClampedPagesPerPoll() => Math.Clamp(RtaPagesPerPoll, 1, 3);
     public ProcessingConcurrencyMode GetProcessingConcurrencyMode() =>
         ProcessingConcurrencyMode.Trim().Replace("-", "_", StringComparison.Ordinal).Replace(" ", "_", StringComparison.Ordinal).ToUpperInvariant() switch
@@ -146,7 +149,7 @@ public sealed class ClaimProcessorOptions
         };
 
     public int GetProcessingMaxConcurrency() =>
-        Math.Clamp(ProcessingMaxConcurrency, 1, 300);
+        Math.Clamp(ProcessingMaxConcurrency, 1, Math.Max(1, ProcessingMaxConcurrencyLimit));
     public int GetServiceBusReceiveBatchSize() => Math.Clamp(ServiceBusReceiveBatchSize, 1, 100);
     public int GetServiceBusReceiveWaitSeconds() => Math.Clamp(ServiceBusReceiveWaitSeconds, 1, 60);
     public int GetServiceBusDependencyRetrySeconds() => Math.Clamp(ServiceBusDependencyRetrySeconds, 1, 300);
