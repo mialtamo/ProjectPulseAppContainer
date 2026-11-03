@@ -820,30 +820,47 @@ function lifecycleStage(name,state,detail,tone){
     '<div class="lifecycle-stage-state">'+esc(state)+'</div><div class="lifecycle-stage-detail">'+detail+'</div></article>';
 }
 function lifecycleRun(x,index){
-  const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'request source';
-  const receivedDetail=(x.RtaPullDurationMs==null?'RTA pull duration not recorded':'RTA pull took '+durationLabel(x.RtaPullDurationMs))+' · processing clock starts after the poll response is read and parsed';
-  const received=lifecycleStage('Received from '+source,'Captured by poller',esc(receivedDetail),'done');
+  const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'unknown source';
+  const receivedDetail=x.RtaPullDurationMs==null
+    ?'Pull duration not recorded'
+    :(source==='Mock API'?'Mock API pull took ':'RTA pull took ')+durationLabel(x.RtaPullDurationMs);
+  const received=lifecycleStage('Received from '+source,'GET completed',esc(receivedDetail),'done');
 
   const sent=x.SentToApimAtUtc;
-  const sentStep=lifecycleStage('Sent to APIM / DOCMP',sent?'Attempt recorded':'Not recorded',
-    sent?esc(new Date(sent).toLocaleString())+' · timestamp is saved before the network POST':'No APIM send timestamp is stored.',
-    sent?'done':'unknown');
-
   const responseAt=x.ApimResponseAtUtc;
+  const sentDetails=[];
+  let sentState='Not recorded',sentTone='unknown';
+  if(responseAt){
+    sentState='POST sent';sentTone='done';
+    sentDetails.push(sent?'Started '+esc(new Date(sent).toLocaleString()):'Start time not recorded');
+    if(x.ApimRoundTripDurationMs!=null)sentDetails.push('APIM round trip '+durationLabel(x.ApimRoundTripDurationMs));
+  }else if(sent){
+    sentState='Attempt logged';sentTone='waiting';
+    sentDetails.push('Logged '+esc(new Date(sent).toLocaleString()));
+    sentDetails.push('No APIM response recorded');
+  }else{
+    sentDetails.push('No APIM POST attempt is stored.');
+  }
+  const sentStep=lifecycleStage('Sent to APIM / DOCMP',sentState,sentDetails.join(' · '),sentTone);
+
   const http=x.HttpStatusCode;
-  let responseState='No response recorded',responseTone='unknown',responseDetail='No response timestamp or HTTP status is stored.';
+  let responseState='No response recorded',responseTone='unknown';
+  let responseDetails=[];
   if(responseAt||http!=null){
     const businessFailure=x.Status==='Alerted'&&!!x.BusinessResponseCode;
-    responseState=http==null?'Response recorded':'HTTP '+http+(businessFailure?' · business error':'');
+    responseState=http==null?'Response received':'HTTP '+http+(businessFailure?' · business error':'');
     responseTone=http!=null&&(http<200||http>=300)?'failed':(businessFailure?'failed':'done');
-    responseDetail=(responseAt?esc(new Date(responseAt).toLocaleString()):'Response time not recorded')+
-      (x.BusinessResponseCode?' · business code '+esc(x.BusinessResponseCode):'')+
-      (x.Reason?' · '+esc(x.Reason):'');
+    if(responseAt)responseDetails.push('Returned '+esc(new Date(responseAt).toLocaleString()));
+    if(x.BusinessResponseCode&&x.BusinessResponseCode!=='BatchCompleted')responseDetails.push('Business code '+esc(x.BusinessResponseCode));
+    if(x.Reason&&x.Reason!=='BatchCompleted')responseDetails.push(esc(x.Reason));
+    if(!responseDetails.length)responseDetails.push('Response recorded');
   }else if(sent){
-    responseState='Waiting / not recorded';responseTone='waiting';
-    responseDetail=x.Status==='Buffered'?'No response was recorded before the item was buffered.':'No APIM response is stored for this run.';
+    responseState='Waiting / no response';responseTone='waiting';
+    responseDetails.push('No APIM response is stored for this run.');
+  }else{
+    responseDetails.push('No response timestamp or HTTP status is stored.');
   }
-  const responseStep=lifecycleStage('Returned from APIM',responseState,responseDetail,responseTone);
+  const responseStep=lifecycleStage('Returned from APIM',responseState,responseDetails.join(' · '),responseTone);
 
   let busState='No event recorded',busTone='unknown',busDetail='No Service Bus milestone is stored for this run.';
   if(x.BufferedToServiceBusAtUtc){
@@ -868,10 +885,16 @@ function lifecycleRun(x,index){
   }else if(x.RtaWritebackSucceeded!=null){
     const succeeded=x.RtaWritebackSucceeded===true;
     putState=succeeded?'Succeeded':'Failed';putTone=succeeded?'done':'failed';
-    putDetail=(x.RtaWritebackHttpStatusCode==null?'HTTP status not recorded':'HTTP '+x.RtaWritebackHttpStatusCode)+
-      (x.RtaWritebackAttempts==null?'':' · '+x.RtaWritebackAttempts+' attempt(s)')+
-      (x.RtaWritebackFailureKind?' · '+esc(x.RtaWritebackFailureKind):'')+
-      (x.RtaWritebackFailureMessage?' · '+esc(x.RtaWritebackFailureMessage):'');
+    const putDetails=[];
+    if(x.RtaWritebackHttpStatusCode!=null)putDetails.push('HTTP '+x.RtaWritebackHttpStatusCode);
+    if(x.RtaWritebackAttempts!=null)putDetails.push(x.RtaWritebackAttempts+' attempt(s)');
+    if(x.RtaWritebackDurationMs!=null)putDetails.push('Writeback took '+durationLabel(x.RtaWritebackDurationMs));
+    putDetails.push(x.RtaWritebackCompletedAtUtc
+      ?'Completed '+esc(new Date(x.RtaWritebackCompletedAtUtc).toLocaleString())
+      :'Completion time not recorded');
+    if(x.RtaWritebackFailureKind)putDetails.push(esc(x.RtaWritebackFailureKind));
+    if(x.RtaWritebackFailureMessage)putDetails.push(esc(x.RtaWritebackFailureMessage));
+    putDetail=putDetails.join(' · ');
   }
   const putStep=lifecycleStage('Sent back to RTA',putState,putDetail,putTone);
   const batch=' · Batch '+esc(x.BatchId||'unknown');
