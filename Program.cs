@@ -13,6 +13,7 @@ using ProjectPulse.Processor.Web;
 var builder = WebApplication.CreateBuilder(args);
 var projectPulseRole = ProjectPulseRoleResolver.Resolve();
 var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
+var projectPulseBuildVersion = Environment.GetEnvironmentVariable("PROJECT_PULSE_BUILD_VERSION") ?? "unknown";
 
 builder.Services.AddApplicationInsightsTelemetry();
 
@@ -90,13 +91,20 @@ app.MapGet("/", (HttpContext context) =>
 
     return Results.Content(
         UiPages.LandingPage(
-            Environment.GetEnvironmentVariable("PROJECT_PULSE_VERSION"),
+            projectPulseBuildVersion,
             Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT"),
             projectPulseRoleName),
         "text/html; charset=utf-8");
 });
 
 app.MapGet("/pulse", () => Results.Redirect("/"));
+
+app.MapGet("/version", () => Results.Ok(new
+{
+    version = projectPulseBuildVersion,
+    role = projectPulseRoleName,
+    environment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT") ?? "UNKNOWN"
+}));
 
 app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFactory httpClientFactory) =>
 {
@@ -386,7 +394,13 @@ app.MapGet("/requests.html", (HttpContext context) =>
         "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
-    return Results.Content(UiPages.RequestHistoryPageFor(signedInUser, projectPulseRole == ProjectPulseRole.Rta), "text/html; charset=utf-8");
+    return Results.Content(
+        UiPages.RequestHistoryPageFor(
+            signedInUser,
+            projectPulseRole == ProjectPulseRole.Rta,
+            projectPulseBuildVersion,
+            projectPulseRoleName),
+        "text/html; charset=utf-8");
 });
 
 app.MapGet("/ledger.html", (HttpContext context) =>
