@@ -833,7 +833,6 @@ function lifecycleRun(x,index){
   if(responseAt){
     sentState='POST sent';sentTone='done';
     sentDetails.push(sent?'Started '+esc(new Date(sent).toLocaleString()):'Start time not recorded');
-    if(x.ApimRoundTripDurationMs!=null)sentDetails.push('APIM round trip '+durationLabel(x.ApimRoundTripDurationMs));
   }else if(sent){
     sentState='Attempt logged';sentTone='waiting';
     sentDetails.push('Logged '+esc(new Date(sent).toLocaleString()));
@@ -851,6 +850,7 @@ function lifecycleRun(x,index){
     responseState=http==null?'Response received':'HTTP '+http+(businessFailure?' · business error':'');
     responseTone=http!=null&&(http<200||http>=300)?'failed':(businessFailure?'failed':'done');
     if(responseAt)responseDetails.push('Returned '+esc(new Date(responseAt).toLocaleString()));
+    if(x.ApimRoundTripDurationMs!=null)responseDetails.push('APIM round trip '+durationLabel(x.ApimRoundTripDurationMs));
     if(x.BusinessResponseCode&&x.BusinessResponseCode!=='BatchCompleted')responseDetails.push('Business code '+esc(x.BusinessResponseCode));
     if(x.Reason&&x.Reason!=='BatchCompleted')responseDetails.push(esc(x.Reason));
     if(!responseDetails.length)responseDetails.push('Response recorded');
