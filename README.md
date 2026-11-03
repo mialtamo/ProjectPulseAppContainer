@@ -242,7 +242,7 @@ This repository intentionally does not contain the legacy Function App GitHub Ac
 
 For the POC, connect this repository directly from Azure Container Apps Continuous Deployment and allow Azure to generate the GitHub Actions workflow.
 
-The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.90`); it is distinct from the `PROJECT_PULSE_VERSION` display setting and from Azure's revision counter. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
+The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.92`); it is distinct from Azure's revision counter. Each image also carries its build version, which appears on `requests.html` as `BUILD v<version> · <role>` and at `/version`; this value is injected during image build, so deployments do not need a per-release environment-variable edit. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
 
 Recommended settings:
 
