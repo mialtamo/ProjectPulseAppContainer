@@ -242,7 +242,7 @@ This repository intentionally does not contain the legacy Function App GitHub Ac
 
 For the POC, connect this repository directly from Azure Container Apps Continuous Deployment and allow Azure to generate the GitHub Actions workflow.
 
-The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.86`); it is distinct from the `PROJECT_PULSE_VERSION` display setting and from Azure's revision counter. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
+The repository's main-branch deployment workflow builds and pushes the image tagged by `VERSION`, deploys it to `projectpulse-appcontainer`, then updates `projectpulse-sb-appcontainer` to use that same image tag. Both apps therefore run the same release after a successful workflow run. The ACR image tag comes from the root `VERSION` file (currently `0.0.89`); it is distinct from the `PROJECT_PULSE_VERSION` display setting and from Azure's revision counter. The workflow can succeed while a new revision is still becoming ready, so confirm each app's **Latest ready revision** advances before considering the rollout complete.
 
 Recommended settings:
 
@@ -298,7 +298,7 @@ Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
 - `APIM_ONLY`: APIM/DOCMP calls may overlap; RTA status PUTs stay serial.
 - `FULL`: both APIM/DOCMP and RTA status PUTs may overlap.
 
-`PROCESSING_MAX_CONCURRENCY` sets the per-batch cap (default `5`, clamped to `1–100`). APIM
+`PROCESSING_MAX_CONCURRENCY` sets the per-batch cap (default `5`, clamped to `1–300`). The ceiling matches the largest supported poll batch: up to 100 records per page across up to 3 pages per poll. Actual parallel work cannot exceed the number of records in the active batch. APIM
 concurrency also increases the number of simultaneous requests that can reach DOCMP through APIM;
 use it only after checking APIM and DOCMP capacity. RTA concurrency increases simultaneous status
 PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
