@@ -57,6 +57,7 @@ public sealed class ClaimProcessorOptions
     public string ApimHealthPath { get; init; } = "/health";
     public string ApimAdjudicationPath { get; init; } = "/claims/adjudicate";
     public int ApimRequestTimeoutSeconds { get; init; } = 15;
+    [Required]
     public string ApimScope { get; init; } = string.Empty;
     public string ApimResponseHeaderName { get; init; } = "X-Pulse-Response-Token";
     public string ApimResponseToken { get; init; } = string.Empty;

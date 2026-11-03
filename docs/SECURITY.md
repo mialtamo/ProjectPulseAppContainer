@@ -38,6 +38,14 @@ Request-history Table and Blob storage currently use `RequestHistoryStorageConne
 
 The GitHub Actions deployment workflow uses Azure federated identity/OIDC. Its Azure federated identity and deployment permissions should remain limited to the required repository, branch, and resources.
 
+## Pulse-to-APIM authentication
+
+Project Pulse authenticates outbound APIM requests with a Microsoft Entra access token acquired through the Container App's managed identity and .NET `DefaultAzureCredential`. `ApimScope` is required at startup. Both the RTA and SERVICEBUS Container Apps need this setting and an app-role assignment because each can send APIM adjudication requests. The app registration used as the APIM API resource should expose the application role `ProjectPulse.Invoke`; assign that role to each Container App managed identity. Do not create a client secret or certificate for Project Pulse.
+
+APIM must validate the token in its inbound policy. Validate the issuer/tenant and audience for the API resource, and require the `roles` claim to contain `ProjectPulse.Invoke`. Restrict accepted client application IDs to the RTA and SERVICEBUS managed-identity client IDs when feasible. Preserve the existing APIM-to-DOCMP backend authentication policy; it is independent of the inbound Pulse token. Full setup steps and a policy example are in [the APIM authentication section of the configuration guide](CONFIGURATION.md#apim-managed-identity-authentication).
+
+RTA/App API bearer authentication remains optional and is not configured by this change.
+
 ## Request history, logs, and sensitive claim data
 
 Request history separates searchable transaction metadata in Azure Table Storage from captured request/response bodies in Blob Storage. Claim retry envelopes can include the original RTA item and transformed APIM request. Direct RTA writeback retry messages contain the translated RTA status payload, including identifiers and response details. Treat the Service Bus queue and dead-letter storage as sensitive data stores.
