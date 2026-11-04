@@ -23,7 +23,7 @@ public static class PollBatchReconciliationPage
 <body>
 <header><div><div class="brand">PROJECT PULSE · BATCH RECONCILIATION</div><div class="sub">Poll-level record accounting and missing-stage investigation</div></div><div class="right"><span class="build">BUILD {{build}} · {{roleName}}</span><span class="user">Signed in as {{user}}</span><nav><a href="/requests.html">Requests</a><a href="/ledger.html">Lifecycle</a><a href="/">Home</a><a href="/.auth/logout">Sign out</a></nav></div></header>
 <main>
-<div class="controls"><input id="search" placeholder="Search record ID, RTA request ID, or poll run ID"><select id="range"><option value="24h">Last 24 hours</option><option value="1h">Last hour</option><option value="7d">Last 7 days</option><option value="all">All history</option></select><button id="refresh">Refresh</button></div>
+<div class="controls"><input id="search" placeholder="Search poll run ID"><label><input id="gaps" type="checkbox"> Potential gaps only</label><select id="range"><option value="24h">Last 24 hours</option><option value="1h">Last hour</option><option value="7d">Last 7 days</option><option value="all">All history</option></select><button id="refresh">Refresh</button></div>
 <div id="summary" class="summary">Loading poll batches…</div><div id="batches"></div>
 </main>
 <script>
@@ -41,9 +41,9 @@ function stage(r,writeEnabled){
  return ['Received; no APIM POST attempt recorded','bad'];
 }
 function render(){
- const query=$('search').value.trim().toLowerCase(), root=$('batches');
+ const query=$('search').value.trim().toLowerCase(), gaps=$('gaps').checked, root=$('batches');
  root.innerHTML='';
- const visible=loaded.filter(b=>!query||b.PollRunId.toLowerCase().includes(query));
+ const visible=loaded.filter(b=>(!query||b.PollRunId.toLowerCase().includes(query))&&(!gaps||b.PendingCount>0||b.RtaWritebackFailureCount>0));
  $('summary').textContent='Showing '+visible.length+' poll batch(es). Each batch starts with the records returned by one RTA/MOCK GET.';
  if(!visible.length){root.innerHTML='<div class="empty">No poll batches match this time range.</div>';return;}
  for(const b of visible){
@@ -71,7 +71,8 @@ async function loadDetail(batch,container){
   if(!response.ok)throw new Error('HTTP '+response.status);
   const detail=await response.json(),s=detail.Summary;
   const search=document.createElement('input');search.placeholder='Filter records by ID or RTA request ID';
-  const onlyGaps=document.createElement('label');onlyGaps.innerHTML='<input type="checkbox" checked> Show potential gaps only';
+  const onlyGaps=document.createElement('label');onlyGaps.innerHTML='<input type="checkbox"> Show potential gaps only';
+  onlyGaps.querySelector('input').checked=s.RtaWritebackEnabled;
   const top=document.createElement('div');top.className='detailTop';
   top.innerHTML='<span>Records from the GET response: '+s.ReceivedCount+' · GET '+esc(s.RtaPullDurationMs??'N/A')+' ms</span>';
   const filter=document.createElement('div');filter.className='recordFilter';filter.append(search,onlyGaps);
@@ -97,7 +98,7 @@ async function refresh(){
   loaded=await data.json();render();
  }catch(e){$('summary').textContent='Could not load poll batches: '+e.message;}
 }
-$('refresh').onclick=refresh;$('range').onchange=refresh;$('search').oninput=render;refresh();
+$('refresh').onclick=refresh;$('range').onchange=refresh;$('search').oninput=render;$('gaps').onchange=render;refresh();
 </script>
 </body></html>
 """;
