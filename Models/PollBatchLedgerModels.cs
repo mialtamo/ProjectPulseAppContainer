@@ -28,6 +28,7 @@ public sealed record PollBatchSummary(
     DateTimeOffset ReceivedAtUtc,
     DateTimeOffset? CompletedAtUtc,
     long? RtaPullDurationMs,
+    bool RtaWritebackEnabled,
     int ReceivedCount,
     int ApimAttemptCount,
     int ApimResponseCount,
