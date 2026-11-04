@@ -36,7 +36,10 @@ public sealed record RequestHistoryItem(
     int? RtaWritebackAttempts = null,
     string? RtaWritebackFailureKind = null,
     string? RtaWritebackFailureMessage = null,
-    DateTimeOffset? RtaWritebackCompletedAtUtc = null);
+    DateTimeOffset? RtaWritebackCompletedAtUtc = null,
+    bool? ApimBearerTokenAttached = null,
+    bool? ApimAuthConfirmed = null,
+    DateTimeOffset? ApimAuthConfirmedAtUtc = null);
 
 public sealed record RequestHistoryPage(
     IReadOnlyList<RequestHistoryItem> Items,
