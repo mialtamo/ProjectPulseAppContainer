@@ -32,7 +32,7 @@ The worker does not overlap polling cycles within a single replica. For the POC,
 
 ### Per-record concurrency
 
-Within an RTA polling batch, `PROCESSING_CONCURRENCY_MODE` selects which stages may overlap: `SEQUENTIAL` keeps APIM/DOCMP and RTA PUTs serial; `RTA_ONLY` overlaps RTA PUTs; `APIM_ONLY` overlaps APIM/DOCMP calls; `FULL` overlaps both. `PROCESSING_MAX_CONCURRENCY` caps each enabled stage (default 5, clamped to 1-100). The limit is per active batch and per replica, so replicas multiply potential downstream concurrency. Poll cycles remain non-overlapping. These settings do not control the Service Bus worker, which currently processes one queued record at a time.
+Both roles use `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`), `PROCESSING_MAX_CONCURRENCY` (default 5), and `PROCESSING_MAX_CONCURRENCY_LIMIT` (default 300). In the RTA role, the mode selects which stages may overlap within the fetched batch; polling cycles remain non-overlapping. In the Service Bus role, `SEQUENTIAL` processes one message at a time and the other modes enable concurrent message processing. Shared gates apply the same APIM and RTA writeback limits across active work. `ServiceBusReceiveBatchSize` limits one receive call, not total in-flight processing. Effective concurrency is per replica, so replicas multiply downstream load. Concurrency configuration does not automatically scale the Container App replicas.
 
 ## Container
 
@@ -54,7 +54,7 @@ The Container App identity needs its own downstream RBAC and permissions.
 
 APIM outage tracking and circuit-breaker state are process-local for the POC and reset when the container restarts or a new revision starts.
 
-Request history is stored in Azure Table and Blob storage. The secured `/ledger.html` view reads the existing request-history API and reconstructs a lifecycle timeline from those stored milestones; it is not a separate event ledger. Search and filters operate over the indexed history API. An APIM send timestamp is recorded before the network POST, so the ledger reports an attempt, not confirmed APIM receipt; missing downstream milestones mean no outcome was stored.
+Request history is stored in Azure Table and Blob storage. The admin-only `/batches.html` view saves a manifest for every successful non-empty RTA GET before processing and tracks per-record APIM attempts/responses, Service Bus buffering, and RTA writeback outcomes. It helps find records with missing or failed milestones; a gap means no outcome was stored and does not by itself prove loss. The secured `/ledger.html` view reads the existing request-history API and reconstructs a lifecycle timeline from those stored milestones; it is not a separate event ledger. Search and filters operate over the indexed history API. An APIM send timestamp is recorded before the network POST, so the ledger reports an attempt, not confirmed APIM receipt; missing downstream milestones mean no outcome was stored.
 
 
 ## Service Bus retry message types
