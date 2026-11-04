@@ -137,7 +137,7 @@ function timeline(x){
   steps.push(step(
     'RETURNED FROM APIM',
     apimAt?(x.HttpStatusCode!=null?'HTTP '+x.HttpStatusCode:'Response received'):'No response recorded',
-    apimAt?(apimDetails.join(' · ')||'Response timestamp recorded.'):'No APIM response time or status is stored.',
+    apimAt?(apimDetails.join(' · ')||'Response timestamp recorded.'):'No APIM response time or status is stored.'+(authEvidence.response?' · '+authEvidence.response:''),
     apimKind));
   const sbAt=x.BufferedToServiceBusAtUtc;
   steps.push(step(
