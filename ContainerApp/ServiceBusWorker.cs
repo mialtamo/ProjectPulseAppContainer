@@ -17,6 +17,7 @@ public sealed class ServiceBusWorker(
     IAppApiClient appApiClient,
     IRetryQueue retryQueue,
     IRtaNotificationClient rtaNotificationClient,
+    IPollBatchLedger pollBatchLedger,
     IOptions<ClaimProcessorOptions> options,
     TelemetryClient telemetry,
     ILogger<ServiceBusWorker> logger) : BackgroundService
@@ -262,6 +263,7 @@ public sealed class ServiceBusWorker(
 
         if (DateTimeOffset.UtcNow >= envelope.RetryUntilUtc)
         {
+            await RecordPollBatchWritebackAsync(envelope, false, null, "RtaWritebackRetryWindowExpired");
             await receiver.DeadLetterMessageAsync(
                 message,
                 "RtaWritebackRetryWindowExpired",
@@ -283,6 +285,7 @@ public sealed class ServiceBusWorker(
 
         if (!_options.RtaStatusWritebackEnabled)
         {
+            await RecordPollBatchWritebackAsync(envelope, false, null, "RtaStatusWritebackDisabled");
             await receiver.DeadLetterMessageAsync(message, "RtaWritebackDisabled", "RTA status writeback is disabled in this Service Bus role configuration.", cancellationToken);
             return;
         }
@@ -308,6 +311,7 @@ public sealed class ServiceBusWorker(
             var result = await appApiClient.WriteStatusAsync(envelope.CorrelationId, envelope.WritebackPayload, cancellationToken);
             if (result.Succeeded == true)
             {
+                await RecordPollBatchWritebackAsync(envelope, true, result.HttpStatusCode, "WritebackCompleted");
                 await receiver.CompleteMessageAsync(message, cancellationToken);
                 telemetry.TrackEvent("RtaWritebackRetryCompleted", new Dictionary<string, string>
                 {
@@ -318,7 +322,8 @@ public sealed class ServiceBusWorker(
                 return;
             }
 
-            await ScheduleOrDeadLetterAsync(receiver, message, envelope, cancellationToken);
+            await RecordPollBatchWritebackAsync(envelope, null, result.HttpStatusCode, "RtaWritebackRetrying");
+            await ScheduleOrDeadLetterAsync(receiver, message, envelope, cancellationToken, result.HttpStatusCode);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -328,6 +333,7 @@ public sealed class ServiceBusWorker(
         {
             logger.LogError(ex, "Direct RTA writeback attempt threw. CorrelationId={CorrelationId}", envelope.CorrelationId);
             telemetry.TrackException(ex);
+            await RecordPollBatchWritebackAsync(envelope, null, null, "RtaWritebackRetrying");
             await ScheduleOrDeadLetterAsync(receiver, message, envelope, cancellationToken);
         }
     }
@@ -336,13 +342,15 @@ public sealed class ServiceBusWorker(
         ServiceBusReceiver receiver,
         ServiceBusReceivedMessage message,
         RtaWritebackRetryEnvelope envelope,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? lastHttpStatusCode = null)
     {
         var remaining = envelope.RetryUntilUtc - DateTimeOffset.UtcNow;
         var delaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt, 0, 10)));
         var delay = TimeSpan.FromSeconds(delaySeconds);
         if (remaining <= delay)
         {
+            await RecordPollBatchWritebackAsync(envelope, false, lastHttpStatusCode, "RtaWritebackRetryWindowExpired");
             await receiver.DeadLetterMessageAsync(
                 message,
                 "RtaWritebackRetryWindowExpired",
@@ -381,6 +389,7 @@ public sealed class ServiceBusWorker(
         {
             logger.LogCritical(ex, "Could not schedule RTA writeback retry; moving message to DLQ. CorrelationId={CorrelationId}", envelope.CorrelationId);
             telemetry.TrackException(ex);
+            await RecordPollBatchWritebackAsync(envelope, false, lastHttpStatusCode, "RtaWritebackRetryScheduleFailed");
             await receiver.DeadLetterMessageAsync(
                 message,
                 "RtaWritebackRetryScheduleFailed",
@@ -428,6 +437,38 @@ public sealed class ServiceBusWorker(
             message + (exception is null ? string.Empty : $" Error: {exception.GetType().Name}: {exception.Message}"),
             attributes,
             cancellationToken);
+    }
+
+    private async Task RecordPollBatchWritebackAsync(
+        RtaWritebackRetryEnvelope envelope,
+        bool? succeeded,
+        int? httpStatusCode,
+        string reason)
+    {
+        if (string.IsNullOrWhiteSpace(envelope.PollRunId) || envelope.PollRecordOrdinal is not { } ordinal)
+        {
+            return;
+        }
+
+        try
+        {
+            await pollBatchLedger.RecordRtaWritebackAsync(
+                envelope.PollRunId,
+                ordinal,
+                succeeded,
+                httpStatusCode,
+                reason,
+                DateTimeOffset.UtcNow,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Could not update poll batch {PollRunId} record {Ordinal} with RTA writeback retry outcome.",
+                envelope.PollRunId,
+                ordinal);
+        }
     }
 
 }
