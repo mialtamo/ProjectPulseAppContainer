@@ -9,6 +9,7 @@ public interface IPollBatchLedger
         string source,
         DateTimeOffset receivedAtUtc,
         long? rtaPullDurationMs,
+        bool rtaWritebackEnabled,
         IReadOnlyList<PollBatchRecordSeed> records,
         CancellationToken cancellationToken);
 
