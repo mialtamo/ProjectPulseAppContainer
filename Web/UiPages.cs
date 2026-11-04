@@ -868,6 +868,7 @@ function lifecycleRun(x,index){
   }else if(sent){
     responseState='Waiting / no response';responseTone='waiting';
     responseDetails.push('No APIM response is stored for this run.');
+    if(authEvidence.response)responseDetails.push(esc(authEvidence.response));
   }else{
     responseDetails.push('No response timestamp or HTTP status is stored.');
   }
