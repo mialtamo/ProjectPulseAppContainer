@@ -130,7 +130,6 @@ function timeline(x){
   if(x.ApimRoundTripDurationMs!=null)apimDetails.push('APIM round trip '+x.ApimRoundTripDurationMs+' ms');
   if(x.BusinessResponseCode&&x.BusinessResponseCode!=='BatchCompleted')apimDetails.push(x.BusinessResponseCode);
   if(x.Reason&&x.Reason!=='BatchCompleted'&&!apimDetails.includes(x.Reason))apimDetails.push(x.Reason);
-  const authEvidence=apimAuthEvidence(x);
   if(apimAt&&authEvidence.response)apimDetails.push(authEvidence.response);
   const businessFailure=String(x.Reason||'').startsWith('ApimJsonError:');
   const apimKind=!apimAt?'wait':(x.HttpStatusCode>=400||businessFailure?'fail':x.ApimAuthConfirmed===false?'wait':'ok');
