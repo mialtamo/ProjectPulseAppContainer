@@ -44,7 +44,7 @@ Project Pulse uses each Container App's managed identity to get an Entra bearer 
 
 Create the retry queue, then configure the **same** `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on both Container Apps. The RTA app's managed identity needs **Azure Service Bus Data Sender** on the queue. The Service Bus app's identity needs **Azure Service Bus Data Receiver** and **Azure Service Bus Data Sender**, because a retry can be requeued. Project Pulse uses managed identity through `.NET DefaultAzureCredential`; no Service Bus connection string or SAS key is needed.
 
-The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It requires RTA settings for direct status writebacks. Claim-replay messages go through APIM/DOCMP; stored RTA-writeback retry messages go directly to RTA and do not require APIM health. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
+The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It requires the same `PROCESSING_CONCURRENCY_MODE`, `PROCESSING_MAX_CONCURRENCY`, and `PROCESSING_MAX_CONCURRENCY_LIMIT` settings as the RTA app when you want it to process multiple messages concurrently. `SEQUENTIAL` is the default; choose another mode to enable concurrency. It requires RTA settings for direct status writebacks. Claim-replay messages go through APIM/DOCMP; stored RTA-writeback retry messages go directly to RTA and do not require APIM health. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
 
 ## Why Container Apps
 
@@ -152,7 +152,7 @@ The admin-only `/ledger.html` page presents a searchable lifecycle view of store
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
 
-The RTA role can process records within a fetched batch using `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`) and `PROCESSING_MAX_CONCURRENCY`. These settings affect per-record APIM/DOCMP calls and/or RTA status PUTs; they do not overlap polling cycles. The limit applies per active batch and per replica, so replica counts multiply downstream load. They do not control the Service Bus worker, which currently handles one queued record at a time.
+Both runtime roles use `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`), `PROCESSING_MAX_CONCURRENCY`, and `PROCESSING_MAX_CONCURRENCY_LIMIT`. In the RTA role, the mode controls per-record APIM/DOCMP and RTA status PUT concurrency within the fetched batch; polling cycles do not overlap. In the Service Bus role, `SEQUENTIAL` processes one message at a time, while the other modes allow concurrent messages with shared APIM and RTA writeback gates. The requested concurrency defaults to 5 and is clamped by the configurable limit, which defaults to 300. Effective limits apply per replica, so replicas multiply downstream load. `ServiceBusReceiveBatchSize` controls each receive operation, not the total number of messages in flight.
 
 The request-history page also lets admins delete history created in the last 24 hours, last 7 days, last 30 days, or all time. The page previews the matching record count and requires confirmation, then shows progress while cleanup runs in the background. The progress endpoint reports persisted operation status, phase, and cleanup-item counts so the browser can poll without waiting on a long-running delete request. Cleanup removes Azure Table history rows and their recent-history index entries in parallel transactions, scans the payload container once, and deletes selected batch payload files with bounded parallelism only when no retained history row references the batch. Progress separately shows how many history records and payload files have been removed. It does not delete Service Bus messages or platform logs.
 
@@ -315,12 +315,7 @@ Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
 - `APIM_ONLY`: APIM/DOCMP calls may overlap; RTA status PUTs stay serial.
 - `FULL`: both APIM/DOCMP and RTA status PUTs may overlap.
 
-`PROCESSING_MAX_CONCURRENCY` sets the per-batch concurrency (default `5`). `PROCESSING_MAX_CONCURRENCY_LIMIT` sets its configurable upper bound (default `300`); the effective concurrency is clamped between 1 and that limit. Raise both values when intentionally increasing concurrency. For batches larger than the configured concurrency, remaining records wait while the configured number are processed concurrently. APIM
-concurrency also increases the number of simultaneous requests that can reach DOCMP through APIM;
-use it only after checking APIM and DOCMP capacity. RTA concurrency increases simultaneous status
-PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
-so multiple replicas add to the aggregate load. The Service Bus worker handles one queued record
-at a time.
+`PROCESSING_MAX_CONCURRENCY` sets the requested concurrency (default `5`). `PROCESSING_MAX_CONCURRENCY_LIMIT` sets its configurable upper bound (default `300`); the effective value is clamped from 1 through that limit. Raise both values when intentionally increasing concurrency. For batches larger than the configured concurrency, remaining records wait while the configured number are processed concurrently. APIM concurrency increases simultaneous requests that can reach DOCMP through APIM; RTA concurrency increases simultaneous status PUTs. The Service Bus role uses the same mode and limits, with shared gates across active messages. `ServiceBusReceiveBatchSize` controls one receive call and does not cap total in-flight work. Limits apply per replica, so replicas multiply aggregate downstream load.
 
 ### Request-history payload capture
 

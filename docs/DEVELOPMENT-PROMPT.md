@@ -17,7 +17,9 @@ The POC should normally use one Container App replica.
 - existing Project Pulse processing behavior
 - APIM response validation
 - RTA writeback behavior
-- Service Bus fallback
+- Service Bus fallback and retry semantics (claim replay versus direct RTA writeback retry)
+- Shared concurrency gates for RTA polling and Service Bus message processing
+- Poll-batch reconciliation milestones and the `/batches.html` gap-investigation view
 - request-history persistence
 - managed-identity authentication
 - Application Insights telemetry

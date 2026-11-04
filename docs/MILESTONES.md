@@ -1,6 +1,6 @@
 # Project Pulse Milestones
 
-Statuses reflect the repository and POC evidence reviewed on 2026-11-02. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
+Statuses reflect the repository and POC evidence reviewed on 2026-11-03. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
 
 ## M0 - Baseline and development framework — Complete
 
@@ -42,7 +42,7 @@ Remaining: production security review, least-privilege identity/access checks, n
 
 ## M7 - Observability and operations — In progress
 
-Request history, per-batch stage timings, selectable average windows, time-range/search counts, processor-role visibility, status-aware delay hints, Application Insights telemetry, and UI navigation are present. The timing view includes an `Other processing` remainder so stage durations reconcile to end-to-end time. The admin-only lifecycle ledger filters by time range, status, destination, and role; searches IDs; paginates matching attempts; and reconstructs stage timelines from stored request-history milestones. It clearly distinguishes an APIM attempt timestamp from proof of APIM receipt.
+Request history, per-batch stage timings, selectable average windows, time-range/search counts, processor-role visibility, status-aware delay hints, Application Insights telemetry, and UI navigation are present. The admin-only `/batches.html` reconciliation view starts from each successful non-empty RTA poll response and identifies records with missing or failed processing stages. The timing view includes an `Other processing` remainder so stage durations reconcile to end-to-end time. The admin-only lifecycle ledger filters by time range, status, destination, and role; searches IDs; paginates matching attempts; and reconstructs stage timelines from stored request-history milestones. It clearly distinguishes an APIM attempt timestamp from proof of APIM receipt.
 
 Remaining: validate metrics and explanations against real environment logs, define actionable alerts and automated retention, and complete operational runbooks. Admin-triggered history cleanup is available in the secured UI; Table deletion is batched and parallel, while blob cleanup uses a single container scan and bounded parallel deletes. Progress separately counts history rows and payload files. Delay hints are evidence-based possibilities, not automatic root-cause determinations.
 
@@ -54,7 +54,7 @@ Deliverables: durable state if required, restart/recovery validation, concurrenc
 
 ## M9 - Performance and scale — In progress
 
-Azure Container Apps with a continuous worker is the selected POC execution model. The RTA role has configurable per-record concurrency modes and limits; the Service Bus role remains one-message-at-a-time. The UI includes timing averages and configurable date ranges.
+Azure Container Apps with a continuous worker is the selected POC execution model. Both RTA and SERVICEBUS roles use configurable concurrency modes and a configurable concurrency ceiling (default limit 300). The Service Bus mode defaults to sequential; other modes enable concurrent message processing with shared APIM and RTA gates. The UI includes timing averages, configurable date ranges, and batch-level reconciliation.
 
 Remaining: load and soak testing, throughput/bottleneck analysis, scale behavior, and a production sizing decision. Configurable concurrency is available but has not established safe production throughput or scale-out limits.
 

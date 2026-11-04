@@ -33,6 +33,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 - `PROJECT_PULSE_ROLE`: polling or Service Bus runtime role.
 - `POLL_INTERVAL_SECONDS`: RTA polling cadence, subject to application bounds.
 - RTA paging settings control page size and number of pages; mock-mode `maxRecords` is separate.
+- `PROCESSING_CONCURRENCY_MODE`, `PROCESSING_MAX_CONCURRENCY`, and `PROCESSING_MAX_CONCURRENCY_LIMIT` configure processing concurrency for both runtime roles. Service Bus defaults to one message at a time; its other modes enable concurrent message processing through shared APIM and RTA gates.
 - APIM endpoint, credentials/token validation, and response mapping are configured independently.
 - RTA writeback is controlled by its writeback setting and target API configuration.
 - Azure Table Storage stores searchable history metadata; Blob Storage holds captured payload bodies.
@@ -46,7 +47,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 
 For `INITIAL_REQUEST`, Project Pulse reads RTA request fields from `INITIAL_REQUEST_METADATA`, then translates the DOCMP response's root business fields into `INITIAL_REQUEST_RESPONSE`. The request-side RTA metadata field is not used to parse the DOCMP response. `UPDATE_REQUEST_RESPONSE` is set to null. Project Pulse sends the RTA PUT envelope with the request type, success status, null substatus, and process timestamp.
 
-The envelope includes an application-created `API_CALL_HISTORY` object. It copies `REQUEST_ID`, `CORRELATION_ID`, and `IDEMPOTENCY_KEY` from the individual RTA item and leaves `EXTERNAL_CORRELATION_ID`, query parameters, and error fields null. `HTTP_METHOD` records the APIM `POST`; `API_URL` is the configured APIM base URL normalized with a trailing slash; and `API_ENDPOINT` is the configured adjudication path without leading or trailing slashes. `REQUEST_HEADER` (singular) contains the serialized headers received from APIM, with the configured response-token value redacted. `REQUEST_BODY` is the raw individual RTA item as a JSON string, `RESPONSE_BODY` is the raw APIM response as a JSON string, and response status and APIM round-trip duration are recorded.
+The envelope includes an application-created `API_CALL_HISTORY` object. It copies `REQUEST_ID`, `CORRELATION_ID`, and `IDEMPOTENCY_KEY` from the individual RTA item and leaves `EXTERNAL_CORRELATION_ID`, query parameters, and error fields null. `HTTP_METHOD` records the APIM `POST`; `API_URL` is the configured APIM base URL normalized with a trailing slash; and `API_ENDPOINT` is the configured adjudication path without leading or trailing slashes. `REQUEST_HEADER` (singular) contains the serialized headers received from APIM, with the configured response-token value redacted. `REQUEST_BODY` is the exact mapped JSON body Project Pulse sent to APIM, serialized as a JSON string. The original RTA item is retained separately in request history. `RESPONSE_BODY` is the raw APIM response as a JSON string, and response status and APIM round-trip duration are recorded.
 
 A multi-item polling envelope is not used as the per-record request payload. Translation and successful APIM response receipt do not guarantee that an RTA PUT succeeds; the target environment's endpoint and contract must be validated.
 
@@ -61,6 +62,8 @@ The secured request-history pages show transaction status, destination, processo
 - End-to-end processing
 
 The averages view supports preset and custom time ranges. The request list supports 5-minute, 1-hour, 24-hour, 7-day, and all-time filters; the displayed match count reflects the selected range and search, while the loaded count reflects pagination. `Other processing` reports end-to-end elapsed time less the measured RTA pull, translation, APIM round trip, and RTA writeback stages. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
+
+The admin-only `/batches.html` page reconciles each successful non-empty RTA GET against APIM attempts/responses, Service Bus buffering, and RTA writeback outcomes. It shows stage counts and record-level missing or failed stages. A missing milestone is an investigation lead, not proof of data loss.
 
 The admin-only `/ledger.html` page adds a lifecycle-oriented view over the same stored request-history API. It filters by time range, status, destination, and processor role; searches correlation/unique ID, RTA request ID, and batch ID; and reports total matches separately from the current page. Its timeline shows only stored milestones and intentionally omits payload bodies. The APIM timestamp marks when Project Pulse recorded an attempt before making the POST, not proof of receipt by APIM; a missing later outcome means that outcome is not present in stored history.
 
