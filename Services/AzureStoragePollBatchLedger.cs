@@ -221,6 +221,7 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
             batch.GetDateTimeOffset("ReceivedAtUtc") ?? DateTimeOffset.MinValue,
             batch.GetDateTimeOffset("CompletedAtUtc"),
             batch.GetInt64("RtaPullDurationMs"),
+            writebackEnabled,
             records.Count,
             records.Count(x => x.ApimAttemptedAtUtc is not null),
             records.Count(x => x.ApimResponseAtUtc is not null),
