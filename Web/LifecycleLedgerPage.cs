@@ -95,6 +95,13 @@ function stateClass(ok,waiting=false){return ok?'ok':waiting?'wait':'fail'}
 function roleName(value){return value==='SERVICEBUS'?'Service Bus Worker':value==='RTA'?'RTA Poller':value||'Unknown'}
 function statusClass(value){if(['Completed'].includes(value))return 'good';if(['SentToApim','Buffered'].includes(value))return 'warn';return 'bad'}
 function step(title,outcome,detail,kind=''){return '<article class="step '+kind+'"><h3>'+esc(title)+'</h3><div class="outcome">'+esc(outcome)+'</div><p>'+esc(detail)+'</p></article>'}
+function apimAuthEvidence(x){
+  if(x.ApimAuthConfirmed===true)return {sent:'🔑 Bearer token attached',response:'🔑 APIM confirmed Entra token validation'};
+  if(x.ApimAuthConfirmed===false)return {sent:x.ApimBearerTokenAttached===true?'🔑 Bearer token attached':'🔑❌ No bearer token attached',response:'🔑❌ APIM did not return the auth-confirmation header'};
+  if(x.ApimBearerTokenAttached===true)return {sent:'🔑 Bearer token attached',response:'🔑 Waiting for APIM auth confirmation'};
+  if(x.ApimBearerTokenAttached===false)return {sent:'🔑❌ No bearer token attached',response:'🔑❌ Token attachment failed'};
+  return {sent:'',response:''};
+}
 function timeline(x){
   const source=String(x.InputSource||'').toUpperCase();
   const sourceLabel=source==='MOCK'?'MOCK API':source==='RTA'?'RTA':'SOURCE';
@@ -108,9 +115,11 @@ function timeline(x){
   const sent=x.SentToApimAtUtc;
   const apimAt=x.ApimResponseAtUtc;
   const postOutcome=apimAt?'POST sent':sent?'Attempt logged':'No POST recorded';
-  const postDetail=apimAt
+  const authEvidence=apimAuthEvidence(x);
+  const postDetail=(apimAt
     ?'Started '+stamp(sent||apimAt)
-    :sent?'Attempt logged '+stamp(sent)+' · no APIM response recorded':'No APIM POST attempt is stored.';
+    :sent?'Attempt logged '+stamp(sent)+' · no APIM response recorded':'No APIM POST attempt is stored.')+
+    (authEvidence.sent?' · '+authEvidence.sent:'');
   steps.push(step(
     'SENT TO APIM / DOCMP',
     postOutcome,
@@ -121,12 +130,13 @@ function timeline(x){
   if(x.ApimRoundTripDurationMs!=null)apimDetails.push('APIM round trip '+x.ApimRoundTripDurationMs+' ms');
   if(x.BusinessResponseCode&&x.BusinessResponseCode!=='BatchCompleted')apimDetails.push(x.BusinessResponseCode);
   if(x.Reason&&x.Reason!=='BatchCompleted'&&!apimDetails.includes(x.Reason))apimDetails.push(x.Reason);
+  if(apimAt&&authEvidence.response)apimDetails.push(authEvidence.response);
   const businessFailure=String(x.Reason||'').startsWith('ApimJsonError:');
-  const apimKind=!apimAt?'wait':(x.HttpStatusCode>=400||businessFailure?'fail':'ok');
+  const apimKind=!apimAt?'wait':(x.HttpStatusCode>=400||businessFailure?'fail':x.ApimAuthConfirmed===false?'wait':'ok');
   steps.push(step(
     'RETURNED FROM APIM',
     apimAt?(x.HttpStatusCode!=null?'HTTP '+x.HttpStatusCode:'Response received'):'No response recorded',
-    apimAt?(apimDetails.join(' · ')||'Response timestamp recorded.'):'No APIM response time or status is stored.',
+    apimAt?(apimDetails.join(' · ')||'Response timestamp recorded.'):'No APIM response time or status is stored.'+(authEvidence.response?' · '+authEvidence.response:''),
     apimKind));
   const sbAt=x.BufferedToServiceBusAtUtc;
   steps.push(step(

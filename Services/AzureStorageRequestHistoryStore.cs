@@ -207,6 +207,50 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         }
     }
 
+    public async Task RecordApimAuthStatusAsync(
+        string batchId,
+        IReadOnlyList<string> uniqueIds,
+        bool? bearerTokenAttached,
+        bool? apimAuthConfirmed,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+
+        for (var i = 0; i < uniqueIds.Count; i++)
+        {
+            var rowKey = BuildRowKey(batchId, i);
+            RequestHistoryEntity entity;
+            try
+            {
+                entity = (await _table.GetEntityAsync<RequestHistoryEntity>(
+                    PartitionKeyValue,
+                    rowKey,
+                    cancellationToken: cancellationToken)).Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                continue;
+            }
+
+            var previousIndexRowKey = BuildRecentIndexRowKey(entity.UpdatedAtUtc, entity.RowKey);
+            if (bearerTokenAttached is { } attached)
+            {
+                entity.ApimBearerTokenAttached = attached;
+            }
+            if (apimAuthConfirmed is { } confirmed)
+            {
+                entity.ApimAuthConfirmed = confirmed;
+                entity.ApimAuthConfirmedAtUtc = recordedAtUtc;
+            }
+
+            entity.UpdatedAtUtc = recordedAtUtc;
+            entity.ProcessingRole = _processingRole;
+            await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+            await UpsertRecentIndexAsync(entity, previousIndexRowKey, cancellationToken);
+        }
+    }
+
     public async Task RecordWritebackTimingAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
@@ -1305,7 +1349,10 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             entity.RtaWritebackAttempts,
             entity.RtaWritebackFailureKind,
             entity.RtaWritebackFailureMessage,
-            entity.RtaWritebackCompletedAtUtc);
+            entity.RtaWritebackCompletedAtUtc,
+            entity.ApimBearerTokenAttached,
+            entity.ApimAuthConfirmed,
+            entity.ApimAuthConfirmedAtUtc);
 
     private async Task<string?> SaveRtaResponsePayloadsAsync(
         string batchId,
@@ -1517,7 +1564,10 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             RtaWritebackFailureKind = entity.RtaWritebackFailureKind,
             RtaWritebackFailureMessage = entity.RtaWritebackFailureMessage,
             RtaResponsePayloadBlobs = entity.RtaResponsePayloadBlobs,
-            PayloadLoggingEnabled = entity.PayloadLoggingEnabled
+            PayloadLoggingEnabled = entity.PayloadLoggingEnabled,
+            ApimBearerTokenAttached = entity.ApimBearerTokenAttached,
+            ApimAuthConfirmed = entity.ApimAuthConfirmed,
+            ApimAuthConfirmedAtUtc = entity.ApimAuthConfirmedAtUtc
         };
 
     private static string BuildRecentIndexRowKey(DateTimeOffset updatedAtUtc, string recordId)
@@ -1608,6 +1658,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public long? ApimRoundTripDurationMs { get; set; }
         public long? RtaWritebackDurationMs { get; set; }
         public DateTimeOffset? RtaWritebackCompletedAtUtc { get; set; }
+        public bool? ApimBearerTokenAttached { get; set; }
+        public bool? ApimAuthConfirmed { get; set; }
+        public DateTimeOffset? ApimAuthConfirmedAtUtc { get; set; }
         public long? EndToEndDurationMs { get; set; }
         public long? OtherProcessingDurationMs { get; set; }
         public bool? RtaWritebackEnabled { get; set; }

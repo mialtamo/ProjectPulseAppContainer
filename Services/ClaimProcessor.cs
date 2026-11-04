@@ -257,7 +257,36 @@ public sealed class ClaimProcessor(
         {
             await apimRequestGate.WaitAsync(cancellationToken);
             apimRequestGateHeld = true;
-            await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
+            try
+            {
+                await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                await TryRecordHistoryAsync(
+                    () => requestHistoryStore.RecordApimAuthStatusAsync(
+                        batchId,
+                        correlationIds,
+                        false,
+                        null,
+                        DateTimeOffset.UtcNow,
+                        CancellationToken.None),
+                    "APIM bearer-token acquisition failure");
+                throw;
+            }
+
+            var bearerTokenAttached =
+                string.Equals(request.Headers.Authorization?.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(request.Headers.Authorization?.Parameter);
+            await TryRecordHistoryAsync(
+                () => requestHistoryStore.RecordApimAuthStatusAsync(
+                    batchId,
+                    correlationIds,
+                    bearerTokenAttached,
+                    null,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken),
+                "APIM bearer-token attachment");
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ApimRequestTimeoutSeconds));
@@ -269,6 +298,18 @@ public sealed class ClaimProcessor(
             apimRequestGate.Release();
             apimRequestGateHeld = false;
             var apimResponseReceivedAtUtc = DateTimeOffset.UtcNow;
+            var authConfirmed = response.Headers.TryGetValues("X-Pulse-Auth-Validated", out var authConfirmationValues)
+                && authConfirmationValues.Any(value => string.Equals(value.Trim(), "true", StringComparison.OrdinalIgnoreCase));
+            await TryRecordHistoryAsync(
+                () => requestHistoryStore.RecordApimAuthStatusAsync(
+                    batchId,
+                    correlationIds,
+                    null,
+                    authConfirmed,
+                    apimResponseReceivedAtUtc,
+                    cancellationToken),
+                "APIM bearer-token validation confirmation");
+
             var statusCode = (int)response.StatusCode;
             var hasApimError = TryParseApimError(responseJson, statusCode, out var apimError);
             var isDocmpErrorEnvelope = hasApimError && apimError.IsDocmpErrorEnvelope;
