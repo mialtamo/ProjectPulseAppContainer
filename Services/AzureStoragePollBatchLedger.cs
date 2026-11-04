@@ -225,6 +225,75 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
         return new PollBatchDetail(summary, records);
     }
 
+    public async Task<int> DeleteForCleanupAsync(
+        DateTimeOffset? receivedAfterUtc,
+        CancellationToken cancellationToken)
+    {
+        await _table.CreateIfNotExistsAsync(cancellationToken);
+        var pollRunIds = new HashSet<string>(StringComparer.Ordinal);
+        var entities = new List<TableEntity>();
+
+        await foreach (var batch in _table.QueryAsync<TableEntity>(
+            x => x.PartitionKey == BatchPartition,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            var receivedAtUtc = batch.GetDateTimeOffset("ReceivedAtUtc");
+            if (receivedAfterUtc is null || receivedAtUtc is null || receivedAtUtc >= receivedAfterUtc.Value)
+            {
+                pollRunIds.Add(batch.RowKey);
+                entities.Add(new TableEntity(batch.PartitionKey, batch.RowKey) { ETag = ETag.All });
+            }
+        }
+
+        if (pollRunIds.Count == 0)
+        {
+            return 0;
+        }
+
+        await foreach (var record in _table.QueryAsync<TableEntity>(
+            x => x.PartitionKey == RecordPartition,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (pollRunIds.Contains(record.GetString("PollRunId") ?? string.Empty))
+            {
+                entities.Add(new TableEntity(record.PartitionKey, record.RowKey) { ETag = ETag.All });
+            }
+        }
+
+        await foreach (var index in _table.QueryAsync<TableEntity>(
+            x => x.PartitionKey == BatchIndexPartition,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            if (pollRunIds.Contains(index.GetString("PollRunId") ?? string.Empty))
+            {
+                entities.Add(new TableEntity(index.PartitionKey, index.RowKey) { ETag = ETag.All });
+            }
+        }
+
+        foreach (var partition in entities.GroupBy(x => x.PartitionKey))
+        {
+            var batch = new List<TableTransactionAction>(100);
+            foreach (var entity in partition)
+            {
+                batch.Add(new TableTransactionAction(TableTransactionActionType.Delete, entity));
+                if (batch.Count == 100)
+                {
+                    await _table.SubmitTransactionAsync(batch, cancellationToken);
+                    batch.Clear();
+                }
+            }
+            if (batch.Count > 0)
+            {
+                await _table.SubmitTransactionAsync(batch, cancellationToken);
+            }
+        }
+
+        return entities.Count;
+    }
+
     private async Task UpdateRecordAsync(
         string pollRunId,
         int ordinal,
