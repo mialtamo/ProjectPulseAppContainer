@@ -1661,7 +1661,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         public bool? ApimBearerTokenAttached { get; set; }
         public bool? ApimAuthConfirmed { get; set; }
         public DateTimeOffset? ApimAuthConfirmedAtUtc { get; set; }
-        public long? EndToEndDurationMs { get; set;
+        public long? EndToEndDurationMs { get; set; }
         public long? OtherProcessingDurationMs { get; set; }
         public bool? RtaWritebackEnabled { get; set; }
         public bool? RtaWritebackAttempted { get; set; }
