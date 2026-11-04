@@ -105,7 +105,7 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
     public Task RecordRtaWritebackAsync(
         string pollRunId,
         int ordinal,
-        bool succeeded,
+        bool? succeeded,
         int? httpStatusCode,
         string? reason,
         DateTimeOffset completedAtUtc,
@@ -116,7 +116,7 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
             entity["RtaWritebackSucceeded"] = succeeded;
             entity["RtaWritebackHttpStatusCode"] = httpStatusCode;
             entity["RtaWritebackReason"] = Truncate(reason);
-            entity["ProcessingStage"] = succeeded ? "RtaWritebackSucceeded" : "RtaWritebackFailed";
+            entity["ProcessingStage"] = succeeded is null ? "RtaWritebackPending" : succeeded.Value ? "RtaWritebackSucceeded" : "RtaWritebackFailed";
         }, cancellationToken);
 
     public Task RecordProcessingCompletedAsync(
