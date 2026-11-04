@@ -18,6 +18,7 @@ public sealed class ClaimProcessor(
     IRetryQueue retryQueue,
     IRtaNotificationClient rtaNotificationClient,
     IRequestHistoryStore requestHistoryStore,
+    IPollBatchLedger pollBatchLedger,
     PayloadTransformer transformer,
     OutboundCircuitBreaker circuitBreaker,
     ApimOutageTracker outageTracker,
@@ -33,7 +34,8 @@ public sealed class ClaimProcessor(
         IReadOnlyList<JsonElement> claims,
         string reason,
         IReadOnlyList<string> rtaResponsePayloads,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? pollRunId = null)
     {
         if (claims.Count == 0)
         {
@@ -57,6 +59,7 @@ public sealed class ClaimProcessor(
             throw;
         }
 
+        var bufferedAtUtc = DateTimeOffset.UtcNow;
         await TryRecordHistoryAsync(
             () => requestHistoryStore.RecordServiceBusAsync(
                 batchId,
@@ -64,9 +67,23 @@ public sealed class ClaimProcessor(
                 rtaRequestIds,
                 rtaResponsePayloads,
                 reason,
-                DateTimeOffset.UtcNow,
+                bufferedAtUtc,
                 cancellationToken),
             "service bus buffer");
+        if (!string.IsNullOrWhiteSpace(pollRunId))
+        {
+            for (var index = 0; index < claims.Count; index++)
+            {
+                await TryRecordHistoryAsync(
+                    () => pollBatchLedger.RecordServiceBusBufferedAsync(
+                        pollRunId,
+                        index,
+                        reason,
+                        bufferedAtUtc,
+                        cancellationToken),
+                    "poll batch Service Bus buffering");
+            }
+        }
 
         telemetry.TrackEvent("ClaimBatchBufferedToServiceBus", new Dictionary<string, string>
         {
@@ -88,7 +105,8 @@ public sealed class ClaimProcessor(
         CancellationToken cancellationToken,
         DateTimeOffset? recordsReceivedAtUtc = null,
         long? rtaPullDurationMs = null,
-        RetryEnvelope? retryEnvelope = null)
+        RetryEnvelope? retryEnvelope = null,
+        string? pollRunId = null)
     {
         var mode = _options.GetProcessingConcurrencyMode();
         var maxConcurrency = mode == ProcessingConcurrencyMode.Sequential
@@ -116,7 +134,7 @@ public sealed class ClaimProcessor(
             },
             async (index, itemCancellationToken) =>
             {
-                resultsByClaim[index] = await ProcessSingleClaimAsync(
+                var result = await ProcessSingleClaimAsync(
                     [claims[index]],
                     rtaResponsePayloads,
                     itemCancellationToken,
@@ -125,6 +143,34 @@ public sealed class ClaimProcessor(
                     apimRequestGate,
                     rtaWritebackGate,
                     retryEnvelope);
+                resultsByClaim[index] = result;
+                var effectivePollRunId = pollRunId;
+                if (!string.IsNullOrWhiteSpace(effectivePollRunId))
+                {
+                    foreach (var item in result)
+                    {
+                        if (item.Disposition is ClaimProcessingDisposition.QueuedForRetry or ClaimProcessingDisposition.QueuedForWritebackRetry)
+                        {
+                            await TryRecordHistoryAsync(
+                                () => pollBatchLedger.RecordServiceBusBufferedAsync(
+                                    effectivePollRunId,
+                                    index,
+                                    item.Reason,
+                                    DateTimeOffset.UtcNow,
+                                    itemCancellationToken),
+                                "poll batch retry buffering");
+                        }
+                        await TryRecordHistoryAsync(
+                            () => pollBatchLedger.RecordProcessingCompletedAsync(
+                                effectivePollRunId,
+                                index,
+                                item.Disposition.ToString(),
+                                item.Reason,
+                                DateTimeOffset.UtcNow,
+                                itemCancellationToken),
+                            "poll batch processing completion");
+                    }
+                }
             });
 
         return resultsByClaim
@@ -141,7 +187,9 @@ public sealed class ClaimProcessor(
         long? rtaPullDurationMs,
         SemaphoreSlim apimRequestGate,
         SemaphoreSlim rtaWritebackGate,
-        RetryEnvelope? retryEnvelope)
+        RetryEnvelope? retryEnvelope,
+        string? pollRunId,
+        int pollRecordOrdinal)
     {
         if (claims.Count == 0)
         {
@@ -212,6 +260,7 @@ public sealed class ClaimProcessor(
 
         var outboundPayloadJson = transformedClaims[0].ToJsonString();
 
+        var apimAttemptedAtUtc = DateTimeOffset.UtcNow;
         await TryRecordHistoryAsync(
             () => requestHistoryStore.RecordApimAttemptAsync(
                 batchId,
@@ -222,9 +271,19 @@ public sealed class ClaimProcessor(
                 pipelineStartedAtUtc,
                 rtaPullDurationMs,
                 translationStopwatch.ElapsedMilliseconds,
-                DateTimeOffset.UtcNow,
+                apimAttemptedAtUtc,
                 cancellationToken),
             "APIM request");
+        if (!string.IsNullOrWhiteSpace(pollRunId))
+        {
+            await TryRecordHistoryAsync(
+                () => pollBatchLedger.RecordApimAttemptAsync(
+                    pollRunId,
+                    pollRecordOrdinal,
+                    apimAttemptedAtUtc,
+                    cancellationToken),
+                "poll batch APIM attempt");
+        }
 
         if (_options.ShouldCaptureRequestHistoryPayloads())
         {
@@ -298,6 +357,17 @@ public sealed class ClaimProcessor(
             apimRequestGate.Release();
             apimRequestGateHeld = false;
             var apimResponseReceivedAtUtc = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrWhiteSpace(pollRunId))
+            {
+                await TryRecordHistoryAsync(
+                    () => pollBatchLedger.RecordApimResponseAsync(
+                        pollRunId,
+                        pollRecordOrdinal,
+                        (int)response.StatusCode,
+                        apimResponseReceivedAtUtc,
+                        cancellationToken),
+                    "poll batch APIM response");
+            }
             var authConfirmed = response.Headers.TryGetValues("X-Pulse-Auth-Validated", out var authConfirmationValues)
                 && authConfirmationValues.Any(value => string.Equals(value.Trim(), "true", StringComparison.OrdinalIgnoreCase));
             await TryRecordHistoryAsync(
@@ -485,6 +555,19 @@ public sealed class ClaimProcessor(
                         outboundApimRequestBody: outboundPayloadJson);
                     writebackStopwatch.Stop();
                     var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
+                    if (!string.IsNullOrWhiteSpace(pollRunId))
+                    {
+                        await TryRecordHistoryAsync(
+                            () => pollBatchLedger.RecordRtaWritebackAsync(
+                                pollRunId,
+                                pollRecordOrdinal,
+                                writebackResult.Success,
+                                writebackResult.Details?.HttpStatusCode,
+                                writebackResult.Reason,
+                                writebackCompletedAtUtc,
+                                cancellationToken),
+                            "poll batch RTA writeback result");
+                    }
 
                     await TryRecordHistoryAsync(
                         () => requestHistoryStore.RecordWritebackTimingAsync(
@@ -606,6 +689,19 @@ public sealed class ClaimProcessor(
                     outboundApimRequestBody: outboundPayloadJson);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
+                if (!string.IsNullOrWhiteSpace(pollRunId))
+                {
+                    await TryRecordHistoryAsync(
+                        () => pollBatchLedger.RecordRtaWritebackAsync(
+                            pollRunId,
+                            pollRecordOrdinal,
+                            writebackResult.Success,
+                            writebackResult.Details?.HttpStatusCode,
+                            writebackResult.Reason,
+                            writebackCompletedAtUtc,
+                            cancellationToken),
+                        "poll batch RTA writeback result");
+                }
                 await TryRecordHistoryAsync(
                     () => requestHistoryStore.RecordWritebackTimingAsync(
                         batchId,
