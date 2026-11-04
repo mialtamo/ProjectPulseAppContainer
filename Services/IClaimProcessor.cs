@@ -11,12 +11,14 @@ public interface IClaimProcessor
         CancellationToken cancellationToken,
         DateTimeOffset? pollStartedAtUtc = null,
         long? rtaPullDurationMs = null,
-        RetryEnvelope? retryEnvelope = null);
+        RetryEnvelope? retryEnvelope = null,
+        string? pollRunId = null);
 
     Task<IReadOnlyList<ClaimProcessingResult>> BufferBatchAsync(
         IReadOnlyList<JsonElement> claims,
         string reason,
         IReadOnlyList<string> rtaResponsePayloads,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? pollRunId = null);
 }
 
