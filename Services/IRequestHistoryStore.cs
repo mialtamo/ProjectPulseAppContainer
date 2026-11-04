@@ -30,6 +30,14 @@ public interface IRequestHistoryStore
         DateTimeOffset? apimResponseAtUtc = null,
         long? apimRoundTripDurationMs = null);
 
+    Task RecordApimAuthStatusAsync(
+        string batchId,
+        IReadOnlyList<string> uniqueIds,
+        bool? bearerTokenAttached,
+        bool? apimAuthConfirmed,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken);
+
     Task RecordWritebackTimingAsync(
         string batchId,
         IReadOnlyList<string> uniqueIds,
