@@ -68,7 +68,7 @@ button{cursor:pointer}button:hover,a.button:hover{border-color:var(--cyan)}
   <div class="actions">
     <span class="build-version" title="Version baked into this container image">BUILD v{{BUILD_VERSION}} · {{ROLE}}</span>
     <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
-    <a href="/requests.html">Request history</a><a href="/">Home</a><a href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
+    <a href="/requests.html">Request history</a><a href="/batches.html">Batch reconciliation</a><a href="/">Home</a><a href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
   </div>
 </header>
 <main>
