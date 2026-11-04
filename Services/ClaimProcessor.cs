@@ -163,15 +163,6 @@ public sealed class ClaimProcessor(
                                     itemCancellationToken),
                                 "poll batch retry buffering");
                         }
-                        await TryRecordHistoryAsync(
-                            () => pollBatchLedger.RecordProcessingCompletedAsync(
-                                effectivePollRunId,
-                                index,
-                                item.Disposition.ToString(),
-                                item.Reason,
-                                DateTimeOffset.UtcNow,
-                                itemCancellationToken),
-                            "poll batch processing completion");
                     }
                 }
             });
