@@ -21,6 +21,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
     private readonly ClaimProcessorOptions _options;
+    private readonly IPollBatchLedger _pollBatchLedger;
     private readonly string _processingRole;
     private readonly ILogger<AzureStorageRequestHistoryStore> _logger;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
@@ -34,9 +35,11 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
     public AzureStorageRequestHistoryStore(
         IOptions<ClaimProcessorOptions> options,
+        IPollBatchLedger pollBatchLedger,
         ILogger<AzureStorageRequestHistoryStore> logger)
     {
         _options = options.Value;
+        _pollBatchLedger = pollBatchLedger;
         _processingRole = ProjectPulseRoleResolver.Resolve().ToConfigurationValue();
         _logger = logger;
 
@@ -1235,9 +1238,13 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             Volatile.Read(ref deletedPayloadBlobs),
             Volatile.Read(ref payloadCleanupFailures));
 
+        var deletedPollBatchEntities = await _pollBatchLedger.DeleteForCleanupAsync(createdAfterUtc, cancellationToken);
         _cachedTimingAverages = null;
         _cachedTimingAveragesRangeKey = null;
-        return new RequestHistoryCleanupResult(records.Count + orphanedRecordIds.Count, deletedPayloadBlobs, payloadCleanupFailures);
+        return new RequestHistoryCleanupResult(
+            records.Count + orphanedRecordIds.Count + deletedPollBatchEntities,
+            deletedPayloadBlobs,
+            payloadCleanupFailures);
     }
 
     public async Task<RequestHistoryItem?> GetAsync(
