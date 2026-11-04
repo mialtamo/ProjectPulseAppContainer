@@ -16,7 +16,7 @@ The application checks the authenticated principal supplied by Container Apps an
 - `/requests/cleanup/preview`
 - `DELETE /requests`
 
-The page redirects unauthenticated users to Entra sign-in; API endpoints return unauthorized, and authenticated users without the role receive forbidden. This check depends on Container Apps authentication being enabled and supplying a trusted `X-MS-CLIENT-PRINCIPAL` header. Do not expose an alternate route that bypasses that trusted authentication layer. History deletion is also admin-only and requires a same-origin request header; the UI previews the record count and confirms before sending the destructive request.
+The page redirects unauthenticated users to Entra sign-in; API endpoints return unauthorized, and authenticated users without the role receive forbidden. This check depends on Container Apps authentication being enabled and supplying a trusted `X-MS-CLIENT-PRINCIPAL` header. The `ProjectPulse.Admin` role value is matched exactly. Do not expose an alternate route that bypasses that trusted authentication layer. History deletion is also admin-only and requires a same-origin request header; the UI previews the record count and confirms before sending the destructive request. Manual poll requests, history cleanup requests, and individual history-record reads emit structured audit events containing the Entra principal ID, action, outcome, optional range, and trace ID. Audit events intentionally omit claim payloads and record identifiers.
 
 The landing page (`/`), `/pulse-health`, and `/live` are intentionally unauthenticated in the current design. The health endpoint returns dependency booleans, runtime role, and check time. It tests App API/APIM HTTP health and TCP connectivity to Service Bus port 5671; it does not prove successful downstream authentication, authorization, or message sending. Keep it network-restricted or protect it if its exposure is not acceptable.
 
@@ -62,7 +62,7 @@ Restrict access to storage, Service Bus, Application Insights, and exported logs
 
 ## TLS and certificates
 
-The checked-in Dockerfile does not install custom certificates, and the application code does not configure a client certificate. Adding a `.crt` file to the Linux CA trust store makes it a trust anchor for validating a remote server certificate; that alone does not present a client certificate for mutual TLS.
+The runtime container uses the .NET image's non-root `$APP_UID` account. The checked-in Dockerfile does not install custom certificates, and the application code does not configure a client certificate. Adding a `.crt` file to the Linux CA trust store makes it a trust anchor for validating a remote server certificate; that alone does not present a client certificate for mutual TLS.
 
 The locally used POC Dockerfile with `certs/*.crt` is not the Dockerfile in the repository and is not used by the normal GitHub Actions image build. Confirm which image and trust store are actually deployed when diagnosing certificate errors. Service Bus TLS hostname validation is separate from RTA client-certificate authentication; a certificate-name mismatch must be fixed by using the correct Service Bus namespace/hostname and certificate chain, not by disabling certificate validation.
 
