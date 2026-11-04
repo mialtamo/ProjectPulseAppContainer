@@ -14,6 +14,7 @@ public sealed class ServiceBusWorker(
     ServiceBusClient serviceBusClient,
     IHealthGate healthGate,
     IClaimProcessor claimProcessor,
+    ProcessingConcurrencyGates concurrencyGates,
     IAppApiClient appApiClient,
     IRetryQueue retryQueue,
     IRtaNotificationClient rtaNotificationClient,
@@ -23,6 +24,7 @@ public sealed class ServiceBusWorker(
     ILogger<ServiceBusWorker> logger) : BackgroundService
 {
     private readonly ClaimProcessorOptions _options = options.Value;
+    private readonly ProcessingConcurrencyGates _concurrencyGates = concurrencyGates;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -34,64 +36,131 @@ public sealed class ServiceBusWorker(
                 PrefetchCount = 0
             });
 
+        var mode = _concurrencyGates.Mode;
+        var maxConcurrency = _concurrencyGates.MaxConcurrentMessages;
+        var inFlight = new List<Task>();
+
         logger.LogInformation(
-            "Project Pulse Service Bus worker started. Queue={Queue}",
-            _options.ServiceBusQueueName);
+            "Project Pulse Service Bus worker started. Queue={Queue} MaxConcurrentMessages={MaxConcurrentMessages} ConcurrencyMode={ConcurrencyMode}",
+            _options.ServiceBusQueueName,
+            maxConcurrency,
+            mode);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var rtaHealth = await healthGate.CheckRtaAsync(stoppingToken);
+                await ObserveCompletedTasksAsync(inFlight, stoppingToken);
 
-                if (!rtaHealth.IsHealthy)
+                if (inFlight.Count >= maxConcurrency)
                 {
-                    logger.LogWarning(
-                        "Service Bus processing paused because RTA is unhealthy. RtaHealthy={RtaHealthy}",
-                        rtaHealth.IsHealthy);
+                    await Task.WhenAny(inFlight);
+                    continue;
+                }
+
+                try
+                {
+                    var rtaHealth = await healthGate.CheckRtaAsync(stoppingToken);
+
+                    if (!rtaHealth.IsHealthy)
+                    {
+                        logger.LogWarning(
+                            "Service Bus processing paused because RTA is unhealthy. RtaHealthy={RtaHealthy}",
+                            rtaHealth.IsHealthy);
+
+                        await Task.Delay(
+                            TimeSpan.FromSeconds(_options.GetServiceBusDependencyRetrySeconds()),
+                            stoppingToken);
+
+                        continue;
+                    }
+
+                    var availableSlots = maxConcurrency - inFlight.Count;
+                    var receiveCount = Math.Min(_options.GetServiceBusReceiveBatchSize(), availableSlots);
+                    var messages = await receiver.ReceiveMessagesAsync(
+                        receiveCount,
+                        TimeSpan.FromSeconds(_options.GetServiceBusReceiveWaitSeconds()),
+                        stoppingToken);
+
+                    if (messages.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    logger.LogInformation(
+                        "Received {Count} Service Bus retry message(s). ActiveMessages={ActiveMessages} MaxConcurrentMessages={MaxConcurrentMessages}",
+                        messages.Count,
+                        inFlight.Count,
+                        maxConcurrency);
+
+                    foreach (var message in messages)
+                    {
+                        inFlight.Add(ProcessMessageAsync(receiver, message, stoppingToken));
+                    }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Unhandled error in Service Bus worker loop");
+                    telemetry.TrackException(ex);
 
                     await Task.Delay(
                         TimeSpan.FromSeconds(_options.GetServiceBusDependencyRetrySeconds()),
                         stoppingToken);
-
-                    continue;
-                }
-
-                var messages = await receiver.ReceiveMessagesAsync(
-                    _options.GetServiceBusReceiveBatchSize(),
-                    TimeSpan.FromSeconds(_options.GetServiceBusReceiveWaitSeconds()),
-                    stoppingToken);
-
-                if (messages.Count == 0)
-                {
-                    continue;
-                }
-
-                logger.LogInformation(
-                    "Received {Count} Service Bus retry message(s)",
-                    messages.Count);
-
-                foreach (var message in messages)
-                {
-                    await ProcessMessageAsync(receiver, message, stoppingToken);
                 }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        }
+        finally
+        {
+            if (inFlight.Count > 0)
             {
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Unhandled error in Service Bus worker loop");
-                telemetry.TrackException(ex);
-
-                await Task.Delay(
-                    TimeSpan.FromSeconds(_options.GetServiceBusDependencyRetrySeconds()),
-                    stoppingToken);
+                try
+                {
+                    await Task.WhenAll(inFlight);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    // In-flight messages keep their PeekLock and will be redelivered if shutdown interrupts processing.
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "One or more Service Bus message handlers ended with an error during shutdown");
+                    telemetry.TrackException(ex);
+                }
             }
         }
 
         logger.LogInformation("Project Pulse Service Bus worker stopped");
+    }
+
+    private async Task ObserveCompletedTasksAsync(List<Task> inFlight, CancellationToken cancellationToken)
+    {
+        for (var index = inFlight.Count - 1; index >= 0; index--)
+        {
+            var task = inFlight[index];
+            if (!task.IsCompleted)
+            {
+                continue;
+            }
+
+            inFlight.RemoveAt(index);
+            try
+            {
+                await task;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Unhandled error while processing a Service Bus message");
+                telemetry.TrackException(ex);
+            }
+        }
     }
 
     private async Task ProcessMessageAsync(
@@ -308,7 +377,16 @@ public sealed class ServiceBusWorker(
 
         try
         {
-            var result = await appApiClient.WriteStatusAsync(envelope.CorrelationId, envelope.WritebackPayload, cancellationToken);
+            await _concurrencyGates.RtaWriteback.WaitAsync(cancellationToken);
+            RtaWritebackResult result;
+            try
+            {
+                result = await appApiClient.WriteStatusAsync(envelope.CorrelationId, envelope.WritebackPayload, cancellationToken);
+            }
+            finally
+            {
+                _concurrencyGates.RtaWriteback.Release();
+            }
             if (result.Succeeded == true)
             {
                 await RecordPollBatchWritebackAsync(envelope, true, result.HttpStatusCode, "WritebackCompleted");
