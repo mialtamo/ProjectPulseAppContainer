@@ -8,7 +8,7 @@ public static class PollBatchReconciliationPage
             string.IsNullOrWhiteSpace(signedInUser) ? "Unknown user" : signedInUser);
         var build = System.Net.WebUtility.HtmlEncode(buildVersion);
         var roleName = System.Net.WebUtility.HtmlEncode(role);
-        return $$"""
+        return $$$"""
 <!doctype html>
 <html lang="en">
 <head>
