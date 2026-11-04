@@ -216,7 +216,7 @@ public sealed class ClaimPollingWorker(
         {
             try
             {
-                await pollBatchLedger.CompletePollAsync(runId, DateTimeOffset.UtcNow, cancellationToken);
+                await pollBatchLedger.CompletePollAsync(runId, DateTimeOffset.UtcNow, CancellationToken.None);
             }
             catch (Exception ex)
             {
