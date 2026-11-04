@@ -2,6 +2,7 @@ using Azure;
 using Azure.Data.Tables;
 using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Options;
+using Microsoft.Extensions.Options;
 
 namespace ProjectPulse.Processor.Services;
 
