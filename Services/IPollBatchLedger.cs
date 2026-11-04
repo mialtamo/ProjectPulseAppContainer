@@ -55,4 +55,8 @@ public interface IPollBatchLedger
     Task<PollBatchDetail?> GetAsync(
         string pollRunId,
         CancellationToken cancellationToken);
+
+    Task<int> DeleteForCleanupAsync(
+        DateTimeOffset? receivedAfterUtc,
+        CancellationToken cancellationToken);
 }
