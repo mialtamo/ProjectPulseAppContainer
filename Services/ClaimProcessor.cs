@@ -21,12 +21,14 @@ public sealed class ClaimProcessor(
     IPollBatchLedger pollBatchLedger,
     PayloadTransformer transformer,
     OutboundCircuitBreaker circuitBreaker,
+    ProcessingConcurrencyGates concurrencyGates,
     ApimOutageTracker outageTracker,
     IOptions<ClaimProcessorOptions> options,
     TelemetryClient telemetry,
     ILogger<ClaimProcessor> logger) : IClaimProcessor
 {
     private readonly ClaimProcessorOptions _options = options.Value;
+    private readonly ProcessingConcurrencyGates _concurrencyGates = concurrencyGates;
     private readonly HashSet<string> _jsonRetryCodes = options.Value.GetJsonRetryCodeSet();
     private readonly HashSet<string> _jsonAlertCodes = options.Value.GetJsonAlertCodeSet();
 
@@ -112,15 +114,7 @@ public sealed class ClaimProcessor(
         var maxConcurrency = mode == ProcessingConcurrencyMode.Sequential
             ? 1
             : _options.GetProcessingMaxConcurrency();
-        var apimConcurrency = mode is ProcessingConcurrencyMode.ApimOnly or ProcessingConcurrencyMode.Full
-            ? maxConcurrency
-            : 1;
-        var rtaConcurrency = mode is ProcessingConcurrencyMode.RtaOnly or ProcessingConcurrencyMode.Full
-            ? maxConcurrency
-            : 1;
         var resultsByClaim = new IReadOnlyList<ClaimProcessingResult>?[claims.Count];
-        using var apimRequestGate = new SemaphoreSlim(apimConcurrency, apimConcurrency);
-        using var rtaWritebackGate = new SemaphoreSlim(rtaConcurrency, rtaConcurrency);
 
         // Each record follows its own APIM/writeback path. DOCMP may omit correlation IDs,
         // so the single-item response is associated with its originating RTA request.
@@ -142,8 +136,8 @@ public sealed class ClaimProcessor(
                     itemCancellationToken,
                     recordsReceivedAtUtc,
                     rtaPullDurationMs,
-                    apimRequestGate,
-                    rtaWritebackGate,
+                    _concurrencyGates.ApimRequest,
+                    _concurrencyGates.RtaWriteback,
                     retryEnvelope,
                     effectivePollRunId,
                     effectivePollRecordOrdinal);
