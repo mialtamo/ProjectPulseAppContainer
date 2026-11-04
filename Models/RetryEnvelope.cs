@@ -37,4 +37,6 @@ public sealed record RtaWritebackRetryEnvelope(
     string WritebackPayload)
 {
     public const string TypeName = "RtaWriteback";
+    public string? PollRunId { get; init; }
+    public int? PollRecordOrdinal { get; init; }
 }
