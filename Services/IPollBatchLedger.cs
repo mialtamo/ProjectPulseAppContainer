@@ -36,7 +36,7 @@ public interface IPollBatchLedger
     Task RecordRtaWritebackAsync(
         string pollRunId,
         int ordinal,
-        bool succeeded,
+        bool? succeeded,
         int? httpStatusCode,
         string? reason,
         DateTimeOffset completedAtUtc,
