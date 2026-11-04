@@ -695,7 +695,7 @@ public sealed class ClaimProcessor(
                         () => pollBatchLedger.RecordRtaWritebackAsync(
                             pollRunId,
                             pollRecordOrdinal,
-                            writebackResult.Success,
+                            writebackResult.Reason == "RtaWritebackQueued" ? null : writebackResult.Success,
                             writebackResult.Details?.HttpStatusCode,
                             writebackResult.Reason,
                             writebackCompletedAtUtc,
