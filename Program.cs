@@ -63,6 +63,7 @@ builder.Services.AddSingleton<IAppApiClient, AppApiClient>();
 builder.Services.AddSingleton<IRtaNotificationClient, RtaNotificationClient>();
 builder.Services.AddSingleton<IRetryQueue, ServiceBusRetryQueue>();
 builder.Services.AddSingleton<IRequestHistoryStore, AzureStorageRequestHistoryStore>();
+builder.Services.AddSingleton<IPollBatchLedger, AzureStoragePollBatchLedger>();
 builder.Services.AddSingleton<PayloadTransformer>();
 builder.Services.AddSingleton<IClaimProcessor, ClaimProcessor>();
 builder.Services.AddSingleton<OutboundCircuitBreaker>();
@@ -220,6 +221,43 @@ app.MapGet("/requests", async (HttpContext context, IRequestHistoryStore store, 
     }
 
     return Results.Json(page.Items, historyJsonOptions);
+});
+
+app.MapGet("/poll-batches", async (HttpContext context, IPollBatchLedger ledger, CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var limit = int.TryParse(context.Request.Query["limit"], out var requestedLimit)
+        ? Math.Clamp(requestedLimit, 1, 500)
+        : 100;
+    var range = context.Request.Query["range"].FirstOrDefault() ?? "24h";
+    var nowUtc = DateTimeOffset.UtcNow;
+    DateTimeOffset? receivedAfterUtc = range switch
+    {
+        "1h" => nowUtc.AddHours(-1),
+        "24h" => nowUtc.AddHours(-24),
+        "7d" => nowUtc.AddDays(-7),
+        "all" => null,
+        _ => nowUtc.AddHours(-24)
+    };
+    var batches = await ledger.ListAsync(limit, receivedAfterUtc, cancellationToken);
+    return Results.Json(batches, historyJsonOptions);
+});
+
+app.MapGet("/poll-batches/{pollRunId}", async (
+    HttpContext context,
+    string pollRunId,
+    IPollBatchLedger ledger,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var batch = await ledger.GetAsync(pollRunId, cancellationToken);
+    return batch is null ? Results.NotFound() : Results.Json(batch, historyJsonOptions);
 });
 
 app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
@@ -380,6 +418,23 @@ app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHist
     return item is null
         ? Results.NotFound()
         : Results.Json(item, historyJsonOptions);
+});
+
+app.MapGet("/batches.html", (HttpContext context) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: true);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+    var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
+    return Results.Content(
+        PollBatchReconciliationPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseRoleName),
+        "text/html; charset=utf-8");
 });
 
 app.MapGet("/requests.html", (HttpContext context) =>
