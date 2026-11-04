@@ -50,7 +50,7 @@ public sealed class ClaimProcessor(
 
         try
         {
-            await QueueAllAsync(claims, transformed, reason, cancellationToken);
+            await QueueAllAsync(claims, transformed, reason, cancellationToken, pollRunId: pollRunId);
         }
         catch (Exception ex)
         {
@@ -134,6 +134,8 @@ public sealed class ClaimProcessor(
             },
             async (index, itemCancellationToken) =>
             {
+                var effectivePollRunId = pollRunId ?? retryEnvelope?.PollRunId;
+                var effectivePollRecordOrdinal = retryEnvelope?.PollRecordOrdinal ?? index;
                 var result = await ProcessSingleClaimAsync(
                     [claims[index]],
                     rtaResponsePayloads,
@@ -142,9 +144,10 @@ public sealed class ClaimProcessor(
                     rtaPullDurationMs,
                     apimRequestGate,
                     rtaWritebackGate,
-                    retryEnvelope);
+                    retryEnvelope,
+                    effectivePollRunId,
+                    effectivePollRecordOrdinal);
                 resultsByClaim[index] = result;
-                var effectivePollRunId = pollRunId;
                 if (!string.IsNullOrWhiteSpace(effectivePollRunId))
                 {
                     foreach (var item in result)
@@ -229,7 +232,7 @@ public sealed class ClaimProcessor(
         {
             try
             {
-                await QueueAllAsync(claims, transformedClaims, "OutboundCircuitOpen", cancellationToken);
+                await QueueAllAsync(claims, transformedClaims, "OutboundCircuitOpen", cancellationToken, retryContext: retryEnvelope, pollRunId: pollRunId, pollRecordOrdinal: pollRecordOrdinal);
             }
             catch (Exception ex)
             {
@@ -430,7 +433,9 @@ public sealed class ClaimProcessor(
                         response.ReasonPhrase,
                         responseJson,
                         responseHeaders,
-                        apimRoundTripStopwatch.ElapsedMilliseconds);
+                        apimRoundTripStopwatch.ElapsedMilliseconds,
+                        pollRunId: pollRunId,
+                        pollRecordOrdinal: pollRecordOrdinal);
                 }
                 catch (Exception ex)
                 {
@@ -624,7 +629,7 @@ public sealed class ClaimProcessor(
             {
                 try
                 {
-                    await QueueAllAsync(claims, transformedClaims, $"JsonCode:{businessCode}", cancellationToken);
+                    await QueueAllAsync(claims, transformedClaims, $"JsonCode:{businessCode}", cancellationToken, retryContext: retryEnvelope, pollRunId: pollRunId, pollRecordOrdinal: pollRecordOrdinal);
                 }
                 catch (Exception ex)
                 {
@@ -836,7 +841,7 @@ public sealed class ClaimProcessor(
 
             try
             {
-                await QueueAllAsync(claims, transformedClaims, "ApimTimeout", cancellationToken);
+                await QueueAllAsync(claims, transformedClaims, "ApimTimeout", cancellationToken, retryContext: retryEnvelope, pollRunId: pollRunId, pollRecordOrdinal: pollRecordOrdinal);
             }
             catch (Exception queueException)
             {
@@ -872,7 +877,7 @@ public sealed class ClaimProcessor(
 
             try
             {
-                await QueueAllAsync(claims, transformedClaims, "NetworkFailure", cancellationToken);
+                await QueueAllAsync(claims, transformedClaims, "NetworkFailure", cancellationToken, retryContext: retryEnvelope, pollRunId: pollRunId, pollRecordOrdinal: pollRecordOrdinal);
             }
             catch (Exception queueException)
             {
@@ -1021,7 +1026,9 @@ public sealed class ClaimProcessor(
         string? lastHttpReasonPhrase = null,
         string? lastHttpResponseBody = null,
         string? lastHttpResponseHeaders = null,
-        long? lastResponseTimeMs = null)
+        long? lastResponseTimeMs = null,
+        string? pollRunId = null,
+        int pollRecordOrdinal = 0)
     {
         for (var i = 0; i < claims.Count; i++)
         {
@@ -1040,6 +1047,8 @@ public sealed class ClaimProcessor(
                 claim.GetRawText(),
                 transformedClaims[i].ToJsonString())
             {
+                PollRunId = retryContext?.PollRunId ?? pollRunId,
+                PollRecordOrdinal = retryContext?.PollRecordOrdinal ?? pollRecordOrdinal + i,
                 RetryUntilUtc = retryContext?.RetryUntilUtc
                     ?? queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
                 RetryAttempt = (retryContext?.RetryAttempt ?? 0) + (retryContext is null ? 0 : 1),
