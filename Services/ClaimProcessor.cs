@@ -1109,6 +1109,20 @@ public sealed class ClaimProcessor(
                 outboundApimRequestBody: envelope.TransformedPayload,
                 pollRunId: envelope.PollRunId,
                 pollRecordOrdinal: envelope.PollRecordOrdinal ?? 0);
+            if (!string.IsNullOrWhiteSpace(envelope.PollRunId) && envelope.PollRecordOrdinal is { } pollRecordOrdinal)
+            {
+                await TryRecordHistoryAsync(
+                    () => pollBatchLedger.RecordRtaWritebackAsync(
+                        envelope.PollRunId,
+                        pollRecordOrdinal,
+                        writeback.Reason == "RtaWritebackQueued" ? null : writeback.Success,
+                        writeback.Details?.HttpStatusCode,
+                        writeback.Reason,
+                        DateTimeOffset.UtcNow,
+                        cancellationToken),
+                    "poll batch exhausted-retry RTA writeback result");
+            }
+
             succeeded = writeback.Success;
             finalReason = writeback.Reason == "RtaWritebackQueued"
                 ? "ApimRetryExhaustedWritebackQueued"
