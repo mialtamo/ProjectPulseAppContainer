@@ -819,6 +819,13 @@ function lifecycleStage(name,state,detail,tone){
   return '<article class="lifecycle-stage '+tone+'"><div class="lifecycle-stage-title">'+esc(name)+'</div>'+
     '<div class="lifecycle-stage-state">'+esc(state)+'</div><div class="lifecycle-stage-detail">'+detail+'</div></article>';
 }
+function apimAuthEvidence(x){
+  if(x.ApimAuthConfirmed===true)return {sent:'🔑 Bearer token attached',response:'🔑 APIM confirmed Entra token validation',tone:'done'};
+  if(x.ApimAuthConfirmed===false)return {sent:x.ApimBearerTokenAttached===true?'🔑 Bearer token attached':'🔑❌ No bearer token attached',response:'🔑❌ APIM did not return the auth-confirmation header',tone:'failed'};
+  if(x.ApimBearerTokenAttached===true)return {sent:'🔑 Bearer token attached',response:'🔑 Waiting for APIM auth confirmation',tone:'waiting'};
+  if(x.ApimBearerTokenAttached===false)return {sent:'🔑❌ No bearer token attached',response:'🔑❌ Token attachment failed',tone:'failed'};
+  return {sent:'',response:'',tone:'unknown'};
+}
 function lifecycleRun(x,index){
   const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'unknown source';
   const receivedDetail=x.RtaPullDurationMs==null
@@ -829,6 +836,7 @@ function lifecycleRun(x,index){
   const sent=x.SentToApimAtUtc;
   const responseAt=x.ApimResponseAtUtc;
   const sentDetails=[];
+  const authEvidence=apimAuthEvidence(x);
   let sentState='Not recorded',sentTone='unknown';
   if(responseAt){
     sentState='POST sent';sentTone='done';
@@ -840,6 +848,7 @@ function lifecycleRun(x,index){
   }else{
     sentDetails.push('No APIM POST attempt is stored.');
   }
+  if(authEvidence.sent)sentDetails.push(esc(authEvidence.sent));
   const sentStep=lifecycleStage('Sent to APIM / DOCMP',sentState,sentDetails.join(' · '),sentTone);
 
   const http=x.HttpStatusCode;
@@ -853,6 +862,8 @@ function lifecycleRun(x,index){
     if(x.ApimRoundTripDurationMs!=null)responseDetails.push('APIM round trip '+durationLabel(x.ApimRoundTripDurationMs));
     if(x.BusinessResponseCode&&x.BusinessResponseCode!=='BatchCompleted')responseDetails.push('Business code '+esc(x.BusinessResponseCode));
     if(x.Reason&&x.Reason!=='BatchCompleted')responseDetails.push(esc(x.Reason));
+    if(authEvidence.response)responseDetails.push(esc(authEvidence.response));
+    if(x.ApimAuthConfirmed===false&&http!=null&&http>=200&&http<300)responseTone='waiting';
     if(!responseDetails.length)responseDetails.push('Response recorded');
   }else if(sent){
     responseState='Waiting / no response';responseTone='waiting';
