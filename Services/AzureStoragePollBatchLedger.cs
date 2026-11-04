@@ -50,7 +50,7 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
             ["ReceivedAtUtc"] = receivedAtUtc
         }, TableUpdateMode.Replace, cancellationToken);
 
-        foreach (var record in records)
+        var recordActions = records.Select(record =>
         {
             var item = new TableEntity(RecordPartition, BuildRecordKey(pollRunId, record.Ordinal))
             {
@@ -61,7 +61,14 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
                 ["ReceivedAtUtc"] = receivedAtUtc,
                 ["ProcessingStage"] = "Received"
             };
-            await _table.UpsertEntityAsync(item, TableUpdateMode.Replace, cancellationToken);
+            return new TableTransactionAction(TableTransactionActionType.UpsertReplace, item);
+        });
+
+        // Azure Table transactions are limited to 100 entities and one partition.
+        // Persisting each record separately would add thousands of round trips for large polls.
+        foreach (var transaction in recordActions.Chunk(100))
+        {
+            await _table.SubmitTransactionAsync(transaction, cancellationToken);
         }
     }
 
