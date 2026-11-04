@@ -81,6 +81,8 @@ else
 }
 
 var app = builder.Build();
+var adminAuditLogger = app.Services.GetRequiredService<ILoggerFactory>()
+    .CreateLogger("ProjectPulse.AdminAudit");
 
 app.MapGet("/", (HttpContext context) =>
 {
@@ -360,6 +362,7 @@ app.MapDelete("/requests", async (HttpContext context, IRequestHistoryStore stor
 
     context.Response.Headers.CacheControl = "no-store";
     var operation = await store.StartCleanupAsync(createdAfterUtc, rangeLabel, cancellationToken);
+    LogAdminAudit(adminAuditLogger, context, "RequestHistoryCleanup", "Accepted", rangeLabel);
     return Results.Accepted(
         $"/requests/cleanup/{operation.OperationId}",
         operation);
@@ -399,6 +402,11 @@ app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTri
 
     context.Response.Headers.CacheControl = "no-store";
     var queued = pollTrigger.TryRequestPoll();
+    LogAdminAudit(
+        adminAuditLogger,
+        context,
+        "ManualPoll",
+        queued ? "Queued" : "AlreadyQueued");
     return Results.Accepted(value: new
     {
         queued = true,
@@ -416,6 +424,11 @@ app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHist
 
     context.Response.Headers.CacheControl = "no-store";
     var item = await store.GetAsync(id, cancellationToken);
+    LogAdminAudit(
+        adminAuditLogger,
+        context,
+        "ReadRequestHistoryRecord",
+        item is null ? "NotFound" : "Found");
     return item is null
         ? Results.NotFound()
         : Results.Json(item, historyJsonOptions);
@@ -480,6 +493,23 @@ app.MapGet("/live", () => Results.Ok(new { status = "ok", role = projectPulseRol
 
 app.Run();
 
+static void LogAdminAudit(
+    ILogger logger,
+    HttpContext context,
+    string action,
+    string outcome,
+    string? range = null)
+{
+    var principalId = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-ID"].ToString();
+    logger.LogInformation(
+        "Admin audit: {Action} {Outcome}; PrincipalId={PrincipalId}; Range={Range}; TraceId={TraceId}",
+        action,
+        outcome,
+        string.IsNullOrWhiteSpace(principalId) ? "unknown" : principalId,
+        range ?? "not-applicable",
+        context.TraceIdentifier);
+}
+
 static bool TryGetRequestHistoryCleanupCutoff(
     string? range,
     DateTimeOffset nowUtc,
@@ -542,7 +572,7 @@ static IResult? RequireProjectPulseAdmin(HttpContext context, bool redirectToLog
         {
             if (!claim.TryGetProperty("typ", out var type) ||
                 !claim.TryGetProperty("val", out var value) ||
-                !string.Equals(value.GetString(), requiredRole, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(value.GetString(), requiredRole, StringComparison.Ordinal))
             {
                 continue;
             }
