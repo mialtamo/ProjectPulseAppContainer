@@ -157,7 +157,7 @@ public sealed class ClaimProcessor(
                             await TryRecordHistoryAsync(
                                 () => pollBatchLedger.RecordServiceBusBufferedAsync(
                                     effectivePollRunId,
-                                    index,
+                                    effectivePollRecordOrdinal,
                                     item.Reason,
                                     DateTimeOffset.UtcNow,
                                     itemCancellationToken),
@@ -548,7 +548,9 @@ public sealed class ClaimProcessor(
                         rtaWritebackGate,
                         apimError.Message,
                         apimError.Stack,
-                        outboundApimRequestBody: outboundPayloadJson);
+                        outboundApimRequestBody: outboundPayloadJson,
+                        pollRunId: pollRunId,
+                        pollRecordOrdinal: pollRecordOrdinal);
                     writebackStopwatch.Stop();
                     var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                     if (!string.IsNullOrWhiteSpace(pollRunId))
@@ -682,7 +684,9 @@ public sealed class ClaimProcessor(
                     correlationIds,
                     cancellationToken,
                     rtaWritebackGate,
-                    outboundApimRequestBody: outboundPayloadJson);
+                    outboundApimRequestBody: outboundPayloadJson,
+                    pollRunId: pollRunId,
+                    pollRecordOrdinal: pollRecordOrdinal);
                 writebackStopwatch.Stop();
                 var writebackCompletedAtUtc = DateTimeOffset.UtcNow;
                 if (!string.IsNullOrWhiteSpace(pollRunId))
@@ -1102,7 +1106,9 @@ public sealed class ClaimProcessor(
                 errorMessage,
                 null,
                 rawApimResponseBody: responseBody,
-                outboundApimRequestBody: envelope.TransformedPayload);
+                outboundApimRequestBody: envelope.TransformedPayload,
+                pollRunId: envelope.PollRunId,
+                pollRecordOrdinal: envelope.PollRecordOrdinal ?? 0);
             succeeded = writeback.Success;
             finalReason = writeback.Reason == "RtaWritebackQueued"
                 ? "ApimRetryExhaustedWritebackQueued"
@@ -1253,7 +1259,9 @@ public sealed class ClaimProcessor(
         string? apimErrorMessage = null,
         string? apimErrorStack = null,
         string? rawApimResponseBody = null,
-        string? outboundApimRequestBody = null)
+        string? outboundApimRequestBody = null,
+        string? pollRunId = null,
+        int pollRecordOrdinal = 0)
     {
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -1411,7 +1419,11 @@ public sealed class ClaimProcessor(
                     queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
                     0,
                     correlationId,
-                    statusPayloadJson);
+                    statusPayloadJson)
+                {
+                    PollRunId = pollRunId,
+                    PollRecordOrdinal = pollRecordOrdinal
+                };
 
                 try
                 {
