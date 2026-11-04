@@ -250,14 +250,11 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
         Action<TableEntity> update,
         CancellationToken cancellationToken)
     {
+        var entity = new TableEntity(RecordPartition, BuildRecordKey(pollRunId, ordinal));
+        update(entity);
         try
         {
-            var entity = (await _table.GetEntityAsync<TableEntity>(
-                RecordPartition,
-                BuildRecordKey(pollRunId, ordinal),
-                cancellationToken: cancellationToken)).Value;
-            update(entity);
-            await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+            await _table.UpdateEntityAsync(entity, ETag.All, TableUpdateMode.Merge, cancellationToken);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
