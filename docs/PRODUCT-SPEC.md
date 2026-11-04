@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Project Pulse moves queued claim requests from RTA through APIM/DOCMP, translates the response, and writes the result back to RTA. It records operational history and timing, and can buffer eligible work in Azure Service Bus during configured downstream failures.
+Project Pulse moves queued claim requests from RTA through APIM and its backend, translates the response, and writes the result back to RTA. It records operational history and timing, and can buffer eligible work in Azure Service Bus during configured downstream failures.
 
 This specification describes the current Container Apps implementation and its POC boundaries, not a production-readiness claim.
 
@@ -11,7 +11,7 @@ This specification describes the current Container Apps implementation and its P
 Project Pulse is a .NET 10 ASP.NET Core container. One codebase/image supports two runtime roles selected by `PROJECT_PULSE_ROLE`:
 
 - **RTA role:** continuously polls the configured source API.
-- **Service Bus role:** receives both claim replay messages and stored RTA writeback messages. Claim replays use APIM/DOCMP; stored writeback retries call RTA directly.
+- **Service Bus role:** receives both claim replay messages and stored RTA writeback messages. Claim replays use APIM and its backend; stored writeback retries call RTA directly.
 
 The POC is configured for one replica. There is no Azure Functions TimerTrigger, `host.json`, or `POLL_SCHEDULE` execution model in this application.
 
@@ -19,11 +19,11 @@ The POC is configured for one replica. There is no Azure Functions TimerTrigger,
 
 1. The RTA role checks configured dependency health and polls the source.
 2. In RTA mode, it requests paged data. In mock mode, the configured mock endpoint may use `maxRecords`; that parameter is not the RTA paging contract.
-3. Each RTA item is translated to the APIM/DOCMP JSON contract and processed as an individual claim request.
+3. Each RTA item is translated to the APIM and its backend JSON contract and processed as an individual claim request.
 4. Project Pulse sends the request with correlation/idempotency information and validates the configured APIM response-token header.
 5. It records the HTTP response body and translates a successful response into the RTA writeback contract.
 6. When enabled and configured, it sends the writeback to RTA. If the PUT fails after its configured attempts, Project Pulse queues the exact translated RTA status body for the SERVICEBUS role.
-7. The SERVICEBUS role retries that stored PUT directly to RTA with increasing scheduled delays until the message TTL deadline (10 minutes by default); it never sends that writeback through APIM/DOCMP again. Eligible APIM claim failures are separately replayed through APIM/DOCMP.
+7. The SERVICEBUS role retries that stored PUT directly to RTA with increasing scheduled delays until the message TTL deadline (10 minutes by default); it never sends that writeback through APIM and its backend again. Eligible APIM claim failures are separately replayed through APIM and its backend.
 
 The source item, APIM request, APIM response, mapped RTA response, status, and timing values are captured according to request-history settings.
 
@@ -44,7 +44,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 
 ## Response translation and writeback
 
-For `INITIAL_REQUEST`, Project Pulse reads RTA request fields from `INITIAL_REQUEST_METADATA`, then translates the DOCMP response's root business fields into `INITIAL_REQUEST_RESPONSE`. The request-side RTA metadata field is not used to parse the DOCMP response. `UPDATE_REQUEST_RESPONSE` is set to null. Project Pulse sends the RTA PUT envelope with the request type, success status, null substatus, and process timestamp.
+For `INITIAL_REQUEST`, Project Pulse reads RTA request fields from `INITIAL_REQUEST_METADATA`, then translates the downstream API response's root business fields into `INITIAL_REQUEST_RESPONSE`. The request-side RTA metadata field is not used to parse the downstream API response. `UPDATE_REQUEST_RESPONSE` is set to null. Project Pulse sends the RTA PUT envelope with the request type, success status, null substatus, and process timestamp.
 
 The envelope includes an application-created `API_CALL_HISTORY` object. It copies `REQUEST_ID`, `CORRELATION_ID`, and `IDEMPOTENCY_KEY` from the individual RTA item and leaves `EXTERNAL_CORRELATION_ID`, query parameters, and error fields null. `HTTP_METHOD` records the APIM `POST`; `API_URL` is the configured APIM base URL normalized with a trailing slash; and `API_ENDPOINT` is the configured adjudication path without leading or trailing slashes. `REQUEST_HEADER` (singular) contains the serialized headers received from APIM, with the configured response-token value redacted. `REQUEST_BODY` is the raw individual RTA item as a JSON string, `RESPONSE_BODY` is the raw APIM response as a JSON string, and response status and APIM round-trip duration are recorded.
 
