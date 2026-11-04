@@ -6,7 +6,7 @@ Statuses reflect the repository and POC evidence reviewed on 2026-11-02. “Comp
 
 The repository has product, architecture, security, milestone, current-state, and development documentation. Current behavior and known limitations are recorded.
 
-## M1 - APIM and its backend request and response path — Complete for POC
+## M1 - APIM request/response path — Complete for POC
 
 Project Pulse transforms and submits claim requests, validates the configured response token, processes the APIM response, and records the request/response. A successful POC response has been observed. APIM policy and environment configuration remain external to this repository.
 
@@ -32,7 +32,7 @@ Remaining: establish and validate duplicate behavior across redelivery, Service 
 
 A Service Bus consumer role exists in the same application/image; the older plan for a separate Function/App is not the current implementation.
 
-Implemented: direct RTA writeback retry messages retain the exact translated PUT payload, the SERVICEBUS role does not replay APIM and its backend for those messages, and delayed retries stop at the message TTL deadline before dead-lettering. Remaining: verify scheduling, poison/dead-letter handling, and operational recovery in the target environment. Configure Service Bus dead-letter-on-expiration so a message that expires while the worker is unavailable remains inspectable.
+Implemented: direct RTA writeback retry messages retain the exact translated PUT payload, the SERVICEBUS role does not replay APIM/backend for those messages, and delayed retries stop at the message TTL deadline before dead-lettering. Remaining: verify scheduling, poison/dead-letter handling, and operational recovery in the target environment. Configure Service Bus dead-letter-on-expiration so a message that expires while the worker is unavailable remains inspectable.
 
 ## M6 - Security and payload controls — In progress
 
