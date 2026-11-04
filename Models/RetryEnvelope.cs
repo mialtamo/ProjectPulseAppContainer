@@ -9,6 +9,8 @@ public sealed record RetryEnvelope(
     string OriginalPayload,
     string TransformedPayload)
 {
+    public string? PollRunId { get; init; }
+    public int? PollRecordOrdinal { get; init; }
     public DateTimeOffset? RetryUntilUtc { get; init; }
     public int RetryAttempt { get; init; }
     public int? LastHttpStatusCode { get; init; }
