@@ -39,6 +39,8 @@ public sealed class ServiceBusWorker(
         var mode = _concurrencyGates.Mode;
         var maxConcurrency = _concurrencyGates.MaxConcurrentMessages;
         var inFlight = new List<Task>();
+        var nextRtaHealthCheckUtc = DateTimeOffset.MinValue;
+        var isRtaHealthy = false;
 
         logger.LogInformation(
             "Project Pulse Service Bus worker started. Queue={Queue} MaxConcurrentMessages={MaxConcurrentMessages} ConcurrencyMode={ConcurrencyMode}",
@@ -60,14 +62,26 @@ public sealed class ServiceBusWorker(
 
                 try
                 {
-                    var rtaHealth = await healthGate.CheckRtaAsync(stoppingToken);
-
-                    if (!rtaHealth.IsHealthy)
+                    if (DateTimeOffset.UtcNow >= nextRtaHealthCheckUtc)
                     {
-                        logger.LogWarning(
-                            "Service Bus processing paused because RTA is unhealthy. RtaHealthy={RtaHealthy}",
-                            rtaHealth.IsHealthy);
+                        var rtaHealth = await healthGate.CheckRtaAsync(stoppingToken);
+                        isRtaHealthy = rtaHealth.IsHealthy;
 
+                        var healthCheckInterval = isRtaHealthy
+                            ? _options.GetServiceBusReceiveWaitSeconds()
+                            : _options.GetServiceBusDependencyRetrySeconds();
+                        nextRtaHealthCheckUtc = DateTimeOffset.UtcNow.AddSeconds(healthCheckInterval);
+
+                        if (!isRtaHealthy)
+                        {
+                            logger.LogWarning(
+                                "Service Bus processing paused because RTA is unhealthy. RtaHealthy={RtaHealthy}",
+                                rtaHealth.IsHealthy);
+                        }
+                    }
+
+                    if (!isRtaHealthy)
+                    {
                         await Task.Delay(
                             TimeSpan.FromSeconds(_options.GetServiceBusDependencyRetrySeconds()),
                             stoppingToken);
