@@ -30,7 +30,7 @@ The RTA role starts `ClaimPollingWorker`, polls the RTA/App API, sends claims to
 PROJECT_PULSE_ROLE=SERVICEBUS
 ```
 
-The Service Bus role does not poll RTA. It receives claim-replay messages and `RtaWritebackRetryEnvelope` messages. Claim-replay messages go through the shared `ClaimProcessor` and APIM/DOCMP. A writeback retry message contains the exact translated RTA PUT body from the earlier APIM/DOCMP response; the worker sends that payload directly to RTA and never replays APIM/DOCMP. Direct writeback retries use increasing scheduled delays until the `ServiceBusMessageTtlMinutes` deadline (10 minutes by default), then move to the dead-letter queue if still unsuccessful. The worker requires RTA health for writeback retries; APIM health is not a gate for those messages.
+The Service Bus role does not poll RTA. It receives claim-replay messages and `RtaWritebackRetryEnvelope` messages. Claim-replay messages go through the shared `ClaimProcessor` and APIM and its backend. A writeback retry message contains the exact translated RTA PUT body from the earlier APIM and its backend response; the worker sends that payload directly to RTA and never replays APIM and its backend. Direct writeback retries use increasing scheduled delays until the `ServiceBusMessageTtlMinutes` deadline (10 minutes by default), then move to the dead-letter queue if still unsuccessful. The worker requires RTA health for writeback retries; APIM health is not a gate for those messages.
 
 Request history records which runtime handled each processing attempt: `RTA` for the poller and `SERVICEBUS` for the retry worker. The Requests page shows this as **RTA Poller** or **Service Bus Worker**, separately from the destination (APIM or Service Bus). Older history rows without this field appear as unknown.
 
@@ -44,7 +44,7 @@ Project Pulse uses each Container App's managed identity to get an Entra bearer 
 
 Create the retry queue, then configure the **same** `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on both Container Apps. The RTA app's managed identity needs **Azure Service Bus Data Sender** on the queue. The Service Bus app's identity needs **Azure Service Bus Data Receiver** and **Azure Service Bus Data Sender**, because a retry can be requeued. Project Pulse uses managed identity through `.NET DefaultAzureCredential`; no Service Bus connection string or SAS key is needed.
 
-The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It requires RTA settings for direct status writebacks. Claim-replay messages go through APIM/DOCMP; stored RTA-writeback retry messages go directly to RTA and do not require APIM health. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
+The Service Bus app must use `PROJECT_PULSE_ROLE=SERVICEBUS` and set `ServiceBusReceiveBatchSize`, `ServiceBusReceiveWaitSeconds`, and `ServiceBusDependencyRetrySeconds` as needed. It requires RTA settings for direct status writebacks. Claim-replay messages go through APIM and its backend; stored RTA-writeback retry messages go directly to RTA and do not require APIM health. See the [Service Bus setup and complete variable reference](docs/CONFIGURATION.md#azure-service-bus-retry-setup).
 
 ## Why Container Apps
 
@@ -112,19 +112,19 @@ For testing with an APIM policy that supports mock scenarios, set `APIM_MOCK_SCE
 | `APIM_MOCK_SCENARIO` | Simulated result |
 | --- | --- |
 | `success` | Successful mock response. |
-| `docmp-not-found` | HTTP 200 with a DOCMP not-found error envelope. |
-| `docmp-error` | HTTP 200 with a DOCMP application-error envelope. |
+| `downstream API-not-found` | HTTP 200 with a downstream API not-found error envelope. |
+| `downstream API-error` | HTTP 200 with a downstream API application-error envelope. |
 | `http-404` | Actual HTTP 404 response. |
 | `http-429` | Actual HTTP 429 response. |
 | `http-500` | Actual HTTP 500 response. |
 | `http-503` | Actual HTTP 503 response. |
 | `http-504` | Actual HTTP 504 response. |
 
-These values exercise different paths: DOCMP errors inside HTTP 200 responses are application errors; `http-*` scenarios simulate actual HTTP failures and the configured retry/notification behavior. Only set this variable when the APIM policy is configured to recognize the header. See the [full configuration reference](docs/CONFIGURATION.md#configuration-reference).
+These values exercise different paths: downstream API errors inside HTTP 200 responses are application errors; `http-*` scenarios simulate actual HTTP failures and the configured retry/notification behavior. Only set this variable when the APIM policy is configured to recognize the header. See the [full configuration reference](docs/CONFIGURATION.md#configuration-reference).
 
 ## Request timing diagnostics
 
-The request-history page reports per-batch averages across stored history. RTA pull is timed separately from end-to-end: end-to-end starts after the poll response is read and parsed and records are available, then ends when the record outcome is recorded. When RTA writeback is enabled, its duration includes status PUT calls, retries, and configured backoff delays. The **Other processing** duration is end-to-end time minus translation, APIM round trip, and RTA writeback; it accounts for orchestration and other uninstrumented work so the processing timings reconcile. Records stored before this timing change used a poll-start timestamp, so all-time averages can mix the two definitions; use a range starting after the rollout for a consistent comparison. Its summary also counts batches recorded with an `RtaStatusWritebackFailed` reason; that count identifies failed status PUT outcomes, not proof that every such batch retried. Project Pulse logs include correlation IDs, attempt counts, and the final observed HTTP status or exception category for exhausted writebacks. Match a batch's correlation ID in those logs to investigate the specific failure. APIM round-trip duration combines APIM, DOCMP/backend, and network time and cannot isolate those components.
+The request-history page reports per-batch averages across stored history. RTA pull is timed separately from end-to-end: end-to-end starts after the poll response is read and parsed and records are available, then ends when the record outcome is recorded. When RTA writeback is enabled, its duration includes status PUT calls, retries, and configured backoff delays. The **Other processing** duration is end-to-end time minus translation, APIM round trip, and RTA writeback; it accounts for orchestration and other uninstrumented work so the processing timings reconcile. Records stored before this timing change used a poll-start timestamp, so all-time averages can mix the two definitions; use a range starting after the rollout for a consistent comparison. Its summary also counts batches recorded with an `RtaStatusWritebackFailed` reason; that count identifies failed status PUT outcomes, not proof that every such batch retried. Project Pulse logs include correlation IDs, attempt counts, and the final observed HTTP status or exception category for exhausted writebacks. Match a batch's correlation ID in those logs to investigate the specific failure. APIM round-trip duration combines APIM, downstream API/backend, and network time and cannot isolate those components.
 
 The Requests list can be filtered to the last 5 minutes, last hour, last 24 hours, last 7 days, or all time. It reports the number of records matching the selected time range and search, alongside the number currently loaded. Search narrows both the matching count and displayed rows; paging keeps the selected time cutoff fixed.
 
@@ -152,7 +152,7 @@ The admin-only `/ledger.html` page presents a searchable lifecycle view of store
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
 
-The RTA role can process records within a fetched batch using `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`) and `PROCESSING_MAX_CONCURRENCY`. These settings affect per-record APIM/DOCMP calls and/or RTA status PUTs; they do not overlap polling cycles. The limit applies per active batch and per replica, so replica counts multiply downstream load. They do not control the Service Bus worker, which currently handles one queued record at a time.
+The RTA role can process records within a fetched batch using `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`) and `PROCESSING_MAX_CONCURRENCY`. These settings affect per-record APIM and its backend calls and/or RTA status PUTs; they do not overlap polling cycles. The limit applies per active batch and per replica, so replica counts multiply downstream load. They do not control the Service Bus worker, which currently handles one queued record at a time.
 
 The request-history page also lets admins delete history created in the last 24 hours, last 7 days, last 30 days, or all time. The page previews the matching record count and requires confirmation, then shows progress while cleanup runs in the background. The progress endpoint reports persisted operation status, phase, and cleanup-item counts so the browser can poll without waiting on a long-running delete request. Cleanup removes Azure Table history rows and their recent-history index entries in parallel transactions, scans the payload container once, and deletes selected batch payload files with bounded parallelism only when no retained history row references the batch. Progress separately shows how many history records and payload files have been removed. It does not delete Service Bus messages or platform logs.
 
@@ -227,7 +227,7 @@ The admin-only `/batches.html` page starts with the complete set of records retu
 
 The requests page shows average RTA pull, translation, APIM round-trip, RTA writeback, and end-to-end durations for the selected time range: last 7 days, last 30 days, last year (rolling 365 days), all time, or a custom date/time interval. The date window is applied to each batch's creation time, and the failure count uses the same window. Each average is calculated once per batch and includes only batches with a recorded value for that timing; its sample count is shown with the average. The summary is fetched separately from the first 100 displayed records, so it does not slow the initial transaction list. Results are cached in memory for up to one minute per app instance and selected range.
 
-Initial color bands are operating signals, not configured SLAs: RTA pull, APIM round trip, and RTA writeback are green through 1 second, yellow through 5 seconds, and red above 5 seconds; translation is green through 100 ms, yellow through 500 ms, and red above 500 ms; end-to-end is green through 5 seconds, yellow through 15 seconds, and red above 15 seconds. Tune these thresholds once representative baselines are available. The information icon beside the averages explains what each timer covers and common sources of delay. APIM round trip combines gateway, DOCMP/backend, and network time; it cannot identify which component caused a delay. Compare an individual batch with the corresponding Project Pulse, RTA, and APIM/DOCMP logs to isolate the cause.
+Initial color bands are operating signals, not configured SLAs: RTA pull, APIM round trip, and RTA writeback are green through 1 second, yellow through 5 seconds, and red above 5 seconds; translation is green through 100 ms, yellow through 500 ms, and red above 500 ms; end-to-end is green through 5 seconds, yellow through 15 seconds, and red above 15 seconds. Tune these thresholds once representative baselines are available. The information icon beside the averages explains what each timer covers and common sources of delay. APIM round trip combines gateway, downstream API/backend, and network time; it cannot identify which component caused a delay. Compare an individual batch with the corresponding Project Pulse, RTA, and APIM and its backend logs to isolate the cause.
 
 For details, see Microsoft's documentation on [Container Apps authentication](https://learn.microsoft.com/azure/container-apps/authentication), [Microsoft Entra authentication for Container Apps](https://learn.microsoft.com/azure/container-apps/authentication-entra), [app roles](https://learn.microsoft.com/entra/identity-platform/howto-add-app-roles-in-apps), and [assigning users and groups to an enterprise application](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal).
 
@@ -310,14 +310,14 @@ REQUEST_HISTORY_PAYLOAD_MODE=OFF
 
 Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
 
-- `SEQUENTIAL` (default): process one record at a time; APIM/DOCMP and RTA are both serial.
-- `RTA_ONLY`: APIM/DOCMP stays serial; RTA status PUTs may overlap.
-- `APIM_ONLY`: APIM/DOCMP calls may overlap; RTA status PUTs stay serial.
-- `FULL`: both APIM/DOCMP and RTA status PUTs may overlap.
+- `SEQUENTIAL` (default): process one record at a time; APIM and its backend and RTA are both serial.
+- `RTA_ONLY`: APIM and its backend stays serial; RTA status PUTs may overlap.
+- `APIM_ONLY`: APIM and its backend calls may overlap; RTA status PUTs stay serial.
+- `FULL`: both APIM and its backend and RTA status PUTs may overlap.
 
 `PROCESSING_MAX_CONCURRENCY` sets the per-batch concurrency (default `5`). `PROCESSING_MAX_CONCURRENCY_LIMIT` sets its configurable upper bound (default `300`); the effective concurrency is clamped between 1 and that limit. Raise both values when intentionally increasing concurrency. For batches larger than the configured concurrency, remaining records wait while the configured number are processed concurrently. APIM
-concurrency also increases the number of simultaneous requests that can reach DOCMP through APIM;
-use it only after checking APIM and DOCMP capacity. RTA concurrency increases simultaneous status
+concurrency also increases the number of simultaneous requests that can reach downstream API through APIM;
+use it only after checking APIM and downstream API capacity. RTA concurrency increases simultaneous status
 PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
 so multiple replicas add to the aggregate load. The Service Bus worker handles one queued record
 at a time.
@@ -334,7 +334,7 @@ The legacy `LOG_POLL_PAYLOADS` setting is honored only when `REQUEST_HISTORY_PAY
 
 ### RTA failure notifications
 
-Configure `RTANotificationsBaseURL` and `RTANotificationsPath` to enable POSTs to RTA's `/admin/notifications` endpoint. A DOCMP error envelope identified by `errorCode` (for example, `ACC-NOTF-001`) is treated as an application error and written back to RTA, even if APIM mirrors its status as HTTP 404. It is not queued to Service Bus or sent to the notification endpoint. Other actual APIM HTTP statuses other than 200 are sent to Service Bus for a bounded 10-minute retry window, with the latest HTTP status and response details retained. Successful enqueueing does not send an admin notification. Retries use bounded backoff and cannot extend the original deadline. If APIM/DOCMP never succeeds, Project Pulse writes a final failure status to RTA with the last HTTP response in `API_CALL_HISTORY`. Failure to enqueue/schedule a retry triggers an admin notification. If that final RTA writeback also fails through its direct retry window, the worker sends an admin notification and dead-letters it. A worker process that is completely stopped cannot report its own outage and requires Azure monitoring. Status values inside HTTP 200 DOCMP JSON are application data, not HTTP statuses. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include request IDs when available, and omit raw payloads and patient identifiers.
+Configure `RTANotificationsBaseURL` and `RTANotificationsPath` to enable POSTs to RTA's `/admin/notifications` endpoint. A downstream API error envelope identified by `errorCode` (for example, `ACC-NOTF-001`) is treated as an application error and written back to RTA, even if APIM mirrors its status as HTTP 404. It is not queued to Service Bus or sent to the notification endpoint. Other actual APIM HTTP statuses other than 200 are sent to Service Bus for a bounded 10-minute retry window, with the latest HTTP status and response details retained. Successful enqueueing does not send an admin notification. Retries use bounded backoff and cannot extend the original deadline. If APIM and its backend never succeeds, Project Pulse writes a final failure status to RTA with the last HTTP response in `API_CALL_HISTORY`. Failure to enqueue/schedule a retry triggers an admin notification. If that final RTA writeback also fails through its direct retry window, the worker sends an admin notification and dead-letters it. A worker process that is completely stopped cannot report its own outage and requires Azure monitoring. Status values inside HTTP 200 downstream API JSON are application data, not HTTP statuses. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include request IDs when available, and omit raw payloads and patient identifiers.
 
 ### Required secret references
 
