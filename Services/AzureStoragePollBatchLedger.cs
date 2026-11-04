@@ -119,25 +119,6 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
             entity["ProcessingStage"] = succeeded is null ? "RtaWritebackPending" : succeeded.Value ? "RtaWritebackSucceeded" : "RtaWritebackFailed";
         }, cancellationToken);
 
-    public Task RecordProcessingCompletedAsync(
-        string pollRunId,
-        int ordinal,
-        string disposition,
-        string reason,
-        DateTimeOffset completedAtUtc,
-        CancellationToken cancellationToken) =>
-        UpdateRecordAsync(pollRunId, ordinal, entity =>
-        {
-            entity["ProcessingDisposition"] = Truncate(disposition);
-            entity["ProcessingReason"] = Truncate(reason);
-            entity["ProcessingCompletedAtUtc"] = completedAtUtc;
-            if (!entity.ContainsKey("ProcessingStage") ||
-                string.Equals(entity["ProcessingStage"]?.ToString(), "Received", StringComparison.Ordinal))
-            {
-                entity["ProcessingStage"] = "ProcessingCompleted";
-            }
-        }, cancellationToken);
-
     public Task CompletePollAsync(
         string pollRunId,
         DateTimeOffset completedAtUtc,
