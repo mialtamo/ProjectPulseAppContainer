@@ -42,14 +42,6 @@ public interface IPollBatchLedger
         DateTimeOffset completedAtUtc,
         CancellationToken cancellationToken);
 
-    Task RecordProcessingCompletedAsync(
-        string pollRunId,
-        int ordinal,
-        string disposition,
-        string reason,
-        DateTimeOffset completedAtUtc,
-        CancellationToken cancellationToken);
-
     Task CompletePollAsync(
         string pollRunId,
         DateTimeOffset completedAtUtc,
