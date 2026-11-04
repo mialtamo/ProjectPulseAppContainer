@@ -3,7 +3,9 @@ using Microsoft.Extensions.Hosting;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ProjectPulse.Processor.Models;
+using ProjectPulse.Processor.Options;
 using ProjectPulse.Processor.Services;
+using Microsoft.Extensions.Options;
 
 namespace ProjectPulse.Processor.ContainerApp;
 
@@ -11,6 +13,8 @@ public sealed class ClaimPollingWorker(
     IHealthGate healthGate,
     IAppApiClient appApiClient,
     IClaimProcessor claimProcessor,
+    IPollBatchLedger pollBatchLedger,
+    IOptions<ClaimProcessorOptions> claimProcessorOptions,
     ApimOutageTracker outageTracker,
     IClaimPollingTrigger pollTrigger,
     TelemetryClient telemetry,
@@ -158,19 +162,46 @@ public sealed class ClaimPollingWorker(
             claims.Count,
             outageDecision.Action == ApimOutageAction.BufferToServiceBus ? "ServiceBusBuffer" : "APIM");
 
+        var receivedAtUtc = pollResult.RecordsReceivedAtUtc ?? DateTimeOffset.UtcNow;
+        try
+        {
+            var manifest = claims.Select((claim, ordinal) => new PollBatchRecordSeed(
+                ordinal,
+                GetRecordIdentifier(claim),
+                TryGetScalar(claim, "REQUEST_ID", out var requestId) ? requestId : null)).ToArray();
+            await pollBatchLedger.RecordReceivedAsync(
+                runId,
+                claimProcessorOptions.Value.IsMockApiMode() ? "MOCK" : "RTA",
+                receivedAtUtc,
+                pollResult.RtaPullDurationMs,
+                claimProcessorOptions.Value.RtaStatusWritebackEnabled,
+                manifest,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not persist poll batch manifest for PollRunId={PollRunId}", runId);
+        }
+
         LogSuspectedDuplicateRtaRecords(claims, runId);
 
         IReadOnlyList<ClaimProcessingResult> results;
         try
         {
             results = outageDecision.Action == ApimOutageAction.BufferToServiceBus
-                ? await claimProcessor.BufferBatchAsync(claims, outageDecision.Reason, pollResult.RtaResponsePayloads, cancellationToken)
+                ? await claimProcessor.BufferBatchAsync(
+                    claims,
+                    outageDecision.Reason,
+                    pollResult.RtaResponsePayloads,
+                    cancellationToken,
+                    runId)
                 : await claimProcessor.ProcessBatchAsync(
                     claims,
                     pollResult.RtaResponsePayloads,
                     cancellationToken,
                     pollResult.RecordsReceivedAtUtc,
-                    pollResult.RtaPullDurationMs);
+                    pollResult.RtaPullDurationMs,
+                    pollRunId: runId);
         }
         catch (Exception ex)
         {
@@ -180,6 +211,17 @@ public sealed class ClaimPollingWorker(
 
             telemetry.TrackException(ex);
             return;
+        }
+        finally
+        {
+            try
+            {
+                await pollBatchLedger.CompletePollAsync(runId, DateTimeOffset.UtcNow, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not finalize poll batch ledger for PollRunId={PollRunId}", runId);
+            }
         }
 
         var summary = results
@@ -283,6 +325,46 @@ public sealed class ClaimPollingWorker(
                 recentRtaIdentities.Remove(oldestKey);
             }
         }
+    }
+
+    private static string GetRecordIdentifier(JsonElement claim)
+    {
+        if (claim.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in claim.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "CORRELATION_ID", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(property.Name, "IDEMPOTENCY_KEY", StringComparison.OrdinalIgnoreCase))
+                {
+                    var value = property.Value.ValueKind == JsonValueKind.String
+                        ? property.Value.GetString()
+                        : property.Value.ValueKind == JsonValueKind.Null ? null : property.Value.ToString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+                }
+            }
+        }
+
+        return "missing-id";
+    }
+
+    private static bool TryGetScalar(JsonElement claim, string fieldName, out string value)
+    {
+        value = string.Empty;
+        if (claim.ValueKind != JsonValueKind.Object ||
+            !claim.TryGetProperty(fieldName, out var element))
+        {
+            return false;
+        }
+
+        value = element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonValueKind.Number => element.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => element.ToString()
+        };
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     private static IEnumerable<(string Kind, string Value)> GetRtaIdentityValues(JsonElement claim)

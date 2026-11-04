@@ -145,6 +145,8 @@ The admin-only `/ledger.html` page presents a searchable lifecycle view of store
 /requests/{id}
 /requests.html
 /ledger.html (admin-only lifecycle ledger)
+/batches.html (admin-only poll-batch reconciliation)
+
 /live
 ```
 
@@ -213,12 +215,15 @@ Container Apps authentication exposes authenticated identity information in the 
 | --- | --- |
 | `/requests.html` | Redirects unauthenticated browsers to the Entra sign-in page; requires the `ProjectPulse.Admin` role after sign-in. |
 | `/ledger.html` | Admin-only lifecycle ledger; uses the same Entra role gate and displays stored milestones without payload bodies. |
+| `/batches.html` | Admin-only poll-batch reconciliation; uses the same Entra role gate and shows counts and record-level stage gaps for each RTA GET poll run. |
 | `/requests` | Returns `401` without an authenticated principal and `403` when the caller lacks `ProjectPulse.Admin`. |
 | `/requests/averages` | Returns average timing metrics for `range=7d`, `30d`, `365d`, or `all`; `range=custom` accepts `fromUtc` and `toUtc` ISO timestamps. Uses the same authorization behavior as `/requests`. |
 | `/requests/cleanup/preview?range=24h|7d|30d|all` | Admin-only preview count for the selected history cleanup range. |
 | `DELETE /requests?range=24h|7d|30d|all` | Admin-only, same-origin cleanup of request history and eligible payload blobs. |
 | `/requests/{id}` | Same authorization behavior as `/requests`. |
 | `/`, `/pulse`, `/pulse-health`, `/live` | Not restricted by the application role check in the current implementation. |
+
+The admin-only `/batches.html` page starts with the complete set of records returned by each successful, non-empty RTA GET. It saves a small manifest in the existing request-history table before processing begins, then tracks APIM POST attempts, APIM responses, Service Bus buffering, and RTA writeback outcomes. The batch view summarizes counts and lets admins filter to records with a missing or failed stage and search by correlation ID or RTA request ID. “APIM attempt” means the request was prepared and recorded immediately before sending; the APIM response stage means an HTTP response was received. RTA writeback success is recorded only when the RTA API reports success. A missing milestone is a potential gap for investigation; it does not by itself prove that APIM, RTA, or Service Bus lost the record. No request or response payload bodies are copied into the batch manifest.
 
 The requests page shows average RTA pull, translation, APIM round-trip, RTA writeback, and end-to-end durations for the selected time range: last 7 days, last 30 days, last year (rolling 365 days), all time, or a custom date/time interval. The date window is applied to each batch's creation time, and the failure count uses the same window. Each average is calculated once per batch and includes only batches with a recorded value for that timing; its sample count is shown with the average. The summary is fetched separately from the first 100 displayed records, so it does not slow the initial transaction list. Results are cached in memory for up to one minute per app instance and selected range.
 
