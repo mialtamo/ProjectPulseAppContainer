@@ -120,7 +120,7 @@ For testing with an APIM policy that supports mock scenarios, set `APIM_MOCK_SCE
 | `http-503` | Actual HTTP 503 response. |
 | `http-504` | Actual HTTP 504 response. |
 
-These values exercise different paths: downstream API errors inside HTTP 200 responses are application errors; `http-*` scenarios simulate actual HTTP failures and the configured retry/notification behavior. Only set this variable when the APIM policy is configured to recognize the header. See the [full configuration reference](docs/CONFIGURATION.md#configuration-reference).
+These scenarios exercise different paths: downstream API errors inside HTTP 200 responses are application errors; `http-*` scenarios simulate actual HTTP failures and the configured retry/notification behavior. Only set this variable when the APIM policy is configured to recognize the header. See the [full configuration reference](docs/CONFIGURATION.md#configuration-reference).
 
 ## Request timing diagnostics
 
