@@ -162,6 +162,19 @@ Set the audience to the API registration's Application ID URI (for the default U
 
 After configuration, a request without a valid token or without the `ProjectPulse.Invoke` role should receive HTTP 401 from APIM before reaching DOCMP. A valid request should continue to the existing backend flow. The RTA/App API authentication scope remains separate and is not enabled by this APIM change.
 
+To return an explicit diagnostic acknowledgment after APIM validates the Entra token, add this to the existing `<outbound>` policy section (after `<base />`), preserving all current outbound policies:
+
+```xml
+<outbound>
+    <base />
+    <set-header name="X-Pulse-Auth-Validated" exists-action="override">
+        <value>true</value>
+    </set-header>
+</outbound>
+```
+
+Project Pulse records whether it attached a bearer token and whether the APIM response included `X-Pulse-Auth-Validated: true`. A present `true` means the request reached APIM's outbound pipeline after inbound token validation succeeded. A missing header means validation was not confirmed; it is not proof by itself that the token was rejected. The access token itself is never stored or shown. The header is diagnostic only and does not replace token validation.
+
 ## Azure Service Bus retry setup
 
 Project Pulse authenticates to Azure Service Bus with the Container App's managed identity through .NET `DefaultAzureCredential`. Do not configure a Service Bus connection string or SAS key for this integration.
