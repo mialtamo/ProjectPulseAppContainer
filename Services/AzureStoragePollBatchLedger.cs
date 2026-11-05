@@ -317,7 +317,7 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
         {
             var receivedAtUtc = batch.GetDateTimeOffset("ReceivedAtUtc");
             var shouldDelete = deleteOlderThan
-                ? receivedAtUtc is not null && receivedAtUtc < cutoffUtc
+                ? receivedAtUtc is not null && cutoffUtc is not null && receivedAtUtc.Value < cutoffUtc.Value
                 : cutoffUtc is null || receivedAtUtc is null || receivedAtUtc >= cutoffUtc.Value;
             if (shouldDelete)
             {
