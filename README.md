@@ -14,7 +14,7 @@ Project Pulse App Container is licensed under the MIT License. See [LICENSE](LIC
 
 This repository is the Azure Container Apps version of Project Pulse. It is intentionally isolated from the original Azure Functions implementation so the POC can validate sub-minute polling without changing the working Function App.
 
-The application is a .NET 10 ASP.NET Core container that supports two runtime roles from one codebase and one image. `PROJECT_PULSE_ROLE=RTA` runs the continuous RTA/App API poller. `PROJECT_PULSE_ROLE=SERVICEBUS` runs the Service Bus-only retry worker. Both roles reuse the same APIM, writeback, request-history, managed-identity, and telemetry services.
+The application is a .NET 10 ASP.NET Core container that supports two runtime roles from one codebase and one image. `PROJECT_PULSE_ROLE=RTA` runs the continuous RTA/App API poller. `PROJECT_PULSE_ROLE=SERVICEBUS` runs the Service Bus-only retry worker. Both roles reuse the same APIM, writeback, request-history, managed-identity, and telemetry services. `PROJECT_PULSE_ENVIRONMENT` is displayed with the image version and runtime role in the landing page and request, lifecycle, and batch pages; it is a runtime setting, so the same image can identify each deployment as MOCK, DEV, STAGE, PROD, or another configured value.
 
 ## Runtime roles
 
