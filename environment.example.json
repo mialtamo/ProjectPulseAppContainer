@@ -6,6 +6,7 @@
   "AppApiBaseUrl": "https://example.invalid",
   "AppApiTimeoutSeconds": "10",
   "AppApiScope": "",
+  "x-api-key": "",
   "RtaQueuedPath": "/claims/pending",
   "RtaHealthPath": "/health",
   "RtaDbHealthPath": "/health",
