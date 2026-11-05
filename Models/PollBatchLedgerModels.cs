@@ -40,3 +40,11 @@ public sealed record PollBatchSummary(
 public sealed record PollBatchDetail(
     PollBatchSummary Summary,
     IReadOnlyList<PollBatchRecord> Records);
+
+public sealed record PollBatchThroughput(
+    int PollCount,
+    long RecordCount,
+    DateTimeOffset? FirstRecordReceivedAtUtc,
+    DateTimeOffset? LastPollCompletedAtUtc,
+    long? ObservedWallTimeMs,
+    double? RecordsPerMinute);
