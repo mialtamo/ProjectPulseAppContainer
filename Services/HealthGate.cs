@@ -56,6 +56,7 @@ public sealed class HealthGate(
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            RtaApiKeyHeader.Apply(request, _options);
             await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);

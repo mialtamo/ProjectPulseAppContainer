@@ -124,13 +124,21 @@ app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFact
     static async Task<bool> CheckHttpAsync(
         IHttpClientFactory clientFactory,
         string? baseUrl,
-        string path)
+        string path,
+        string? apiKey = null)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(baseUrl)) return false;
             using var client = clientFactory.CreateClient("HealthCheck");
-            using var response = await client.GetAsync($"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}");
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                request.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+            }
+            using var response = await client.SendAsync(request);
             return response.IsSuccessStatusCode;
         }
         catch { return false; }
@@ -152,7 +160,8 @@ app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFact
     var appApi = await CheckHttpAsync(
         httpClientFactory,
         configuration["AppApiBaseUrl"],
-        configuration["RtaHealthPath"] ?? configuration["AppApiHealthPath"] ?? "/health");
+        configuration["RtaHealthPath"] ?? configuration["AppApiHealthPath"] ?? "/health",
+        Environment.GetEnvironmentVariable("x-api-key") ?? configuration["x-api-key"]);
 
     var apim = await CheckHttpAsync(
         httpClientFactory,
