@@ -468,7 +468,7 @@ public sealed class ClaimProcessor(
                 return BuildResults(correlationIds, ClaimProcessingDisposition.QueuedForRetry, reason, statusCode);
             }
 
-            if (_options.ApimAuthenticationEnabled && !ValidateApimResponseToken(response, batchId))
+            if (!ValidateApimResponseToken(response, batchId))
             {
                 await TryRecordHistoryAsync(
                     () => requestHistoryStore.RecordApimResultAsync(

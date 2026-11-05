@@ -38,7 +38,7 @@ For backward compatibility, if `PROJECT_PULSE_ROLE` is not yet configured the co
 
 ### APIM authentication
 
-By default, Project Pulse uses each Container App's managed identity to get an Entra bearer token for APIM and validates APIM's configured response token. Configure `ApimScope` and assign the `ProjectPulse.Invoke` app role to the managed identities used by both the RTA and SERVICEBUS apps. Then configure APIM inbound token validation for the tenant, API audience, and role claim. The [APIM managed-identity setup and inbound policy example](docs/CONFIGURATION.md#apim-managed-identity-authentication) explains the steps. For controlled legacy-policy testing only, `APIM_AUTHENTICATION_ENABLED=false` disables both checks; it defaults to `true`. RTA API authentication is a separate configuration.
+By default, Project Pulse uses each Container App's managed identity to get an Entra bearer token for APIM and validates APIM's configured response token. Configure `ApimScope` and assign the `ProjectPulse.Invoke` app role to the managed identities used by both the RTA and SERVICEBUS apps. Then configure APIM inbound token validation for the tenant, API audience, and role claim. The [APIM managed-identity setup and inbound policy example](docs/CONFIGURATION.md#apim-managed-identity-authentication) explains the steps. For controlled legacy-policy testing only, `APIM_AUTHENTICATION_ENABLED=false` disables bearer-token sending only; APIM response-token validation remains enforced. The flag defaults to `true`. RTA API authentication is a separate configuration.
 
 ### Service Bus retry worker setup
 

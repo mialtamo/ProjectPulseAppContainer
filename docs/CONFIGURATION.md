@@ -74,7 +74,7 @@ The configured storage account must be reachable from the Container App environm
 | `APIM_AUTHENTICATION_ENABLED` | Both | No | `true` | No | Enables Pulse's APIM bearer-token authentication and APIM response-token validation. Set to `false` only to test a legacy APIM policy that does not validate the bearer token or return the response-token header. |
 | `ApimScope` | Both | Required when authentication is enabled | `api://<API-application-client-id>/.default` | No | Managed-identity OAuth scope for APIM. Required when `APIM_AUTHENTICATION_ENABLED=true`; use the Application ID URI of the APIM resource app registration with `/.default`. |
 | `ApimResponseHeaderName` | Both | No | `X-Pulse-Response-Token` | No | Response header containing the APIM response-validation token. |
-| `ApimResponseToken` | Both | Required when authentication is enabled | secret | **Yes** | Expected APIM response token. Use a Container Apps secret reference. Required only when `APIM_AUTHENTICATION_ENABLED=true`. |
+| `ApimResponseToken` | Both | Yes | secret | **Yes** | Expected APIM response token. Use a Container Apps secret reference. Always required; `APIM_AUTHENTICATION_ENABLED=false` does not disable response-token validation. |
 | `APIM_MOCK_SCENARIO` | Both | No | empty | No | Optional test control forwarded to APIM as `X-Mock-Scenario`. Supported scenarios include `success`, application-error cases defined by the APIM mock policy, and `http-404`, `http-429`, `http-500`, `http-503`, and `http-504`. Blank omits the header. Configure only when the APIM policy supports mock scenarios. |
 | `APIM_OUTAGE_MODE` | Both | No | `BUFFER_THEN_STOP` | No | Controls behavior during APIM outage: `BUFFER_THEN_STOP`, `STOP_IMMEDIATELY`, or `BUFFER_CONTINUOUSLY`. |
 | `APIM_OUTAGE_POLL_STOP_SECONDS` | RTA | No | `300` | No | Outage duration used before the RTA poller stops in buffer-then-stop mode. |
@@ -115,7 +115,7 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 
 By default, Project Pulse sends an Entra access token with every APIM adjudication POST and validates the configured APIM response token. Configure this for **both** Container Apps (`PROJECT_PULSE_ROLE=RTA` and `PROJECT_PULSE_ROLE=SERVICEBUS`), because both roles can call APIM. The token is acquired through the Container App's managed identity; no client secret or certificate is stored by Project Pulse.
 
-Set `APIM_AUTHENTICATION_ENABLED=false` on both apps only when temporarily testing a legacy APIM policy that does not validate Pulse's bearer token or return the configured response-token header. With this flag false, Project Pulse sends no APIM bearer token and skips response-token validation; it still makes APIM requests and processes their HTTP responses. The default is `true`. Turning this off removes both authentication checks and should be limited to a controlled test environment. It does not change RTA/App API or Service Bus authentication.
+Set `APIM_AUTHENTICATION_ENABLED=false` on both apps only when temporarily testing a legacy APIM policy that does not validate Pulse's bearer token. With this flag false, Project Pulse sends no APIM bearer token, while APIM response-token validation remains enforced. The default is `true`. Disabling bearer-token sending removes APIM's Entra authorization check for the caller, so limit this to a controlled test environment. It does not change RTA/App API or Service Bus authentication.
 
 Set this required environment variable on both apps:
 
@@ -176,7 +176,7 @@ To return an explicit diagnostic acknowledgment after APIM validates the Entra t
 </outbound>
 ```
 
-Project Pulse records whether it attached a bearer token and whether the APIM response included `X-Pulse-Auth-Validated: true`. A present `true` means the request reached APIM's outbound pipeline after inbound token validation succeeded. A missing header means validation was not confirmed; it is not proof by itself that the token was rejected. The access token itself is never stored or shown. The header is diagnostic only and does not replace token validation.
+Project Pulse records whether it attached a bearer token and whether the APIM response included `X-Pulse-Auth-Validated: true`. A present `true` means the request reached APIM's outbound pipeline after inbound token validation succeeded. A missing header means validation was not confirmed; it is not proof by itself that the token was rejected. The access token itself is never stored or shown. The header is diagnostic only and does not replace Entra bearer-token or APIM response-token validation.
 
 ## Azure Service Bus retry setup
 

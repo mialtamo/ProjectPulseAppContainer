@@ -87,7 +87,7 @@ var apimAuthenticationEnabled = app.Services.GetRequiredService<IOptions<ClaimPr
 if (!apimAuthenticationEnabled)
 {
     app.Logger.LogWarning(
-        "APIM authentication is disabled by APIM_AUTHENTICATION_ENABLED=false. Project Pulse will not send a bearer token or validate the APIM response token.");
+        "APIM authentication is disabled by APIM_AUTHENTICATION_ENABLED=false. Project Pulse will not send an APIM bearer token. APIM response-token validation remains enabled.");
 }
 
 var adminAuditLogger = app.Services.GetRequiredService<ILoggerFactory>()
