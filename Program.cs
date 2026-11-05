@@ -17,6 +17,9 @@ var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
 var projectPulseBuildVersion = Environment.GetEnvironmentVariable("PROJECT_PULSE_BUILD_VERSION") ?? "unknown";
 var projectPulseEnvironment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT");
 projectPulseEnvironment = string.IsNullOrWhiteSpace(projectPulseEnvironment) ? "UNKNOWN" : projectPulseEnvironment.Trim();
+var requestHistoryStorageConfigured = !string.IsNullOrWhiteSpace(
+    Environment.GetEnvironmentVariable("RequestHistoryStorageConnectionString")
+    ?? Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
 
 builder.Services.AddApplicationInsightsTelemetry();
 
@@ -79,7 +82,10 @@ builder.Services.AddSingleton<IClaimPollingTrigger, ClaimPollingTrigger>();
 if (projectPulseRole == ProjectPulseRole.Rta)
 {
     builder.Services.AddHostedService<ClaimPollingWorker>();
-    builder.Services.AddHostedService<RequestHistoryAutoCleanupWorker>();
+    if (requestHistoryStorageConfigured)
+    {
+        builder.Services.AddHostedService<RequestHistoryAutoCleanupWorker>();
+    }
 }
 else
 {
