@@ -276,6 +276,7 @@ POLL_INTERVAL_SECONDS=5
 APP_API_MODE=MOCK
 AppApiBaseUrl=<RTA or mock API URL>
 AppApiTimeoutSeconds=10
+x-api-key=<secret reference>
 
 ApimBaseUrl=<APIM URL>
 ApimAdjudicationPath=pulse/pending
@@ -337,6 +338,8 @@ The legacy `LOG_POLL_PAYLOADS` setting is honored only when `REQUEST_HISTORY_PAY
 Configure `RTANotificationsBaseURL` and `RTANotificationsPath` to enable POSTs to RTA's `/admin/notifications` endpoint. A downstream API error envelope identified by `errorCode` (for example, `ACC-NOTF-001`) is treated as an application error and written back to RTA, even if APIM mirrors its status as HTTP 404. It is not queued to Service Bus or sent to the notification endpoint. Other actual APIM HTTP statuses other than 200 are sent to Service Bus for a bounded 10-minute retry window, with the latest HTTP status and response details retained. Successful enqueueing does not send an admin notification. Retries use bounded backoff and cannot extend the original deadline. If APIM/backend never succeeds, Project Pulse writes a final failure status to RTA with the last HTTP response in `API_CALL_HISTORY`. Failure to enqueue/schedule a retry triggers an admin notification. If that final RTA writeback also fails through its direct retry window, the worker sends an admin notification and dead-letters it. A worker process that is completely stopped cannot report its own outage and requires Azure monitoring. Status values inside HTTP 200 downstream API JSON are application data, not HTTP statuses. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include request IDs when available, and omit raw payloads and patient identifiers.
 
 ### Required secret references
+
+`x-api-key` is the secret API key sent as an HTTP header on RTA queued-request GETs, status PUTs, and RTA health checks. Store it as a Container Apps secret (for example, `rta-api-key`) and configure the environment variable named exactly `x-api-key` on both apps to reference that secret. The value is not written to logs or request bodies.
 
 `ApimResponseToken` is the expected value returned by APIM in the configured response-token header. Store it as a Container Apps secret, recommended name `apim-response-token`, and configure the `ApimResponseToken` environment variable to reference that secret.
 
