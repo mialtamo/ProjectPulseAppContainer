@@ -52,11 +52,20 @@ public interface IPollBatchLedger
         DateTimeOffset? receivedAfterUtc,
         CancellationToken cancellationToken);
 
+    Task<PollBatchThroughput> GetThroughputAsync(
+        DateTimeOffset? fromUtc,
+        DateTimeOffset? toUtc,
+        CancellationToken cancellationToken);
+
     Task<PollBatchDetail?> GetAsync(
         string pollRunId,
         CancellationToken cancellationToken);
 
     Task<int> DeleteForCleanupAsync(
         DateTimeOffset? receivedAfterUtc,
+        CancellationToken cancellationToken);
+
+    Task<int> DeleteOlderThanAsync(
+        DateTimeOffset receivedBeforeUtc,
         CancellationToken cancellationToken);
 }

@@ -17,6 +17,8 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     private const string RecentPartitionKeyValue = "!recent";
     private const string IndexMetadataPartitionKey = "!index";
     private const string IndexVersionRowKey = "recent-v4";
+    private const string AutoCleanupSettingsPartition = "!settings";
+    private const string AutoCleanupSettingsRow = "request-history-auto-cleanup";
 
     private readonly TableClient _table;
     private readonly BlobContainerClient _container;
@@ -747,6 +749,96 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             sampleCount);
     }
 
+    public async Task<RequestHistoryAutoCleanupSettings> GetAutoCleanupSettingsAsync(
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        try
+        {
+            var entity = (await _table.GetEntityAsync<TableEntity>(
+                AutoCleanupSettingsPartition,
+                AutoCleanupSettingsRow,
+                cancellationToken: cancellationToken)).Value;
+            return MapAutoCleanupSettings(entity);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return new RequestHistoryAutoCleanupSettings(false, 10, 10, null);
+        }
+    }
+
+    public async Task<RequestHistoryAutoCleanupSettings> UpdateAutoCleanupSettingsAsync(
+        RequestHistoryAutoCleanupUpdate settings,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        var nowUtc = DateTimeOffset.UtcNow;
+        var entity = new TableEntity(AutoCleanupSettingsPartition, AutoCleanupSettingsRow)
+        {
+            ["Enabled"] = settings.Enabled,
+            ["RetentionMinutes"] = settings.RetentionMinutes,
+            ["CheckIntervalMinutes"] = settings.CheckIntervalMinutes,
+            ["LastRunAtUtc"] = nowUtc,
+            ["UpdatedAtUtc"] = nowUtc
+        };
+        await _table.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+        return MapAutoCleanupSettings(entity);
+    }
+
+    public async Task<RequestHistoryAutoCleanupSettings?> TryClaimAutoCleanupRunAsync(
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        TableEntity entity;
+        try
+        {
+            entity = (await _table.GetEntityAsync<TableEntity>(
+                AutoCleanupSettingsPartition,
+                AutoCleanupSettingsRow,
+                cancellationToken: cancellationToken)).Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+
+        var settings = MapAutoCleanupSettings(entity);
+        if (!settings.Enabled ||
+            (settings.LastRunAtUtc is { } lastRun &&
+             nowUtc - lastRun < TimeSpan.FromMinutes(settings.CheckIntervalMinutes)))
+        {
+            return null;
+        }
+
+        entity["LastRunAtUtc"] = nowUtc;
+        try
+        {
+            await _table.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+            return settings with { LastRunAtUtc = nowUtc };
+        }
+        catch (RequestFailedException ex) when (ex.Status is 404 or 412)
+        {
+            // Another RTA replica claimed this scheduled run, or settings changed.
+            return null;
+        }
+    }
+
+    private static RequestHistoryAutoCleanupSettings MapAutoCleanupSettings(TableEntity entity) =>
+        new(
+            entity.GetBoolean("Enabled") ?? false,
+            Math.Clamp(entity.GetInt32("RetentionMinutes") ?? 10, 1, 525600),
+            Math.Clamp(entity.GetInt32("CheckIntervalMinutes") ?? 10, 1, 1440),
+            entity.GetDateTimeOffset("LastRunAtUtc"));
+
+    private static bool MatchesCleanupAge(
+        DateTimeOffset createdAtUtc,
+        DateTimeOffset? cutoffUtc,
+        bool deleteOlderThan) =>
+        deleteOlderThan
+            ? cutoffUtc is { } cutoff && createdAtUtc < cutoff
+            : cutoffUtc is null || createdAtUtc >= cutoffUtc.Value;
+
     public async Task<int> CountForCleanupAsync(
         DateTimeOffset? createdAfterUtc,
         CancellationToken cancellationToken)
@@ -861,6 +953,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             var result = await DeleteForCleanupAsync(
                 createdAfterUtc,
                 CancellationToken.None,
+                false,
                 async update =>
                 {
                     var current = update with
@@ -927,11 +1020,27 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
     public Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
         DateTimeOffset? createdAfterUtc,
         CancellationToken cancellationToken) =>
-        DeleteForCleanupAsync(createdAfterUtc, cancellationToken, null);
+        DeleteForCleanupAsync(createdAfterUtc, cancellationToken, false, null);
+
+    public async Task<RequestHistoryCleanupResult> DeleteOlderThanAsync(
+        DateTimeOffset createdBeforeUtc,
+        CancellationToken cancellationToken)
+    {
+        await _cleanupExecutionLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await DeleteForCleanupAsync(createdBeforeUtc, cancellationToken, true, null);
+        }
+        finally
+        {
+            _cleanupExecutionLock.Release();
+        }
+    }
 
     private async Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
         DateTimeOffset? createdAfterUtc,
         CancellationToken cancellationToken,
+        bool deleteOlderThan,
         Func<RequestHistoryCleanupProgress, Task>? reportProgress)
     {
         await EnsureInitializedAsync(cancellationToken);
@@ -947,7 +1056,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             cancellationToken: cancellationToken))
         {
             primaryRecordsById[entity.RowKey] = entity;
-            if (createdAfterUtc is null || entity.CreatedAtUtc >= createdAfterUtc.Value)
+            if (MatchesCleanupAge(entity.CreatedAtUtc, createdAfterUtc, deleteOlderThan))
             {
                 records.Add(entity);
                 selectedRecordIds.Add(entity.RowKey);
@@ -966,7 +1075,7 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             var primaryExists = !string.IsNullOrWhiteSpace(primaryId)
                 && primaryRecordsById.ContainsKey(primaryId);
             var primarySelected = primaryExists && selectedRecordIds.Contains(primaryId!);
-            var indexSelected = createdAfterUtc is null || indexEntity.CreatedAtUtc >= createdAfterUtc.Value;
+            var indexSelected = MatchesCleanupAge(indexEntity.CreatedAtUtc, createdAfterUtc, deleteOlderThan);
 
             // Match the preview's union of primary rows and qualifying index rows.
             // A matching index row selects its primary row even if their timestamps differ.
@@ -992,7 +1101,10 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
 
         if (records.Count == 0 && indexRecords.Count == 0)
         {
-            return new RequestHistoryCleanupResult(0, 0, 0);
+            var deletedPollEntities = deleteOlderThan
+                ? await _pollBatchLedger.DeleteOlderThanAsync(createdAfterUtc!.Value, cancellationToken)
+                : await _pollBatchLedger.DeleteForCleanupAsync(createdAfterUtc, cancellationToken);
+            return new RequestHistoryCleanupResult(deletedPollEntities, 0, 0);
         }
 
         // Delete index entries first so a timeout cannot leave deleted primary rows
@@ -1238,7 +1350,9 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
             Volatile.Read(ref deletedPayloadBlobs),
             Volatile.Read(ref payloadCleanupFailures));
 
-        var deletedPollBatchEntities = await _pollBatchLedger.DeleteForCleanupAsync(createdAfterUtc, cancellationToken);
+        var deletedPollBatchEntities = deleteOlderThan
+            ? await _pollBatchLedger.DeleteOlderThanAsync(createdAfterUtc!.Value, cancellationToken)
+            : await _pollBatchLedger.DeleteForCleanupAsync(createdAfterUtc, cancellationToken);
         _cachedTimingAverages = null;
         _cachedTimingAveragesRangeKey = null;
         return new RequestHistoryCleanupResult(

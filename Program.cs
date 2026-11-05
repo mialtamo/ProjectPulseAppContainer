@@ -7,6 +7,7 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Options;
 using ProjectPulse.Processor.ContainerApp;
 using ProjectPulse.Processor.Options;
+using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Services;
 using ProjectPulse.Processor.Web;
 
@@ -14,6 +15,11 @@ var builder = WebApplication.CreateBuilder(args);
 var projectPulseRole = ProjectPulseRoleResolver.Resolve();
 var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
 var projectPulseBuildVersion = Environment.GetEnvironmentVariable("PROJECT_PULSE_BUILD_VERSION") ?? "unknown";
+var projectPulseEnvironment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT");
+projectPulseEnvironment = string.IsNullOrWhiteSpace(projectPulseEnvironment) ? "UNKNOWN" : projectPulseEnvironment.Trim();
+var requestHistoryStorageConfigured = !string.IsNullOrWhiteSpace(
+    Environment.GetEnvironmentVariable("RequestHistoryStorageConnectionString")
+    ?? Environment.GetEnvironmentVariable("AzureWebJobsStorage"));
 
 builder.Services.AddApplicationInsightsTelemetry();
 
@@ -76,6 +82,10 @@ builder.Services.AddSingleton<IClaimPollingTrigger, ClaimPollingTrigger>();
 if (projectPulseRole == ProjectPulseRole.Rta)
 {
     builder.Services.AddHostedService<ClaimPollingWorker>();
+    if (requestHistoryStorageConfigured)
+    {
+        builder.Services.AddHostedService<RequestHistoryAutoCleanupWorker>();
+    }
 }
 else
 {
@@ -105,7 +115,7 @@ app.MapGet("/", (HttpContext context) =>
     return Results.Content(
         UiPages.LandingPage(
             projectPulseBuildVersion,
-            Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT"),
+            projectPulseEnvironment,
             projectPulseRoleName),
         "text/html; charset=utf-8");
 });
@@ -116,7 +126,7 @@ app.MapGet("/version", () => Results.Ok(new
 {
     version = projectPulseBuildVersion,
     role = projectPulseRoleName,
-    environment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT") ?? "UNKNOWN"
+    environment = projectPulseEnvironment
 }));
 
 app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFactory httpClientFactory) =>
@@ -281,6 +291,60 @@ app.MapGet("/poll-batches/{pollRunId}", async (
     return batch is null ? Results.NotFound() : Results.Json(batch, historyJsonOptions);
 });
 
+app.MapGet("/requests/throughput", async (HttpContext context, IPollBatchLedger ledger, CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var range = context.Request.Query["range"].FirstOrDefault() ?? "all";
+    var nowUtc = DateTimeOffset.UtcNow;
+    DateTimeOffset? fromUtc = null;
+    DateTimeOffset? toUtc = null;
+
+    switch (range)
+    {
+        case "all":
+            break;
+        case "7d":
+            fromUtc = nowUtc.AddDays(-7);
+            toUtc = nowUtc;
+            break;
+        case "30d":
+            fromUtc = nowUtc.AddDays(-30);
+            toUtc = nowUtc;
+            break;
+        case "365d":
+            fromUtc = nowUtc.AddDays(-365);
+            toUtc = nowUtc;
+            break;
+        case "custom":
+            if (!DateTimeOffset.TryParse(
+                    context.Request.Query["fromUtc"].FirstOrDefault(),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var customFromUtc) ||
+                !DateTimeOffset.TryParse(
+                    context.Request.Query["toUtc"].FirstOrDefault(),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var customToUtc) ||
+                customFromUtc > customToUtc)
+            {
+                return Results.BadRequest(new { error = "A valid custom date/time range is required." });
+            }
+
+            fromUtc = customFromUtc;
+            toUtc = customToUtc;
+            break;
+        default:
+            return Results.BadRequest(new { error = "Unsupported timing range." });
+    }
+
+    var throughput = await ledger.GetThroughputAsync(fromUtc, toUtc, cancellationToken);
+    return Results.Json(throughput, historyJsonOptions);
+});
+
 app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
@@ -335,6 +399,57 @@ app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStor
 
     var averages = await store.GetTimingAveragesAsync(fromUtc, toUtc, cacheKey, cancellationToken);
     return Results.Json(averages, historyJsonOptions);
+});
+
+app.MapGet("/requests/auto-cleanup", async (
+    HttpContext context,
+    IRequestHistoryStore store,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var settings = await store.GetAutoCleanupSettingsAsync(cancellationToken);
+    return Results.Json(settings, historyJsonOptions);
+});
+
+app.MapPut("/requests/auto-cleanup", async (
+    HttpContext context,
+    RequestHistoryAutoCleanupUpdate? settings,
+    IRequestHistoryStore store,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (!string.Equals(
+            context.Request.Headers["X-Requested-With"],
+            "XMLHttpRequest",
+            StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    if (settings is null ||
+        settings.RetentionMinutes is < 1 or > 525600 ||
+        settings.CheckIntervalMinutes is < 1 or > 1440)
+    {
+        return Results.BadRequest(new
+        {
+            error = "Retention must be between 1 minute and 365 days; the check interval must be between 1 minute and 24 hours."
+        });
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var saved = await store.UpdateAutoCleanupSettingsAsync(settings, cancellationToken);
+    LogAdminAudit(
+        adminAuditLogger,
+        context,
+        "RequestHistoryAutoCleanupSettings",
+        settings.Enabled ? "Enabled" : "Disabled",
+        $"retention={settings.RetentionMinutes}m;interval={settings.CheckIntervalMinutes}m");
+    return Results.Json(saved, historyJsonOptions);
 });
 
 app.MapGet("/requests/cleanup/preview", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
@@ -465,7 +580,7 @@ app.MapGet("/batches.html", (HttpContext context) =>
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
     return Results.Content(
-        PollBatchReconciliationPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseRoleName),
+        PollBatchReconciliationPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseEnvironment, projectPulseRoleName),
         "text/html; charset=utf-8");
 });
 
@@ -486,6 +601,7 @@ app.MapGet("/requests.html", (HttpContext context) =>
             signedInUser,
             projectPulseRole == ProjectPulseRole.Rta,
             projectPulseBuildVersion,
+            projectPulseEnvironment,
             projectPulseRoleName),
         "text/html; charset=utf-8");
 });
@@ -503,7 +619,7 @@ app.MapGet("/ledger.html", (HttpContext context) =>
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
     return Results.Content(
-        LifecycleLedgerPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseRoleName),
+        LifecycleLedgerPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseEnvironment, projectPulseRoleName),
         "text/html; charset=utf-8");
 });
 

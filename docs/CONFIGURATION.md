@@ -112,6 +112,14 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 | `LOG_POLL_PAYLOADS` | RTA | No | `false` | No | Deprecated compatibility setting. Used only when `REQUEST_HISTORY_PAYLOAD_MODE` is unset; `true` maps to `FULL`, `false` maps to `OFF`. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Both | Recommended | Azure-provided value | **Yes** | Standard Application Insights connection string consumed by ASP.NET Core Application Insights telemetry. |
 
+## Automatic request-history cleanup
+
+The Requests page has an **Automatically delete old history** checkbox. It is off by default. Configure the retention age (how old a record must be before deletion) separately from the check interval (how often the RTA role looks for expired records). Both values are saved in the shared Azure Table configured by `RequestHistoryStorageConnectionString`, so the setting is shared across the RTA and SERVICEBUS roles and survives app restarts.
+
+When enabled, the RTA role deletes request-history records and poll reconciliation details whose creation/receipt time is older than the configured retention age. It also deletes payload blobs for removed records when no remaining history record references that batch. A successful save that enables the checkbox requires confirmation in the page because the deletion is permanent. Turning the checkbox off stops future scheduled deletion; it does not restore records already deleted.
+
+Retention can be set from 1 minute through 365 days. The check interval can be set from 1 minute through 24 hours. The worker checks the schedule once per minute, so a configured run can begin up to about one minute after its due time. If no settings row exists, the feature remains disabled with defaults of 10 minutes retention and a 10 minute interval. No additional environment variable is required; the shared history Table storage must be available to the RTA role.
+
 ## APIM managed-identity authentication
 
 By default, Project Pulse sends an Entra access token with every APIM adjudication POST and validates the configured APIM response token. Configure this for **both** Container Apps (`PROJECT_PULSE_ROLE=RTA` and `PROJECT_PULSE_ROLE=SERVICEBUS`), because both roles can call APIM. The token is acquired through the Container App's managed identity; no client secret or certificate is stored by Project Pulse.

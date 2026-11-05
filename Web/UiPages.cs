@@ -315,10 +315,12 @@ public static class UiPages
         string? signedInUser,
         bool canManuallyPoll,
         string? buildVersion,
+        string? environmentValue,
         string? roleValue)
     {
         var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
         var version = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(buildVersion) ? "unknown" : buildVersion);
+        var environment = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(environmentValue) ? "UNKNOWN" : environmentValue);
         var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
         var pollControls = canManuallyPoll
             ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
@@ -328,6 +330,7 @@ public static class UiPages
             .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
             .Replace("{{POLL_CONTROL}}", pollControls, StringComparison.Ordinal)
             .Replace("{{BUILD_VERSION}}", version, StringComparison.Ordinal)
+            .Replace("{{ENVIRONMENT}}", environment, StringComparison.Ordinal)
             .Replace("{{ROLE}}", role, StringComparison.Ordinal);
     }
 
@@ -366,6 +369,15 @@ main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .history-cleanup button:hover,.history-cleanup button:focus-visible{border-color:var(--red);outline:none}
 .history-cleanup button:disabled{opacity:.55;cursor:wait}
 .history-cleanup-status{font-size:12px;color:var(--muted)}
+.history-auto-cleanup{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--panel)}
+.history-auto-cleanup-title{font-size:13px;font-weight:700}
+.history-auto-cleanup label{font-size:12px;color:var(--muted)}
+.history-auto-cleanup .auto-cleanup-toggle{display:flex;align-items:center;gap:8px;color:var(--text)}
+.history-auto-cleanup input[type=number]{width:88px;border:1px solid var(--border);border-radius:6px;background:var(--panel2);color:var(--text);padding:7px;font:inherit}
+.history-auto-cleanup button{border:1px solid #31516a;border-radius:6px;background:var(--panel2);color:var(--cyan);padding:7px 10px;font:inherit}
+.history-auto-cleanup button:disabled{opacity:.55;cursor:wait}
+.history-auto-cleanup-note{flex:1 1 100%;font-size:12px;color:var(--muted)}
+.history-auto-cleanup-status{font-size:12px;color:var(--muted)}
 .history-cleanup-progress{display:flex;align-items:center;gap:10px;flex:1 1 100%;min-width:220px}
 .history-cleanup-progress[hidden]{display:none}
 .history-cleanup-progress progress{width:min(520px,100%);height:10px;accent-color:var(--cyan)}
@@ -474,7 +486,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
 <header>
   <div><h1>PROJECT PULSE REQUESTS</h1><div class="sub">Recent APIM and Service Bus activity</div></div>
   <div class="header-actions">
-    <span class="build-version" title="Version baked into this container image">BUILD v{{BUILD_VERSION}} · {{ROLE}}</span>
+    <span class="build-version" title="Build version, configured environment, and runtime role">BUILD v{{BUILD_VERSION}} · {{ENVIRONMENT}} · {{ROLE}}</span>
     <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
     <a class="sign-out" href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
     <a href="/ledger.html">Lifecycle ledger</a>
@@ -525,18 +537,34 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       <span id="cleanupProgressLabel" class="history-cleanup-status"></span>
     </div>
   </div>
+  <section class="history-auto-cleanup" aria-label="Automatic request-history cleanup">
+    <div class="history-auto-cleanup-title">Automatic history cleanup</div>
+    <label class="auto-cleanup-toggle" for="autoCleanupEnabled">
+      <input id="autoCleanupEnabled" type="checkbox">
+      Automatically delete old history
+    </label>
+    <label for="autoCleanupRetention">Delete records older than</label>
+    <input id="autoCleanupRetention" type="number" min="1" max="525600" value="10" aria-label="History retention age in minutes">
+    <span class="muted">minutes</span>
+    <label for="autoCleanupInterval">Check every</label>
+    <input id="autoCleanupInterval" type="number" min="1" max="1440" value="10" aria-label="Automatic cleanup check interval in minutes">
+    <span class="muted">minutes</span>
+    <button id="autoCleanupSave" type="button" onclick="saveAutoCleanupSettings()">Save</button>
+    <span id="autoCleanupStatus" class="history-auto-cleanup-status" role="status" aria-live="polite">Loading saved settings…</span>
+    <div class="history-auto-cleanup-note">When enabled, Project Pulse permanently deletes request history and matching poll details after they pass the retention age. Unreferenced payload files are deleted too. Settings apply across both app roles; automatic cleanup runs from the RTA role.</div>
+  </section>
   <div id="summary" class="summary"></div>
   <section class="timing-summary" aria-label="Average request timings">
     <div class="timing-summary-heading">
       <div class="timing-summary-title">
-        <h2 id="timingTitle">Average processing time per batch — All time</h2>
+        <h2 id="timingTitle">Average time per record run — All time</h2>
         <details class="timing-help">
           <summary aria-label="Explain the average timing metrics" title="What do these averages mean?">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><circle cx="12" cy="8" r=".7" fill="currentColor" stroke="none"></circle></svg>
           </summary>
           <div class="timing-help-popover" role="region" aria-label="Average timing explanations">
-            <h3>Average processing time per batch</h3>
-            <p>Each card shows elapsed time per recorded batch in the selected time window, not records per second. Its count is batches with a recorded value for that timing. Concurrent batches can overlap, so these durations do not tell you system throughput.</p>
+            <h3>How to read these averages</h3>
+            <p>Each card shows the average time for one record run, and its count is how many runs had a saved time for that step. Retries can count again. Records run concurrently, so these per-record times overlap and must not be added together to estimate total elapsed time. The observed-throughput summary below uses poll timestamps and record counts to show wall-clock performance.</p>
             <dl>
               <dt>RTA pull</dt><dd>Time for Project Pulse to fetch pending requests from RTA and read/parse the response. RTA processing, network or TLS latency, and larger pages can add time.</dd>
               <dt>Translation</dt><dd>Time to map the RTA item into the outbound DOCMP JSON. App CPU pressure or larger, more complex payloads can increase it.</dd>
@@ -544,8 +572,8 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
               <dt>RTA writeback</dt><dd>Time to translate the response and send the status/result PUT to RTA. RTA processing, network latency, and retries can add time.</dd>
               <dt>End-to-end</dt><dd>Elapsed time from when the RTA poll response has been read and parsed and its records are available to when this record's outcome is recorded. It excludes the RTA pull card and includes other processing overhead, so it can be longer than the translation, APIM, and writeback cards combined.</dd>
             </dl>
-            <p>When RTA writeback is enabled, its timer includes the PUT calls, retries, and configured retry delays. The summary below counts batches recorded status PUT failures; that count does not prove retries occurred in every case.</p>
-            <p>Use the batch's correlation ID to find the writeback warning/error logs, which record the observed HTTP status or exception category and attempt count. Averages alone cannot identify the cause, and APIM round-trip time still combines APIM, DOCMP/backend, and network time.</p>
+            <p>When RTA writeback is enabled, its timer includes the PUT calls, retries, and configured retry delays. The count below shows record runs with a saved RTA status PUT failure; it does not mean every run was retried.</p>
+            <p>Use the record's correlation ID to find the writeback warning/error logs, which record the observed HTTP status or exception category and attempt count. Averages alone cannot identify the cause, and APIM round-trip time still combines APIM, DOCMP/backend, and network time.</p>
           </div>
         </details>
       </div>
@@ -568,6 +596,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       <span id="timingRangeError" class="timing-range-error" role="status"></span>
     </div>
     <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
+    <div id="timingThroughput" class="timing-diagnostic-note">Calculating observed wall-clock throughput…</div>
     <div id="timingDiagnostics" class="timing-diagnostic-note">Loading diagnostic summary…</div>
     <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
   </section>
@@ -1008,8 +1037,14 @@ function formatAverage(ms){
   if(ms===null||ms===undefined)return 'N/A';
   return ms>=1000?(ms/1000).toFixed(2)+' s':Math.round(ms)+' ms';
 }
+function formatWallTime(ms){
+  if(ms===null||ms===undefined)return 'N/A';
+  if(ms<60000)return (ms/1000).toFixed(1)+' sec';
+  if(ms<3600000)return (ms/60000).toFixed(1)+' min';
+  return (ms/3600000).toFixed(1)+' hr';
+}
 function setTimingTitle(label){
-  document.getElementById('timingTitle').textContent='Average processing time per batch — '+label;
+  document.getElementById('timingTitle').textContent='Average time per record run — '+label;
 }
 function onTimingRangeChange(){
   const range=document.getElementById('timingRange').value;
@@ -1066,9 +1101,14 @@ async function loadAverages(){
   const container=document.getElementById('timingAverages');
   const updated=document.getElementById('timingUpdated');
   try{
-    const response=await fetch(url,{cache:'no-store'});
+    const throughputUrl=url.replace('/requests/averages','/requests/throughput');
+    const [response,throughputResponse]=await Promise.all([
+      fetch(url,{cache:'no-store'}),
+      fetch(throughputUrl,{cache:'no-store'})
+    ]);
     if(!response.ok)throw new Error('HTTP '+response.status);
-    const averages=await response.json();
+    if(!throughputResponse.ok)throw new Error('Throughput HTTP '+throughputResponse.status);
+    const [averages,throughput]=await Promise.all([response.json(),throughputResponse.json()]);
     if(requestId!==averagesRequestId)return;
     const keys=['RtaPull','Translation','ApimRoundTrip','RtaWriteback','EndToEnd'];
     container.innerHTML=keys.map(key=>{
@@ -1077,13 +1117,25 @@ async function loadAverages(){
       return '<div class="timing-average-card '+timingTone(key,metric.AverageMs)+'">'+
         '<div class="timing-average-label">'+timingLabel(key)+'</div>'+
         '<div class="timing-average-value">'+formatAverage(metric.AverageMs)+'</div>'+
-        '<div class="timing-average-count">'+count.toLocaleString()+' batch'+(count===1?'':'es')+'</div>'+
+        '<div class="timing-average-count">'+count.toLocaleString()+' record run'+(count===1?'':'s')+'</div>'+
       '</div>';
     }).join('');
+    const throughputElement=document.getElementById('timingThroughput');
+    if(Number(throughput.PollCount||0)===0){
+      throughputElement.textContent='No completed RTA poll runs with records were found in this time range.';
+    }else{
+      const recordCount=Number(throughput.RecordCount||0);
+      const pollCount=Number(throughput.PollCount||0);
+      const elapsed=throughput.ObservedWallTimeMs;
+      const rate=throughput.RecordsPerMinute;
+      throughputElement.textContent='Observed RTA throughput: '+recordCount.toLocaleString()+' records across '+pollCount.toLocaleString()+' completed poll(s) over '+formatWallTime(elapsed)+' wall time'+
+        (rate===null||rate===undefined?'': ' ('+Number(rate).toLocaleString(undefined,{maximumFractionDigits:0})+' records/minute)')+
+        '. This uses clock time from the first record receipt to the last poll completion, so concurrent work is not added together. Idle gaps between polls are included; later Service Bus replays are not.';
+    }
     const failedCount=Number(averages.RtaStatusPutFailureBatchCount||0);
     document.getElementById('timingDiagnostics').textContent=failedCount
-      ? failedCount.toLocaleString()+' batch'+(failedCount===1?'':'es')+' in this time window ended with an RTA status PUT failure. The writeback average can include retries and backoff; correlate the batch ID in Project Pulse logs to see observed statuses or exceptions.'
-      : 'No batches in this time window are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
+      ? failedCount.toLocaleString()+' record run'+(failedCount===1?'':'s')+' in this time window ended with an RTA status PUT failure. The writeback average can include retries and backoff; use the record correlation ID in Project Pulse logs to see observed statuses or exceptions.'
+      : 'No record runs in this time window are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
     updated.textContent='Calculated '+new Date(averages.CalculatedAtUtc).toLocaleTimeString();
   }catch(error){
     if(requestId!==averagesRequestId)return;
@@ -1219,6 +1271,64 @@ async function deleteHistory(){
     rangeSelect.disabled=false;
   }
 }
+let autoCleanupSavedEnabled=false;
+async function loadAutoCleanupSettings(){
+  const status=document.getElementById('autoCleanupStatus');
+  try{
+    const response=await fetch('/requests/auto-cleanup',{cache:'no-store'});
+    const settings=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(settings.error||'Settings returned HTTP '+response.status);
+    autoCleanupSavedEnabled=Boolean(settings.Enabled);
+    document.getElementById('autoCleanupEnabled').checked=autoCleanupSavedEnabled;
+    document.getElementById('autoCleanupRetention').value=Number(settings.RetentionMinutes||10);
+    document.getElementById('autoCleanupInterval').value=Number(settings.CheckIntervalMinutes||10);
+    status.textContent=autoCleanupSavedEnabled?'Enabled; saved settings apply across app roles.':'Off; no automatic records will be deleted.';
+  }catch(error){
+    status.textContent='Could not load automatic cleanup settings: '+error.message;
+  }
+}
+async function saveAutoCleanupSettings(){
+  const button=document.getElementById('autoCleanupSave');
+  const checkbox=document.getElementById('autoCleanupEnabled');
+  const status=document.getElementById('autoCleanupStatus');
+  const enabled=checkbox.checked;
+  const retentionMinutes=Number(document.getElementById('autoCleanupRetention').value);
+  const checkIntervalMinutes=Number(document.getElementById('autoCleanupInterval').value);
+  if(!Number.isInteger(retentionMinutes)||retentionMinutes<1||retentionMinutes>525600||
+     !Number.isInteger(checkIntervalMinutes)||checkIntervalMinutes<1||checkIntervalMinutes>1440){
+    status.textContent='Use a retention age from 1 minute to 365 days and a check interval from 1 minute to 24 hours.';
+    return;
+  }
+  if(enabled&&!autoCleanupSavedEnabled&&!window.confirm(
+    'Enable automatic permanent deletion? Request history and poll details older than '+retentionMinutes+
+    ' minute(s), plus unreferenced payload files, will be deleted. This setting applies across both app roles.')){
+    checkbox.checked=autoCleanupSavedEnabled;
+    status.textContent='Automatic cleanup was not enabled.';
+    return;
+  }
+  button.disabled=true;
+  status.textContent='Saving automatic cleanup settings…';
+  try{
+    const response=await fetch('/requests/auto-cleanup',{
+      method:'PUT',
+      cache:'no-store',
+      headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+      body:JSON.stringify({Enabled:enabled,RetentionMinutes:retentionMinutes,CheckIntervalMinutes:checkIntervalMinutes})
+    });
+    const settings=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(settings.error||'Save returned HTTP '+response.status);
+    autoCleanupSavedEnabled=Boolean(settings.Enabled);
+    checkbox.checked=autoCleanupSavedEnabled;
+    status.textContent=autoCleanupSavedEnabled
+      ? 'Enabled. Records older than '+settings.RetentionMinutes+' minute(s) are removed; checks run every '+settings.CheckIntervalMinutes+' minute(s).'
+      : 'Off; no automatic records will be deleted.';
+  }catch(error){
+    checkbox.checked=autoCleanupSavedEnabled;
+    status.textContent='Could not save automatic cleanup settings: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
+}
 async function load(){
   if(loading)return; loading=true;
   void loadAverages();
@@ -1263,7 +1373,7 @@ function setRefreshRate(){
   if(refreshTimer)clearInterval(refreshTimer);
   refreshTimer=setInterval(load,seconds*1000);
 }
-load(); setRefreshRate();
+load(); setRefreshRate(); void loadAutoCleanupSettings();
 </script>
 </body>
 </html>

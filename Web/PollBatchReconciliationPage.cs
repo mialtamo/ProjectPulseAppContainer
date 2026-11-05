@@ -2,11 +2,12 @@ namespace ProjectPulse.Processor.Web;
 
 public static class PollBatchReconciliationPage
 {
-    public static string HtmlFor(string? signedInUser, string buildVersion, string role)
+    public static string HtmlFor(string? signedInUser, string buildVersion, string environment, string role)
     {
         var user = System.Net.WebUtility.HtmlEncode(
             string.IsNullOrWhiteSpace(signedInUser) ? "Unknown user" : signedInUser);
         var build = System.Net.WebUtility.HtmlEncode(buildVersion);
+        var environmentName = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(environment) ? "UNKNOWN" : environment);
         var roleName = System.Net.WebUtility.HtmlEncode(role);
         return $$$"""
 <!doctype html>
@@ -21,7 +22,7 @@ public static class PollBatchReconciliationPage
 </style>
 </head>
 <body>
-<header><div><div class="brand">PROJECT PULSE · BATCH RECONCILIATION</div><div class="sub">Poll-level record accounting and missing-stage investigation</div></div><div class="right"><span class="build">BUILD {{{build}}} · {{{roleName}}}</span><span class="user">Signed in as {{{user}}}</span><nav><a href="/requests.html">Requests</a><a href="/ledger.html">Lifecycle</a><a href="/">Home</a><a href="/.auth/logout">Sign out</a></nav></div></header>
+<header><div><div class="brand">PROJECT PULSE · BATCH RECONCILIATION</div><div class="sub">Poll-level record accounting and missing-stage investigation</div></div><div class="right"><span class="build">BUILD {{{build}}} · {{{environmentName}}} · {{{roleName}}}</span><span class="user">Signed in as {{{user}}}</span><nav><a href="/requests.html">Requests</a><a href="/ledger.html">Lifecycle</a><a href="/">Home</a><a href="/.auth/logout">Sign out</a></nav></div></header>
 <main>
 <div class="controls"><input id="search" placeholder="Search poll run ID"><label><input id="gaps" type="checkbox"> Potential gaps only</label><select id="range"><option value="24h">Last 24 hours</option><option value="1h">Last hour</option><option value="7d">Last 7 days</option><option value="all">All history</option></select><button id="refresh">Refresh</button></div>
 <div id="summary" class="summary">Loading poll batches…</div><div id="batches"></div>

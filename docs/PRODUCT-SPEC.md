@@ -31,6 +31,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 
 - `APP_API_MODE`: source behavior, including `RTA` and `MOCK`.
 - `PROJECT_PULSE_ROLE`: polling or Service Bus runtime role.
+- `PROJECT_PULSE_ENVIRONMENT`: environment label shown alongside the image version and runtime role on the landing, request-history, lifecycle, and batch pages.
 - `POLL_INTERVAL_SECONDS`: RTA polling cadence, subject to application bounds.
 - RTA paging settings control page size and number of pages; mock-mode `maxRecords` is separate.
 - APIM endpoint, credentials/token validation, and response mapping are configured independently.
@@ -52,7 +53,7 @@ A multi-item polling envelope is not used as the per-record request payload. Tra
 
 ## History, timings, and UI
 
-The secured request-history pages show transaction status, destination, processor role, HTTP/business details when available, payload panels according to the selected payload mode, searchable time-range filters, matching-versus-loaded record counts, and per-batch durations for:
+The secured request-history pages show transaction status, destination, processor role, HTTP/business details when available, payload panels according to the selected payload mode, searchable time-range filters, matching-versus-loaded record counts, and per-record-run durations for:
 
 - RTA pull
 - Translation
@@ -60,7 +61,7 @@ The secured request-history pages show transaction status, destination, processo
 - RTA writeback
 - End-to-end processing
 
-The averages view supports preset and custom time ranges. The request list supports 5-minute, 1-hour, 24-hour, 7-day, and all-time filters; the displayed match count reflects the selected range and search, while the loaded count reflects pagination. `Other processing` reports end-to-end elapsed time less the measured RTA pull, translation, APIM round trip, and RTA writeback stages. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
+The averages view supports preset and custom time ranges. Its timing cards average one record-processing run at a time; concurrency means these durations overlap and must not be summed to estimate total wall time. The page separately reports observed RTA throughput from completed poll runs: received record count divided by the wall-clock span from the first receipt to the last poll completion. This includes idle gaps between polls and excludes later Service Bus replays. Use a range around a specific test when comparing its elapsed throughput. The request list supports 5-minute, 1-hour, 24-hour, 7-day, and all-time filters; the displayed match count reflects the selected range and search, while the loaded count reflects pagination. `Other processing` reports per-run end-to-end elapsed time less the measured translation, APIM round trip, and RTA writeback stages. Explanations of delays are based on observed history/status data and are diagnostic indicators, not definitive root-cause analysis. APIM round-trip timing includes the gateway/backend/network path; RTA writeback timing may include retries and backoff.
 
 The admin-only `/ledger.html` page adds a lifecycle-oriented view over the same stored request-history API. It filters by time range, status, destination, and processor role; searches correlation/unique ID, RTA request ID, and batch ID; and reports total matches separately from the current page. Its timeline shows only stored milestones and intentionally omits payload bodies. The APIM timestamp marks when Project Pulse recorded an attempt before making the POST, not proof of receipt by APIM; a missing later outcome means that outcome is not present in stored history.
 
