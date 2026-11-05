@@ -529,14 +529,14 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <section class="timing-summary" aria-label="Average request timings">
     <div class="timing-summary-heading">
       <div class="timing-summary-title">
-        <h2 id="timingTitle">Average processing time per batch — All time</h2>
+        <h2 id="timingTitle">Average time per record run — All time</h2>
         <details class="timing-help">
           <summary aria-label="Explain the average timing metrics" title="What do these averages mean?">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><circle cx="12" cy="8" r=".7" fill="currentColor" stroke="none"></circle></svg>
           </summary>
           <div class="timing-help-popover" role="region" aria-label="Average timing explanations">
-            <h3>Average processing time per batch</h3>
-            <p>Each card shows elapsed time per recorded batch in the selected time window, not records per second. Its count is batches with a recorded value for that timing. Concurrent batches can overlap, so these durations do not tell you system throughput.</p>
+            <h3>How to read these averages</h3>
+            <p>Each card shows the average time for one record run. The count below it is how many record runs had a saved time for that step. A record retried through Service Bus can count again, so this is not a count of unique records or RTA polls. One RTA poll can return many records; its GET time is associated with each record returned.</p>
             <dl>
               <dt>RTA pull</dt><dd>Time for Project Pulse to fetch pending requests from RTA and read/parse the response. RTA processing, network or TLS latency, and larger pages can add time.</dd>
               <dt>Translation</dt><dd>Time to map the RTA item into the outbound DOCMP JSON. App CPU pressure or larger, more complex payloads can increase it.</dd>
@@ -544,8 +544,8 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
               <dt>RTA writeback</dt><dd>Time to translate the response and send the status/result PUT to RTA. RTA processing, network latency, and retries can add time.</dd>
               <dt>End-to-end</dt><dd>Elapsed time from when the RTA poll response has been read and parsed and its records are available to when this record's outcome is recorded. It excludes the RTA pull card and includes other processing overhead, so it can be longer than the translation, APIM, and writeback cards combined.</dd>
             </dl>
-            <p>When RTA writeback is enabled, its timer includes the PUT calls, retries, and configured retry delays. The summary below counts batches recorded status PUT failures; that count does not prove retries occurred in every case.</p>
-            <p>Use the batch's correlation ID to find the writeback warning/error logs, which record the observed HTTP status or exception category and attempt count. Averages alone cannot identify the cause, and APIM round-trip time still combines APIM, DOCMP/backend, and network time.</p>
+            <p>When RTA writeback is enabled, its timer includes the PUT calls, retries, and configured retry delays. The count below shows record runs with a saved RTA status PUT failure; it does not mean every run was retried.</p>
+            <p>Use the record's correlation ID to find the writeback warning/error logs, which record the observed HTTP status or exception category and attempt count. Averages alone cannot identify the cause, and APIM round-trip time still combines APIM, DOCMP/backend, and network time.</p>
           </div>
         </details>
       </div>
@@ -1009,7 +1009,7 @@ function formatAverage(ms){
   return ms>=1000?(ms/1000).toFixed(2)+' s':Math.round(ms)+' ms';
 }
 function setTimingTitle(label){
-  document.getElementById('timingTitle').textContent='Average processing time per batch — '+label;
+  document.getElementById('timingTitle').textContent='Average time per record run — '+label;
 }
 function onTimingRangeChange(){
   const range=document.getElementById('timingRange').value;
@@ -1077,13 +1077,13 @@ async function loadAverages(){
       return '<div class="timing-average-card '+timingTone(key,metric.AverageMs)+'">'+
         '<div class="timing-average-label">'+timingLabel(key)+'</div>'+
         '<div class="timing-average-value">'+formatAverage(metric.AverageMs)+'</div>'+
-        '<div class="timing-average-count">'+count.toLocaleString()+' batch'+(count===1?'':'es')+'</div>'+
+        '<div class="timing-average-count">'+count.toLocaleString()+' record run'+(count===1?'':'s')+'</div>'+
       '</div>';
     }).join('');
     const failedCount=Number(averages.RtaStatusPutFailureBatchCount||0);
     document.getElementById('timingDiagnostics').textContent=failedCount
-      ? failedCount.toLocaleString()+' batch'+(failedCount===1?'':'es')+' in this time window ended with an RTA status PUT failure. The writeback average can include retries and backoff; correlate the batch ID in Project Pulse logs to see observed statuses or exceptions.'
-      : 'No batches in this time window are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
+      ? failedCount.toLocaleString()+' record run'+(failedCount===1?'':'s')+' in this time window ended with an RTA status PUT failure. The writeback average can include retries and backoff; use the record correlation ID in Project Pulse logs to see observed statuses or exceptions.'
+      : 'No record runs in this time window are currently marked WritebackFailed. A high writeback average can still include slow successful PUTs or retries that eventually succeeded.';
     updated.textContent='Calculated '+new Date(averages.CalculatedAtUtc).toLocaleTimeString();
   }catch(error){
     if(requestId!==averagesRequestId)return;
