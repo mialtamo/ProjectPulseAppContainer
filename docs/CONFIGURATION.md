@@ -54,6 +54,7 @@ The configured storage account must be reachable from the Container App environm
 | `AppApiBaseUrl` | Both | Yes | RTA/mock API base URL | No | Base URL for RTA/App API calls and health checks. |
 | `AppApiTimeoutSeconds` | Both | No | `10` | No | HTTP timeout for App API requests. |
 | `AppApiScope` | Both | No | empty | No | Optional managed-identity OAuth scope for the App API. |
+| `x-api-key` | Both | No | empty | **Yes** | Secret API key sent as the `x-api-key` HTTP header on RTA queued-request GETs, status PUTs, and RTA health checks. Configure it as a Container Apps secret reference; the key is not logged or placed in request bodies. |
 | `RtaQueuedPath` | RTA | No | `/requests/queued` in code | No | Path used to retrieve queued requests. |
 | `RtaHealthPath` | Both | No | `/healthchecks` in code | No | RTA health endpoint path. |
 | `RtaDbHealthPath` | Both | No | `/healthchecks/db/app` in code | No | RTA database health endpoint path. |
@@ -228,6 +229,7 @@ The current POC RTA deployment uses overrides including:
 PROJECT_PULSE_ROLE=RTA
 POLL_INTERVAL_SECONDS=3
 APP_API_MODE=MOCK
+x-api-key=<secret reference>
 
 RtaQueuedPath=/claims/pending
 RtaHealthPath=/health
@@ -246,6 +248,17 @@ CircuitOpenSeconds=30
 Environment-specific URLs, namespaces, tokens, storage connection strings, and telemetry values should be supplied by the deployment rather than committed to the repository.
 
 ## Container Apps secret mapping example
+
+Create the secret, then map the exact lowercase environment variable `x-api-key` to it on both Container Apps:
+
+```text
+Secret: rta-api-key
+Environment variable: x-api-key
+Source: Reference a secret -> rta-api-key
+```
+
+Project Pulse sends this value as an HTTP header on RTA queued-request GETs, status PUTs, and RTA health probes. It is not put in request bodies or written to logs.
+
 
 Create the Container Apps secrets first, then reference them from environment variables:
 
