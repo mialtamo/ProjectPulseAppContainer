@@ -67,8 +67,16 @@ public sealed class ClaimProcessorOptions
     public string ApimOutageMode { get; init; } = "BUFFER_THEN_STOP";
     public int ApimOutagePollStopSeconds { get; init; } = 300;
 
+    public bool IsApimAuthenticationEnabled()
+    {
+        var environmentValue = Environment.GetEnvironmentVariable("APIM_AUTHENTICATION_ENABLED");
+        return bool.TryParse(environmentValue, out var enabled)
+            ? enabled
+            : ApimAuthenticationEnabled;
+    }
+
     public bool IsApimAuthenticationConfigurationValid() =>
-        !ApimAuthenticationEnabled || !string.IsNullOrWhiteSpace(ApimScope);
+        !IsApimAuthenticationEnabled() || !string.IsNullOrWhiteSpace(ApimScope);
 
     public bool IsApimMockScenarioValid() =>
         string.IsNullOrWhiteSpace(ApimMockScenario)

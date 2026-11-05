@@ -304,7 +304,7 @@ public sealed class ClaimProcessor(
         {
             await apimRequestGate.WaitAsync(cancellationToken);
             apimRequestGateHeld = true;
-            if (_options.ApimAuthenticationEnabled)
+            if (_options.IsApimAuthenticationEnabled())
             {
                 try
                 {
@@ -325,7 +325,7 @@ public sealed class ClaimProcessor(
                 }
             }
 
-            var bearerTokenAttached = _options.ApimAuthenticationEnabled &&
+            var bearerTokenAttached = _options.IsApimAuthenticationEnabled() &&
                 string.Equals(request.Headers.Authorization?.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(request.Headers.Authorization?.Parameter);
             await TryRecordHistoryAsync(
