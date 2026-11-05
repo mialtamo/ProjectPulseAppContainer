@@ -281,6 +281,60 @@ app.MapGet("/poll-batches/{pollRunId}", async (
     return batch is null ? Results.NotFound() : Results.Json(batch, historyJsonOptions);
 });
 
+app.MapGet("/requests/throughput", async (HttpContext context, IPollBatchLedger ledger, CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var range = context.Request.Query["range"].FirstOrDefault() ?? "all";
+    var nowUtc = DateTimeOffset.UtcNow;
+    DateTimeOffset? fromUtc = null;
+    DateTimeOffset? toUtc = null;
+
+    switch (range)
+    {
+        case "all":
+            break;
+        case "7d":
+            fromUtc = nowUtc.AddDays(-7);
+            toUtc = nowUtc;
+            break;
+        case "30d":
+            fromUtc = nowUtc.AddDays(-30);
+            toUtc = nowUtc;
+            break;
+        case "365d":
+            fromUtc = nowUtc.AddDays(-365);
+            toUtc = nowUtc;
+            break;
+        case "custom":
+            if (!DateTimeOffset.TryParse(
+                    context.Request.Query["fromUtc"].FirstOrDefault(),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var customFromUtc) ||
+                !DateTimeOffset.TryParse(
+                    context.Request.Query["toUtc"].FirstOrDefault(),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var customToUtc) ||
+                customFromUtc > customToUtc)
+            {
+                return Results.BadRequest(new { error = "A valid custom date/time range is required." });
+            }
+
+            fromUtc = customFromUtc;
+            toUtc = customToUtc;
+            break;
+        default:
+            return Results.BadRequest(new { error = "Unsupported timing range." });
+    }
+
+    var throughput = await ledger.GetThroughputAsync(fromUtc, toUtc, cancellationToken);
+    return Results.Json(throughput, historyJsonOptions);
+});
+
 app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
