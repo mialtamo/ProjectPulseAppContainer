@@ -97,11 +97,13 @@ function statusClass(value){if(['Completed'].includes(value))return 'good';if(['
 function step(title,outcome,detail,kind=''){return '<article class="step '+kind+'"><h3>'+esc(title)+'</h3><div class="outcome">'+esc(outcome)+'</div><p>'+esc(detail)+'</p></article>'}
 function apimAuthEvidence(x){
   const sent=x.ApimBearerTokenAttached===true?'🔑 Bearer token attached to request':x.ApimBearerTokenAttached===false?'No bearer token attached to request':'';
-  if(x.ApimAuthConfirmed===true)return {sent,response:'🔑 APIM confirmed Entra token validation'};
-  if(x.ApimAuthConfirmed===false)return {sent,response:'APIM auth-confirmation header not received'};
-  if(x.ApimBearerTokenAttached===true)return {sent,response:'🔑 Waiting for APIM auth confirmation'};
-  if(x.ApimBearerTokenAttached===false)return {sent,response:'APIM auth confirmation not recorded'};
-  return {sent,response:''};
+  if(x.ApimAuthConfirmed===true&&x.ApimBearerTokenAttached===true)return {sent,response:'🔑 APIM reported Entra token validation',};
+  if(x.ApimAuthConfirmed===true&&x.ApimBearerTokenAttached===false)return {sent,response:'APIM returned an auth-confirmation header, but no bearer token was attached to the request',};
+  if(x.ApimAuthConfirmed===true)return {sent,response:'APIM returned an auth-confirmation header; bearer-token attachment was not recorded',};
+  if(x.ApimAuthConfirmed===false)return {sent,response:'APIM auth-confirmation header not received',};
+  if(x.ApimBearerTokenAttached===true)return {sent,response:'🔑 Waiting for APIM auth confirmation',};
+  if(x.ApimBearerTokenAttached===false)return {sent,response:'APIM auth confirmation not recorded',};
+  return {sent,response:'',};
 }
 function timeline(x){
   const source=String(x.InputSource||'').toUpperCase();
