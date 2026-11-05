@@ -46,6 +46,8 @@ public sealed class AppApiClient(
         logger.LogInformation("Polling App API mock endpoint GET {Path}", path);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
+
+        RtaApiKeyHeader.Apply(request, _options);
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
 
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
@@ -98,6 +100,8 @@ public sealed class AppApiClient(
             logger.LogInformation("Polling RTA queued endpoint GET {Path}", path);
 
             using var request = new HttpRequestMessage(HttpMethod.Get, path);
+
+            RtaApiKeyHeader.Apply(request, _options);
             await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
 
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
@@ -249,6 +253,7 @@ public sealed class AppApiClient(
                 };
 
                 request.Headers.TryAddWithoutValidation("X-Correlation-ID", correlationId);
+                RtaApiKeyHeader.Apply(request, _options);
                 await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
 
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
