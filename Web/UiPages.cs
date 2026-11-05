@@ -536,7 +536,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
           </summary>
           <div class="timing-help-popover" role="region" aria-label="Average timing explanations">
             <h3>How to read these averages</h3>
-            <p>Each card shows the average time for one record run. The count below it is how many record runs had a saved time for that step. A record retried through Service Bus can count again, so this is not a count of unique records or RTA polls. One RTA poll can return many records; its GET time is associated with each record returned.</p>
+            <p>Each card shows the average time for one record run, and its count is how many runs had a saved time for that step. Retries can count again. Records run concurrently, so these per-record times overlap and must not be added together to estimate total elapsed time. The observed-throughput summary below uses poll timestamps and record counts to show wall-clock performance.</p>
             <dl>
               <dt>RTA pull</dt><dd>Time for Project Pulse to fetch pending requests from RTA and read/parse the response. RTA processing, network or TLS latency, and larger pages can add time.</dd>
               <dt>Translation</dt><dd>Time to map the RTA item into the outbound DOCMP JSON. App CPU pressure or larger, more complex payloads can increase it.</dd>
@@ -568,6 +568,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       <span id="timingRangeError" class="timing-range-error" role="status"></span>
     </div>
     <div id="timingAverages" class="timing-averages"><span class="muted">Calculating averages…</span></div>
+    <div id="timingThroughput" class="timing-diagnostic-note">Calculating observed wall-clock throughput…</div>
     <div id="timingDiagnostics" class="timing-diagnostic-note">Loading diagnostic summary…</div>
     <div class="timing-legend">Starting thresholds: RTA/APIM/writeback green ≤1s, yellow ≤5s, red &gt;5s; translation green ≤100ms, yellow ≤500ms, red &gt;500ms; total green ≤5s, yellow ≤15s, red &gt;15s.</div>
   </section>
@@ -1008,6 +1009,12 @@ function formatAverage(ms){
   if(ms===null||ms===undefined)return 'N/A';
   return ms>=1000?(ms/1000).toFixed(2)+' s':Math.round(ms)+' ms';
 }
+function formatWallTime(ms){
+  if(ms===null||ms===undefined)return 'N/A';
+  if(ms<60000)return (ms/1000).toFixed(1)+' sec';
+  if(ms<3600000)return (ms/60000).toFixed(1)+' min';
+  return (ms/3600000).toFixed(1)+' hr';
+}
 function setTimingTitle(label){
   document.getElementById('timingTitle').textContent='Average time per record run — '+label;
 }
@@ -1066,9 +1073,14 @@ async function loadAverages(){
   const container=document.getElementById('timingAverages');
   const updated=document.getElementById('timingUpdated');
   try{
-    const response=await fetch(url,{cache:'no-store'});
+    const throughputUrl=url.replace('/requests/averages','/requests/throughput');
+    const [response,throughputResponse]=await Promise.all([
+      fetch(url,{cache:'no-store'}),
+      fetch(throughputUrl,{cache:'no-store'})
+    ]);
     if(!response.ok)throw new Error('HTTP '+response.status);
-    const averages=await response.json();
+    if(!throughputResponse.ok)throw new Error('Throughput HTTP '+throughputResponse.status);
+    const [averages,throughput]=await Promise.all([response.json(),throughputResponse.json()]);
     if(requestId!==averagesRequestId)return;
     const keys=['RtaPull','Translation','ApimRoundTrip','RtaWriteback','EndToEnd'];
     container.innerHTML=keys.map(key=>{
@@ -1080,6 +1092,18 @@ async function loadAverages(){
         '<div class="timing-average-count">'+count.toLocaleString()+' record run'+(count===1?'':'s')+'</div>'+
       '</div>';
     }).join('');
+    const throughputElement=document.getElementById('timingThroughput');
+    if(Number(throughput.PollCount||0)===0){
+      throughputElement.textContent='No completed RTA poll runs with records were found in this time range.';
+    }else{
+      const recordCount=Number(throughput.RecordCount||0);
+      const pollCount=Number(throughput.PollCount||0);
+      const elapsed=throughput.ObservedWallTimeMs;
+      const rate=throughput.RecordsPerMinute;
+      throughputElement.textContent='Observed RTA throughput: '+recordCount.toLocaleString()+' records across '+pollCount.toLocaleString()+' completed poll(s) over '+formatWallTime(elapsed)+' wall time'+
+        (rate===null||rate===undefined?'': ' ('+Number(rate).toLocaleString(undefined,{maximumFractionDigits:0})+' records/minute)')+
+        '. This uses clock time from the first record receipt to the last poll completion, so concurrent work is not added together. Idle gaps between polls are included; later Service Bus replays are not.';
+    }
     const failedCount=Number(averages.RtaStatusPutFailureBatchCount||0);
     document.getElementById('timingDiagnostics').textContent=failedCount
       ? failedCount.toLocaleString()+' record run'+(failedCount===1?'':'s')+' in this time window ended with an RTA status PUT failure. The writeback average can include retries and backoff; use the record correlation ID in Project Pulse logs to see observed statuses or exceptions.'
