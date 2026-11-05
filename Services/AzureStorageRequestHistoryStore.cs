@@ -1022,10 +1022,20 @@ public sealed class AzureStorageRequestHistoryStore : IRequestHistoryStore
         CancellationToken cancellationToken) =>
         DeleteForCleanupAsync(createdAfterUtc, cancellationToken, false, null);
 
-    public Task<RequestHistoryCleanupResult> DeleteOlderThanAsync(
+    public async Task<RequestHistoryCleanupResult> DeleteOlderThanAsync(
         DateTimeOffset createdBeforeUtc,
-        CancellationToken cancellationToken) =>
-        DeleteForCleanupAsync(createdBeforeUtc, cancellationToken, true, null);
+        CancellationToken cancellationToken)
+    {
+        await _cleanupExecutionLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await DeleteForCleanupAsync(createdBeforeUtc, cancellationToken, true, null);
+        }
+        finally
+        {
+            _cleanupExecutionLock.Release();
+        }
+    }
 
     private async Task<RequestHistoryCleanupResult> DeleteForCleanupAsync(
         DateTimeOffset? createdAfterUtc,
