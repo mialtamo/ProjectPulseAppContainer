@@ -20,6 +20,8 @@ builder.Services.AddApplicationInsightsTelemetry();
 builder.Services.AddOptions<ClaimProcessorOptions>()
     .BindConfiguration(string.Empty)
     .ValidateDataAnnotations()
+    .Validate(options => options.IsApimAuthenticationConfigurationValid(),
+        "ApimScope is required when APIM_AUTHENTICATION_ENABLED is true.")
     .Validate(options => options.IsApimMockScenarioValid(),
         "APIM_MOCK_SCENARIO must be blank or one of: success, docmp-not-found, docmp-error, http-404, http-429, http-500, http-503, http-504.")
     .ValidateOnStart();
@@ -81,6 +83,13 @@ else
 }
 
 var app = builder.Build();
+var apimAuthenticationEnabled = app.Services.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value.ApimAuthenticationEnabled;
+if (!apimAuthenticationEnabled)
+{
+    app.Logger.LogWarning(
+        "APIM authentication is disabled by APIM_AUTHENTICATION_ENABLED=false. Project Pulse will not send an APIM bearer token. APIM response-token validation remains enabled.");
+}
+
 var adminAuditLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("ProjectPulse.AdminAudit");
 
