@@ -304,25 +304,28 @@ public sealed class ClaimProcessor(
         {
             await apimRequestGate.WaitAsync(cancellationToken);
             apimRequestGateHeld = true;
-            try
+            if (_options.ApimAuthenticationEnabled)
             {
-                await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
-            {
-                await TryRecordHistoryAsync(
-                    () => requestHistoryStore.RecordApimAuthStatusAsync(
-                        batchId,
-                        correlationIds,
-                        false,
-                        null,
-                        DateTimeOffset.UtcNow,
-                        CancellationToken.None),
-                    "APIM bearer-token acquisition failure");
-                throw;
+                try
+                {
+                    await authHeaderProvider.ApplyBearerTokenAsync(request, _options.ApimScope, cancellationToken);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    await TryRecordHistoryAsync(
+                        () => requestHistoryStore.RecordApimAuthStatusAsync(
+                            batchId,
+                            correlationIds,
+                            false,
+                            null,
+                            DateTimeOffset.UtcNow,
+                            CancellationToken.None),
+                        "APIM bearer-token acquisition failure");
+                    throw;
+                }
             }
 
-            var bearerTokenAttached =
+            var bearerTokenAttached = _options.ApimAuthenticationEnabled &&
                 string.Equals(request.Headers.Authorization?.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(request.Headers.Authorization?.Parameter);
             await TryRecordHistoryAsync(
@@ -465,7 +468,7 @@ public sealed class ClaimProcessor(
                 return BuildResults(correlationIds, ClaimProcessingDisposition.QueuedForRetry, reason, statusCode);
             }
 
-            if (!ValidateApimResponseToken(response, batchId))
+            if (_options.ApimAuthenticationEnabled && !ValidateApimResponseToken(response, batchId))
             {
                 await TryRecordHistoryAsync(
                     () => requestHistoryStore.RecordApimResultAsync(

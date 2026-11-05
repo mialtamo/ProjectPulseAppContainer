@@ -71,9 +71,10 @@ The configured storage account must be reachable from the Container App environm
 | `ApimHealthPath` | Both | No | `/health` | No | APIM health endpoint path. |
 | `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path. |
 | `ApimRequestTimeoutSeconds` | Both | No | `15` | No | APIM request timeout used by Project Pulse processing logic. |
-| `ApimScope` | Both | Yes | `api://<API-application-client-id>/.default` | No | Required managed-identity OAuth scope for APIM. Project Pulse fails startup when it is missing. Use the Application ID URI of the APIM resource app registration with `/.default`. |
+| `APIM_AUTHENTICATION_ENABLED` | Both | No | `true` | No | Enables Pulse's APIM bearer-token authentication and APIM response-token validation. Set to `false` only to test a legacy APIM policy that does not validate the bearer token or return the response-token header. |
+| `ApimScope` | Both | Required when authentication is enabled | `api://<API-application-client-id>/.default` | No | Managed-identity OAuth scope for APIM. Required when `APIM_AUTHENTICATION_ENABLED=true`; use the Application ID URI of the APIM resource app registration with `/.default`. |
 | `ApimResponseHeaderName` | Both | No | `X-Pulse-Response-Token` | No | Response header containing the APIM response-validation token. |
-| `ApimResponseToken` | Both | Yes for validation | secret | **Yes** | Expected APIM response token. Use a Container Apps secret reference. |
+| `ApimResponseToken` | Both | Required when authentication is enabled | secret | **Yes** | Expected APIM response token. Use a Container Apps secret reference. Required only when `APIM_AUTHENTICATION_ENABLED=true`. |
 | `APIM_MOCK_SCENARIO` | Both | No | empty | No | Optional test control forwarded to APIM as `X-Mock-Scenario`. Supported scenarios include `success`, application-error cases defined by the APIM mock policy, and `http-404`, `http-429`, `http-500`, `http-503`, and `http-504`. Blank omits the header. Configure only when the APIM policy supports mock scenarios. |
 | `APIM_OUTAGE_MODE` | Both | No | `BUFFER_THEN_STOP` | No | Controls behavior during APIM outage: `BUFFER_THEN_STOP`, `STOP_IMMEDIATELY`, or `BUFFER_CONTINUOUSLY`. |
 | `APIM_OUTAGE_POLL_STOP_SECONDS` | RTA | No | `300` | No | Outage duration used before the RTA poller stops in buffer-then-stop mode. |
@@ -112,7 +113,9 @@ For enabled initial-request writeback, Project Pulse builds the RTA status PUT b
 
 ## APIM managed-identity authentication
 
-Project Pulse sends an Entra access token with every APIM adjudication POST. Configure this for **both** Container Apps (`PROJECT_PULSE_ROLE=RTA` and `PROJECT_PULSE_ROLE=SERVICEBUS`), because both roles can call APIM. The token is acquired through the Container App's managed identity; no client secret or certificate is stored by Project Pulse.
+By default, Project Pulse sends an Entra access token with every APIM adjudication POST and validates the configured APIM response token. Configure this for **both** Container Apps (`PROJECT_PULSE_ROLE=RTA` and `PROJECT_PULSE_ROLE=SERVICEBUS`), because both roles can call APIM. The token is acquired through the Container App's managed identity; no client secret or certificate is stored by Project Pulse.
+
+Set `APIM_AUTHENTICATION_ENABLED=false` on both apps only when temporarily testing a legacy APIM policy that does not validate Pulse's bearer token or return the configured response-token header. With this flag false, Project Pulse sends no APIM bearer token and skips response-token validation; it still makes APIM requests and processes their HTTP responses. The default is `true`. Turning this off removes both authentication checks and should be limited to a controlled test environment. It does not change RTA/App API or Service Bus authentication.
 
 Set this required environment variable on both apps:
 

@@ -57,7 +57,8 @@ public sealed class ClaimProcessorOptions
     public string ApimHealthPath { get; init; } = "/health";
     public string ApimAdjudicationPath { get; init; } = "/claims/adjudicate";
     public int ApimRequestTimeoutSeconds { get; init; } = 15;
-    [Required]
+    [ConfigurationKeyName("APIM_AUTHENTICATION_ENABLED")]
+    public bool ApimAuthenticationEnabled { get; init; } = true;
     public string ApimScope { get; init; } = string.Empty;
     public string ApimResponseHeaderName { get; init; } = "X-Pulse-Response-Token";
     public string ApimResponseToken { get; init; } = string.Empty;
@@ -65,6 +66,9 @@ public sealed class ClaimProcessorOptions
     public string ApimMockScenario { get; init; } = string.Empty;
     public string ApimOutageMode { get; init; } = "BUFFER_THEN_STOP";
     public int ApimOutagePollStopSeconds { get; init; } = 300;
+
+    public bool IsApimAuthenticationConfigurationValid() =>
+        !ApimAuthenticationEnabled || !string.IsNullOrWhiteSpace(ApimScope);
 
     public bool IsApimMockScenarioValid() =>
         string.IsNullOrWhiteSpace(ApimMockScenario)

@@ -89,7 +89,10 @@ public sealed class HealthGate(
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, path);
-            await authHeaderProvider.ApplyBearerTokenAsync(request, scope, cancellationToken);
+            if (_options.ApimAuthenticationEnabled)
+            {
+                await authHeaderProvider.ApplyBearerTokenAsync(request, scope, cancellationToken);
+            }
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             return Report(new HealthResult(
