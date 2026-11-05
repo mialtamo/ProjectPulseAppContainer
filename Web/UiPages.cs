@@ -315,10 +315,12 @@ public static class UiPages
         string? signedInUser,
         bool canManuallyPoll,
         string? buildVersion,
+        string? environmentValue,
         string? roleValue)
     {
         var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
         var version = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(buildVersion) ? "unknown" : buildVersion);
+        var environment = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(environmentValue) ? "UNKNOWN" : environmentValue);
         var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
         var pollControls = canManuallyPoll
             ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
@@ -328,6 +330,7 @@ public static class UiPages
             .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
             .Replace("{{POLL_CONTROL}}", pollControls, StringComparison.Ordinal)
             .Replace("{{BUILD_VERSION}}", version, StringComparison.Ordinal)
+            .Replace("{{ENVIRONMENT}}", environment, StringComparison.Ordinal)
             .Replace("{{ROLE}}", role, StringComparison.Ordinal);
     }
 
@@ -474,7 +477,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
 <header>
   <div><h1>PROJECT PULSE REQUESTS</h1><div class="sub">Recent APIM and Service Bus activity</div></div>
   <div class="header-actions">
-    <span class="build-version" title="Version baked into this container image">BUILD v{{BUILD_VERSION}} · {{ROLE}}</span>
+    <span class="build-version" title="Build version, configured environment, and runtime role">BUILD v{{BUILD_VERSION}} · {{ENVIRONMENT}} · {{ROLE}}</span>
     <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
     <a class="sign-out" href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
     <a href="/ledger.html">Lifecycle ledger</a>
