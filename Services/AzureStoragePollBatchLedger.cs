@@ -133,6 +133,63 @@ public sealed class AzureStoragePollBatchLedger : IPollBatchLedger
         CancellationToken cancellationToken) =>
         UpdateBatchAsync(pollRunId, entity => entity["CompletedAtUtc"] = completedAtUtc, cancellationToken);
 
+    public async Task<PollBatchThroughput> GetThroughputAsync(
+        DateTimeOffset? fromUtc,
+        DateTimeOffset? toUtc,
+        CancellationToken cancellationToken)
+    {
+        await _table.CreateIfNotExistsAsync(cancellationToken);
+
+        var pollCount = 0;
+        long recordCount = 0;
+        DateTimeOffset? firstReceivedAtUtc = null;
+        DateTimeOffset? lastCompletedAtUtc = null;
+
+        await foreach (var batch in _table.QueryAsync<TableEntity>(
+            x => x.PartitionKey == BatchPartition,
+            maxPerPage: 1000,
+            cancellationToken: cancellationToken))
+        {
+            var receivedAtUtc = batch.GetDateTimeOffset("ReceivedAtUtc");
+            var completedAtUtc = batch.GetDateTimeOffset("CompletedAtUtc");
+            if (receivedAtUtc is null
+                || completedAtUtc is null
+                || (fromUtc is { } start && receivedAtUtc < start)
+                || (toUtc is { } end && receivedAtUtc > end))
+            {
+                continue;
+            }
+
+            pollCount++;
+            recordCount += Math.Max(0, batch.GetInt32("ReceivedCount") ?? 0);
+            firstReceivedAtUtc = firstReceivedAtUtc is null || receivedAtUtc < firstReceivedAtUtc
+                ? receivedAtUtc
+                : firstReceivedAtUtc;
+            lastCompletedAtUtc = lastCompletedAtUtc is null || completedAtUtc > lastCompletedAtUtc
+                ? completedAtUtc
+                : lastCompletedAtUtc;
+        }
+
+        long? wallTimeMs = null;
+        double? recordsPerMinute = null;
+        if (firstReceivedAtUtc is { } first && lastCompletedAtUtc is { } last)
+        {
+            wallTimeMs = Math.Max(0, (long)(last - first).TotalMilliseconds);
+            if (wallTimeMs > 0)
+            {
+                recordsPerMinute = recordCount * 60_000d / wallTimeMs.Value;
+            }
+        }
+
+        return new PollBatchThroughput(
+            pollCount,
+            recordCount,
+            firstReceivedAtUtc,
+            lastCompletedAtUtc,
+            wallTimeMs,
+            recordsPerMinute);
+    }
+
     public async Task<IReadOnlyList<PollBatchSummary>> ListAsync(
         int limit,
         DateTimeOffset? receivedAfterUtc,
