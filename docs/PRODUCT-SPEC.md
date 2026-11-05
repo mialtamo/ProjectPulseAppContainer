@@ -52,7 +52,7 @@ A multi-item polling envelope is not used as the per-record request payload. Tra
 
 ## History, timings, and UI
 
-The secured request-history pages show transaction status, destination, processor role, HTTP/business details when available, payload panels according to the selected payload mode, searchable time-range filters, matching-versus-loaded record counts, and per-batch durations for:
+The secured request-history pages show transaction status, destination, processor role, HTTP/business details when available, payload panels according to the selected payload mode, searchable time-range filters, matching-versus-loaded record counts, and per-record-run durations for:
 
 - RTA pull
 - Translation
