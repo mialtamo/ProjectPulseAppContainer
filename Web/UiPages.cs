@@ -821,9 +821,9 @@ function lifecycleStage(name,state,detail,tone){
     '<div class="lifecycle-stage-state">'+esc(state)+'</div><div class="lifecycle-stage-detail">'+detail+'</div></article>';
 }
 function apimAuthEvidence(x){
-  const sent=x.ApimBearerTokenAttached===true?'🔑 Bearer token attached':x.ApimBearerTokenAttached===false?'🔑❌ No bearer token attached':'';
+  const sent=x.ApimBearerTokenAttached===true?'🔑 Bearer token attached to request':x.ApimBearerTokenAttached===false?'No bearer token attached to request':'';
   if(x.ApimAuthConfirmed===true)return {sent,response:'🔑 APIM confirmed Entra token validation',tone:'done'};
-  if(x.ApimAuthConfirmed===false)return {sent,response:'🔑❌ APIM did not return the auth-confirmation header',tone:'failed'};
+  if(x.ApimAuthConfirmed===false)return {sent,response:'APIM auth-confirmation header not received',tone:'waiting'};
   if(x.ApimBearerTokenAttached===true)return {sent,response:'🔑 Waiting for APIM auth confirmation',tone:'waiting'};
   if(x.ApimBearerTokenAttached===false)return {sent,response:'APIM auth confirmation not recorded',tone:'waiting'};
   return {sent,response:'',tone:'unknown'};
