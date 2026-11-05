@@ -96,11 +96,12 @@ function roleName(value){return value==='SERVICEBUS'?'Service Bus Worker':value=
 function statusClass(value){if(['Completed'].includes(value))return 'good';if(['SentToApim','Buffered'].includes(value))return 'warn';return 'bad'}
 function step(title,outcome,detail,kind=''){return '<article class="step '+kind+'"><h3>'+esc(title)+'</h3><div class="outcome">'+esc(outcome)+'</div><p>'+esc(detail)+'</p></article>'}
 function apimAuthEvidence(x){
-  if(x.ApimAuthConfirmed===true)return {sent:'🔑 Bearer token attached',response:'🔑 APIM confirmed Entra token validation'};
-  if(x.ApimAuthConfirmed===false)return {sent:x.ApimBearerTokenAttached===true?'🔑 Bearer token attached':'🔑❌ No bearer token attached',response:'🔑❌ APIM did not return the auth-confirmation header'};
-  if(x.ApimBearerTokenAttached===true)return {sent:'🔑 Bearer token attached',response:'🔑 Waiting for APIM auth confirmation'};
-  if(x.ApimBearerTokenAttached===false)return {sent:'🔑❌ No bearer token attached',response:'🔑❌ Token attachment failed'};
-  return {sent:'',response:''};
+  const sent=x.ApimBearerTokenAttached===true?'🔑 Bearer token attached to request':x.ApimBearerTokenAttached===false?'No bearer token attached to request':'';
+  if(x.ApimAuthConfirmed===true)return {sent,response:'🔑 APIM confirmed Entra token validation'};
+  if(x.ApimAuthConfirmed===false)return {sent,response:'APIM auth-confirmation header not received'};
+  if(x.ApimBearerTokenAttached===true)return {sent,response:'🔑 Waiting for APIM auth confirmation'};
+  if(x.ApimBearerTokenAttached===false)return {sent,response:'APIM auth confirmation not recorded'};
+  return {sent,response:''};
 }
 function timeline(x){
   const source=String(x.InputSource||'').toUpperCase();

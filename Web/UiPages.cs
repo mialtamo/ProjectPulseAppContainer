@@ -821,11 +821,12 @@ function lifecycleStage(name,state,detail,tone){
     '<div class="lifecycle-stage-state">'+esc(state)+'</div><div class="lifecycle-stage-detail">'+detail+'</div></article>';
 }
 function apimAuthEvidence(x){
-  if(x.ApimAuthConfirmed===true)return {sent:'🔑 Bearer token attached',response:'🔑 APIM confirmed Entra token validation',tone:'done'};
-  if(x.ApimAuthConfirmed===false)return {sent:x.ApimBearerTokenAttached===true?'🔑 Bearer token attached':'🔑❌ No bearer token attached',response:'🔑❌ APIM did not return the auth-confirmation header',tone:'failed'};
-  if(x.ApimBearerTokenAttached===true)return {sent:'🔑 Bearer token attached',response:'🔑 Waiting for APIM auth confirmation',tone:'waiting'};
-  if(x.ApimBearerTokenAttached===false)return {sent:'🔑❌ No bearer token attached',response:'🔑❌ Token attachment failed',tone:'failed'};
-  return {sent:'',response:'',tone:'unknown'};
+  const sent=x.ApimBearerTokenAttached===true?'🔑 Bearer token attached to request':x.ApimBearerTokenAttached===false?'No bearer token attached to request':'';
+  if(x.ApimAuthConfirmed===true)return {sent,response:'🔑 APIM confirmed Entra token validation',tone:'done'};
+  if(x.ApimAuthConfirmed===false)return {sent,response:'APIM auth-confirmation header not received',tone:'waiting'};
+  if(x.ApimBearerTokenAttached===true)return {sent,response:'🔑 Waiting for APIM auth confirmation',tone:'waiting'};
+  if(x.ApimBearerTokenAttached===false)return {sent,response:'APIM auth confirmation not recorded',tone:'waiting'};
+  return {sent,response:'',tone:'unknown'};
 }
 function lifecycleRun(x,index){
   const source=x.InputSource==='MOCK'?'Mock API':x.InputSource==='RTA'?'RTA':'unknown source';
