@@ -81,6 +81,21 @@ public interface IRequestHistoryStore
         string recordId,
         CancellationToken cancellationToken);
 
+    Task<RequestHistoryAutoCleanupSettings> GetAutoCleanupSettingsAsync(
+        CancellationToken cancellationToken);
+
+    Task<RequestHistoryAutoCleanupSettings> UpdateAutoCleanupSettingsAsync(
+        RequestHistoryAutoCleanupUpdate settings,
+        CancellationToken cancellationToken);
+
+    Task<RequestHistoryAutoCleanupSettings?> TryClaimAutoCleanupRunAsync(
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken);
+
+    Task<RequestHistoryCleanupResult> DeleteOlderThanAsync(
+        DateTimeOffset createdBeforeUtc,
+        CancellationToken cancellationToken);
+
     Task<RequestHistoryCleanupProgress> StartCleanupAsync(
         DateTimeOffset? createdAfterUtc,
         string rangeLabel,
