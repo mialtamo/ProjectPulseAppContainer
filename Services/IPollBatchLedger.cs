@@ -64,4 +64,8 @@ public interface IPollBatchLedger
     Task<int> DeleteForCleanupAsync(
         DateTimeOffset? receivedAfterUtc,
         CancellationToken cancellationToken);
+
+    Task<int> DeleteOlderThanAsync(
+        DateTimeOffset receivedBeforeUtc,
+        CancellationToken cancellationToken);
 }
