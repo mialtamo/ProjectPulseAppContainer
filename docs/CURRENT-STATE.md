@@ -1,7 +1,7 @@
 # Current State
 
 Last reviewed: 2026-11-05  
-Repository image tag: `0.0.100` (from `VERSION`; Azure's active/latest-ready revision must be verified separately.)
+Repository image tag: `0.0.101` (from `VERSION`; Azure's active/latest-ready revision must be verified separately.)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
