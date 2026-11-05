@@ -4,15 +4,17 @@ namespace ProjectPulse.Processor.Web;
 
 public static class LifecycleLedgerPage
 {
-    public static string HtmlFor(string? signedInUser, string? buildVersion, string? roleValue)
+    public static string HtmlFor(string? signedInUser, string? buildVersion, string? environmentValue, string? roleValue)
     {
         var displayName = string.IsNullOrWhiteSpace(signedInUser) ? "Signed-in user" : signedInUser;
         var version = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(buildVersion) ? "unknown" : buildVersion);
         var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
+        var environment = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(environmentValue) ? "UNKNOWN" : environmentValue);
 
         return Html
             .Replace("{{SIGNED_IN_USER}}", WebUtility.HtmlEncode(displayName), StringComparison.Ordinal)
             .Replace("{{BUILD_VERSION}}", version, StringComparison.Ordinal)
+            .Replace("{{ENVIRONMENT}}", environment, StringComparison.Ordinal)
             .Replace("{{ROLE}}", role, StringComparison.Ordinal);
     }
 
@@ -66,7 +68,7 @@ button{cursor:pointer}button:hover,a.button:hover{border-color:var(--cyan)}
 <header>
   <div><h1>PROJECT PULSE LIFECYCLE LEDGER</h1><div class="sub">Recorded milestones for each processing attempt</div></div>
   <div class="actions">
-    <span class="build-version" title="Version baked into this container image">BUILD v{{BUILD_VERSION}} · {{ROLE}}</span>
+    <span class="build-version" title="Build version, configured environment, and runtime role">BUILD v{{BUILD_VERSION}} · {{ENVIRONMENT}} · {{ROLE}}</span>
     <span class="signed-in-user">Signed in as <strong>{{SIGNED_IN_USER}}</strong></span>
     <a href="/requests.html">Request history</a><a href="/batches.html">Batch reconciliation</a><a href="/">Home</a><a href="/.auth/logout?post_logout_redirect_uri=%2F">Sign out</a>
   </div>
