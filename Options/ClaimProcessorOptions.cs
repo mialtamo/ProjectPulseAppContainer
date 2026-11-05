@@ -27,6 +27,8 @@ public sealed class ClaimProcessorOptions
     public string AppApiBaseUrl { get; init; } = string.Empty;
 
     public string AppApiScope { get; init; } = string.Empty;
+    [ConfigurationKeyName("x-api-key")]
+    public string XApiKey { get; init; } = string.Empty;
     public int AppApiTimeoutSeconds { get; init; } = 10;
 
     public string RtaQueuedPath { get; init; } = "/requests/queued";
