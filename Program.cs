@@ -83,7 +83,7 @@ else
 }
 
 var app = builder.Build();
-var apimAuthenticationEnabled = app.Services.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value.ApimAuthenticationEnabled;
+var apimAuthenticationEnabled = app.Services.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value.IsApimAuthenticationEnabled();
 if (!apimAuthenticationEnabled)
 {
     app.Logger.LogWarning(
