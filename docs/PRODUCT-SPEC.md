@@ -31,6 +31,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 
 - `APP_API_MODE`: source behavior, including `RTA` and `MOCK`.
 - `PROJECT_PULSE_ROLE`: polling or Service Bus runtime role.
+- `PROJECT_PULSE_ENVIRONMENT`: environment label shown alongside the image version and runtime role on the landing, request-history, lifecycle, and batch pages.
 - `POLL_INTERVAL_SECONDS`: RTA polling cadence, subject to application bounds.
 - RTA paging settings control page size and number of pages; mock-mode `maxRecords` is separate.
 - APIM endpoint, credentials/token validation, and response mapping are configured independently.
