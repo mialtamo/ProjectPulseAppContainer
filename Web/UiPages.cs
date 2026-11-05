@@ -369,6 +369,15 @@ main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .history-cleanup button:hover,.history-cleanup button:focus-visible{border-color:var(--red);outline:none}
 .history-cleanup button:disabled{opacity:.55;cursor:wait}
 .history-cleanup-status{font-size:12px;color:var(--muted)}
+.history-auto-cleanup{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--panel)}
+.history-auto-cleanup-title{font-size:13px;font-weight:700}
+.history-auto-cleanup label{font-size:12px;color:var(--muted)}
+.history-auto-cleanup .auto-cleanup-toggle{display:flex;align-items:center;gap:8px;color:var(--text)}
+.history-auto-cleanup input[type=number]{width:88px;border:1px solid var(--border);border-radius:6px;background:var(--panel2);color:var(--text);padding:7px;font:inherit}
+.history-auto-cleanup button{border:1px solid #31516a;border-radius:6px;background:var(--panel2);color:var(--cyan);padding:7px 10px;font:inherit}
+.history-auto-cleanup button:disabled{opacity:.55;cursor:wait}
+.history-auto-cleanup-note{flex:1 1 100%;font-size:12px;color:var(--muted)}
+.history-auto-cleanup-status{font-size:12px;color:var(--muted)}
 .history-cleanup-progress{display:flex;align-items:center;gap:10px;flex:1 1 100%;min-width:220px}
 .history-cleanup-progress[hidden]{display:none}
 .history-cleanup-progress progress{width:min(520px,100%);height:10px;accent-color:var(--cyan)}
@@ -528,6 +537,22 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
       <span id="cleanupProgressLabel" class="history-cleanup-status"></span>
     </div>
   </div>
+  <section class="history-auto-cleanup" aria-label="Automatic request-history cleanup">
+    <div class="history-auto-cleanup-title">Automatic history cleanup</div>
+    <label class="auto-cleanup-toggle" for="autoCleanupEnabled">
+      <input id="autoCleanupEnabled" type="checkbox">
+      Automatically delete old history
+    </label>
+    <label for="autoCleanupRetention">Delete records older than</label>
+    <input id="autoCleanupRetention" type="number" min="1" max="525600" value="10" aria-label="History retention age in minutes">
+    <span class="muted">minutes</span>
+    <label for="autoCleanupInterval">Check every</label>
+    <input id="autoCleanupInterval" type="number" min="1" max="1440" value="10" aria-label="Automatic cleanup check interval in minutes">
+    <span class="muted">minutes</span>
+    <button id="autoCleanupSave" type="button" onclick="saveAutoCleanupSettings()">Save</button>
+    <span id="autoCleanupStatus" class="history-auto-cleanup-status" role="status" aria-live="polite">Loading saved settings…</span>
+    <div class="history-auto-cleanup-note">When enabled, Project Pulse permanently deletes request history and matching poll details after they pass the retention age. Unreferenced payload files are deleted too. Settings apply across both app roles; automatic cleanup runs from the RTA role.</div>
+  </section>
   <div id="summary" class="summary"></div>
   <section class="timing-summary" aria-label="Average request timings">
     <div class="timing-summary-heading">
@@ -1246,6 +1271,64 @@ async function deleteHistory(){
     rangeSelect.disabled=false;
   }
 }
+let autoCleanupSavedEnabled=false;
+async function loadAutoCleanupSettings(){
+  const status=document.getElementById('autoCleanupStatus');
+  try{
+    const response=await fetch('/requests/auto-cleanup',{cache:'no-store'});
+    const settings=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(settings.error||'Settings returned HTTP '+response.status);
+    autoCleanupSavedEnabled=Boolean(settings.Enabled);
+    document.getElementById('autoCleanupEnabled').checked=autoCleanupSavedEnabled;
+    document.getElementById('autoCleanupRetention').value=Number(settings.RetentionMinutes||10);
+    document.getElementById('autoCleanupInterval').value=Number(settings.CheckIntervalMinutes||10);
+    status.textContent=autoCleanupSavedEnabled?'Enabled; saved settings apply across app roles.':'Off; no automatic records will be deleted.';
+  }catch(error){
+    status.textContent='Could not load automatic cleanup settings: '+error.message;
+  }
+}
+async function saveAutoCleanupSettings(){
+  const button=document.getElementById('autoCleanupSave');
+  const checkbox=document.getElementById('autoCleanupEnabled');
+  const status=document.getElementById('autoCleanupStatus');
+  const enabled=checkbox.checked;
+  const retentionMinutes=Number(document.getElementById('autoCleanupRetention').value);
+  const checkIntervalMinutes=Number(document.getElementById('autoCleanupInterval').value);
+  if(!Number.isInteger(retentionMinutes)||retentionMinutes<1||retentionMinutes>525600||
+     !Number.isInteger(checkIntervalMinutes)||checkIntervalMinutes<1||checkIntervalMinutes>1440){
+    status.textContent='Use a retention age from 1 minute to 365 days and a check interval from 1 minute to 24 hours.';
+    return;
+  }
+  if(enabled&&!autoCleanupSavedEnabled&&!window.confirm(
+    'Enable automatic permanent deletion? Request history and poll details older than '+retentionMinutes+
+    ' minute(s), plus unreferenced payload files, will be deleted. This setting applies across both app roles.')){
+    checkbox.checked=autoCleanupSavedEnabled;
+    status.textContent='Automatic cleanup was not enabled.';
+    return;
+  }
+  button.disabled=true;
+  status.textContent='Saving automatic cleanup settings…';
+  try{
+    const response=await fetch('/requests/auto-cleanup',{
+      method:'PUT',
+      cache:'no-store',
+      headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+      body:JSON.stringify({Enabled:enabled,RetentionMinutes:retentionMinutes,CheckIntervalMinutes:checkIntervalMinutes})
+    });
+    const settings=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(settings.error||'Save returned HTTP '+response.status);
+    autoCleanupSavedEnabled=Boolean(settings.Enabled);
+    checkbox.checked=autoCleanupSavedEnabled;
+    status.textContent=autoCleanupSavedEnabled
+      ? 'Enabled. Records older than '+settings.RetentionMinutes+' minute(s) are removed; checks run every '+settings.CheckIntervalMinutes+' minute(s).'
+      : 'Off; no automatic records will be deleted.';
+  }catch(error){
+    checkbox.checked=autoCleanupSavedEnabled;
+    status.textContent='Could not save automatic cleanup settings: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
+}
 async function load(){
   if(loading)return; loading=true;
   void loadAverages();
@@ -1290,7 +1373,7 @@ function setRefreshRate(){
   if(refreshTimer)clearInterval(refreshTimer);
   refreshTimer=setInterval(load,seconds*1000);
 }
-load(); setRefreshRate();
+load(); setRefreshRate(); void loadAutoCleanupSettings();
 </script>
 </body>
 </html>
