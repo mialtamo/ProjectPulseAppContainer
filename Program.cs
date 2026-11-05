@@ -7,6 +7,7 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Options;
 using ProjectPulse.Processor.ContainerApp;
 using ProjectPulse.Processor.Options;
+using ProjectPulse.Processor.Models;
 using ProjectPulse.Processor.Services;
 using ProjectPulse.Processor.Web;
 
@@ -78,6 +79,7 @@ builder.Services.AddSingleton<IClaimPollingTrigger, ClaimPollingTrigger>();
 if (projectPulseRole == ProjectPulseRole.Rta)
 {
     builder.Services.AddHostedService<ClaimPollingWorker>();
+    builder.Services.AddHostedService<RequestHistoryAutoCleanupWorker>();
 }
 else
 {
@@ -391,6 +393,57 @@ app.MapGet("/requests/averages", async (HttpContext context, IRequestHistoryStor
 
     var averages = await store.GetTimingAveragesAsync(fromUtc, toUtc, cacheKey, cancellationToken);
     return Results.Json(averages, historyJsonOptions);
+});
+
+app.MapGet("/requests/auto-cleanup", async (
+    HttpContext context,
+    IRequestHistoryStore store,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    var settings = await store.GetAutoCleanupSettingsAsync(cancellationToken);
+    return Results.Json(settings, historyJsonOptions);
+});
+
+app.MapPut("/requests/auto-cleanup", async (
+    HttpContext context,
+    RequestHistoryAutoCleanupUpdate? settings,
+    IRequestHistoryStore store,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (!string.Equals(
+            context.Request.Headers["X-Requested-With"],
+            "XMLHttpRequest",
+            StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    if (settings is null ||
+        settings.RetentionMinutes is < 1 or > 525600 ||
+        settings.CheckIntervalMinutes is < 1 or > 1440)
+    {
+        return Results.BadRequest(new
+        {
+            error = "Retention must be between 1 minute and 365 days; the check interval must be between 1 minute and 24 hours."
+        });
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var saved = await store.UpdateAutoCleanupSettingsAsync(settings, cancellationToken);
+    LogAdminAudit(
+        adminAuditLogger,
+        context,
+        "RequestHistoryAutoCleanupSettings",
+        settings.Enabled ? "Enabled" : "Disabled",
+        $"retention={settings.RetentionMinutes}m;interval={settings.CheckIntervalMinutes}m");
+    return Results.Json(saved, historyJsonOptions);
 });
 
 app.MapGet("/requests/cleanup/preview", async (HttpContext context, IRequestHistoryStore store, CancellationToken cancellationToken) =>
