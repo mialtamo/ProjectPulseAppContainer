@@ -14,6 +14,8 @@ var builder = WebApplication.CreateBuilder(args);
 var projectPulseRole = ProjectPulseRoleResolver.Resolve();
 var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
 var projectPulseBuildVersion = Environment.GetEnvironmentVariable("PROJECT_PULSE_BUILD_VERSION") ?? "unknown";
+var projectPulseEnvironment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT");
+projectPulseEnvironment = string.IsNullOrWhiteSpace(projectPulseEnvironment) ? "UNKNOWN" : projectPulseEnvironment.Trim();
 
 builder.Services.AddApplicationInsightsTelemetry();
 
@@ -105,7 +107,7 @@ app.MapGet("/", (HttpContext context) =>
     return Results.Content(
         UiPages.LandingPage(
             projectPulseBuildVersion,
-            Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT"),
+            projectPulseEnvironment,
             projectPulseRoleName),
         "text/html; charset=utf-8");
 });
@@ -116,7 +118,7 @@ app.MapGet("/version", () => Results.Ok(new
 {
     version = projectPulseBuildVersion,
     role = projectPulseRoleName,
-    environment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT") ?? "UNKNOWN"
+    environment = projectPulseEnvironment
 }));
 
 app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFactory httpClientFactory) =>
@@ -519,7 +521,7 @@ app.MapGet("/batches.html", (HttpContext context) =>
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
     return Results.Content(
-        PollBatchReconciliationPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseRoleName),
+        PollBatchReconciliationPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseEnvironment, projectPulseRoleName),
         "text/html; charset=utf-8");
 });
 
@@ -540,6 +542,7 @@ app.MapGet("/requests.html", (HttpContext context) =>
             signedInUser,
             projectPulseRole == ProjectPulseRole.Rta,
             projectPulseBuildVersion,
+            projectPulseEnvironment,
             projectPulseRoleName),
         "text/html; charset=utf-8");
 });
@@ -557,7 +560,7 @@ app.MapGet("/ledger.html", (HttpContext context) =>
 
     var signedInUser = context.Request.Headers["X-MS-CLIENT-PRINCIPAL-NAME"].ToString();
     return Results.Content(
-        LifecycleLedgerPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseRoleName),
+        LifecycleLedgerPage.HtmlFor(signedInUser, projectPulseBuildVersion, projectPulseEnvironment, projectPulseRoleName),
         "text/html; charset=utf-8");
 });
 
