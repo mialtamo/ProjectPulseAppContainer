@@ -402,6 +402,12 @@ button{cursor:pointer}.muted{color:var(--muted)}
 .timing-summary-title{display:flex;align-items:center;gap:8px;min-width:0;position:relative}
 .timing-summary-heading h2{font-size:14px;margin:0;color:#c7d9f2}
 .timing-help{position:relative;flex:none}
+.metric-label{display:flex;align-items:center;gap:6px}
+.metric-info{position:relative;display:inline-flex;flex:none}
+.metric-info summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border:1px solid #314154;border-radius:50%;color:#829bb7;font:700 10px/1 system-ui;cursor:pointer;text-transform:none;letter-spacing:0}
+.metric-info summary::-webkit-details-marker{display:none}
+.metric-info summary:hover,.metric-info summary:focus-visible,.metric-info[open] summary{border-color:var(--cyan);color:var(--cyan);outline:none}
+.metric-info-popover{position:absolute;left:0;top:calc(100% + 6px);z-index:40;width:min(270px,calc(100vw - 80px));padding:9px 11px;border:1px solid #314154;border-radius:8px;background:#0b111a;box-shadow:0 12px 30px rgba(0,0,0,.45);color:var(--text);font-size:11px;font-weight:400;line-height:1.45;letter-spacing:normal;text-transform:none}
 .timing-help summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #314154;border-radius:50%;color:#9db1c7;cursor:pointer}
 .timing-help summary::-webkit-details-marker{display:none}
 .timing-help summary:hover,.timing-help summary:focus-visible,.timing-help[open] summary{border-color:var(--cyan);color:var(--cyan);outline:none}
@@ -621,7 +627,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let openRunDetails=new Map(); let renderGeneration=0; let activeViewState=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -752,7 +758,43 @@ function renderSummary(list){
     '<span class="pill">'+buffered.toLocaleString()+' buffered</span>'+
     '<span class="pill">'+alerted.toLocaleString()+' alerted</span>';
 }
+function captureViewState(){
+  const body=document.getElementById('rows');
+  const expanded=body.querySelector('.expand-row.open');
+  const anchor=Array.from(body.querySelectorAll('.data-row')).find(row=>{
+    const rect=row.getBoundingClientRect();
+    return rect.bottom>0&&rect.top<window.innerHeight;
+  });
+  const openRuns=new Map();
+  body.querySelectorAll('.expand-row.open').forEach(row=>{
+    const key=row.dataset.groupKey;
+    const indices=new Set(Array.from(row.querySelectorAll('.run-details')).flatMap((detail,index)=>detail.open?[index]:[]));
+    openRuns.set(key,indices);
+  });
+  openRuns.forEach((indices,key)=>{
+    if(indices.size)openRunDetails.set(key,indices);
+    else openRunDetails.delete(key);
+  });
+  return {
+    scrollY:window.scrollY,
+    anchorGroupKey:anchor?.dataset.groupKey||expanded?.dataset.groupKey||null,
+    anchorTop:anchor?.getBoundingClientRect().top??expanded?.getBoundingClientRect().top??null
+  };
+}
+function restoreViewState(view){
+  if(!view)return;
+  requestAnimationFrame(()=>{
+    if(view.anchorGroupKey&&view.anchorTop!==null){
+      const row=Array.from(document.querySelectorAll('#rows .data-row')).find(x=>x.dataset.groupKey===view.anchorGroupKey);
+      if(row){window.scrollBy(0,row.getBoundingClientRect().top-view.anchorTop);return}
+    }
+    window.scrollTo(0,view.scrollY);
+  });
+}
 function render(){
+  const view=captureViewState();
+  activeViewState=view;
+  const renderId=++renderGeneration;
   const list=filtered(); renderSummary(list);
   visibleGroups=new Map(list.map(group=>[group.GroupKey,group]));
   const tbody=document.getElementById('rows');
@@ -777,7 +819,7 @@ function render(){
     const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.groupKey===expandedRecordId);
     if(expandedRow){
       expandedRow.classList.add('open');
-      void renderDetail(expandedRow,expandedRecordId);
+      void renderDetail(expandedRow,expandedRecordId,renderId);
     }else{
       expandedRecordId=null;
     }
@@ -958,6 +1000,9 @@ async function toggleDetail(rowId,groupKey){
   row.classList.add('open');
   await renderDetail(row,groupKey);
 }
+function metricInfo(text){
+  return '<details class="metric-info"><summary aria-label="More information">i</summary><span class="metric-info-popover">'+esc(text)+'</span></details>';
+}
 function renderRecordDetails(x){
   const validationFailure=x.Status==='Rejected'&&x.Reason==='InvalidApimResponseToken'
     ? '<div class="payload-note"><strong>APIM response rejected:</strong> response-token validation failed. The response was not processed and no RTA writeback was attempted.</div>'
@@ -981,12 +1026,12 @@ function renderRecordDetails(x){
       '<div class="card"><div class="label">Service Bus</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
     '</div>'+
     '<div class="timing-grid">'+
-      '<div class="card"><div class="label">RTA Pull</div>'+durationLabel(x.RtaPullDurationMs)+'</div>'+
-      '<div class="card"><div class="label">Translation</div>'+durationLabel(x.TranslationDurationMs)+'</div>'+
-      '<div class="card"><div class="label">DOCMP Round Trip</div>'+durationLabel(x.ApimRoundTripDurationMs)+'</div>'+
-      '<div class="card"><div class="label">RTA Writeback</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
-      '<div class="card"><div class="label">Other processing</div>'+durationLabel(x.OtherProcessingDurationMs)+'</div>'+
-      '<div class="card"><div class="label">Total</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">RTA Pull'+metricInfo('Time spent fetching and reading the pending request data from RTA. It is measured once for the poll and can cover multiple claims.')+'</div>'+durationLabel(x.RtaPullDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">Translation'+metricInfo('Time to map the RTA request into the JSON sent to APIM.')+'</div>'+durationLabel(x.TranslationDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">APIM Round Trip'+metricInfo('Elapsed time for the request to APIM and its response. This includes network time and APIM/backend processing.')+'</div>'+durationLabel(x.ApimRoundTripDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">RTA Writeback'+metricInfo('Time spent sending the result/status update to RTA, including retries and retry delays when they occur.')+'</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">Other Processing'+metricInfo('Total elapsed time minus the separately measured stages. It covers orchestration and other work or waiting that is not separately timed.')+'</div>'+durationLabel(x.OtherProcessingDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">Total'+metricInfo('Elapsed time for this run from after the RTA response is read and parsed until the outcome is recorded. It is a per-run elapsed time, not the total time for all records.')+'</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
     '</div>'+
     renderExchangeOutcomes(x)+
     (x.PayloadLoggingEnabled
@@ -995,8 +1040,9 @@ function renderRecordDetails(x){
       : '<div class="payload-note">Payload capture and display are disabled because REQUEST_HISTORY_PAYLOAD_MODE=OFF.</div>');
 
 }
-async function renderDetail(row,groupKey){
+async function renderDetail(row,groupKey,renderId){
   const group=visibleGroups.get(groupKey);
+  if(renderId!==renderGeneration||!row.isConnected)return;
   if(!group){row.querySelector('td').innerHTML='<div class="payload-note">This transaction is no longer in the loaded history window. Refresh to load it again.</div>';return}
   let details=detailCache.get(groupKey);
   if(!details){
@@ -1007,10 +1053,13 @@ async function renderDetail(row,groupKey){
         if(!response.ok)throw new Error('Could not load run details (HTTP '+response.status+').');
         return response.json();
       }));
+      if(renderId!==renderGeneration||!row.isConnected)return;
       details=responses.sort((a,b)=>Date.parse(a.UpdatedAtUtc||a.CreatedAtUtc||0)-Date.parse(b.UpdatedAtUtc||b.CreatedAtUtc||0));
       detailCache.set(groupKey,details);
     }catch(error){
+      if(renderId!==renderGeneration||!row.isConnected)return;
       row.querySelector('td').innerHTML='<div class="payload-note">Could not load transaction details: '+esc(error.message)+'</div>';
+      restoreViewState(activeViewState);
       return;
     }
   }
@@ -1023,7 +1072,9 @@ async function renderDetail(row,groupKey){
     '<div class="transaction-intro"><strong>'+esc(group.UniqueId)+'</strong> · '+details.length.toLocaleString()+' recorded run(s). '+
     'The timeline shows milestones Project Pulse stored; a missing outcome means no outcome was recorded for that stage.</div>'+
     runs+attemptDetails;
-  requestAnimationFrame(()=>syncCopyButtonOffsets(row));
+  const openIndices=openRunDetails.get(groupKey)||new Set();
+  row.querySelectorAll('.run-details').forEach((detail,index)=>{detail.open=openIndices.has(index)});
+  requestAnimationFrame(()=>{syncCopyButtonOffsets(row);restoreViewState(activeViewState)});
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
 const timingThresholds={RtaPull:[1000,5000],Translation:[100,500],ApimRoundTrip:[1000,5000],RtaWriteback:[1000,5000],EndToEnd:[5000,15000]};
