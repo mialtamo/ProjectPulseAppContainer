@@ -221,6 +221,8 @@ ServiceBusReceiveWaitSeconds=5
 ServiceBusDependencyRetrySeconds=5
 ```
 
+On the admin-only requests page, **Test Service Bus** sends a two-minute diagnostic message from the RTA app to the configured queue. A successful send confirms the RTA managed identity can send; the SERVICEBUS app log stream confirms receipt and completion. The diagnostic is automatically completed without processing it as a claim retry. It does not alter RTA or APIM data.
+
 The namespace and queue name must match between the apps. The `SERVICEBUS` app also needs the shared RTA/App API and APIM settings used by the processor and health gate (including their base URLs, required scopes, and APIM response-token secret reference). Configure request-history storage and RTA notifications there too if those features should record or report Service Bus processing outcomes. The full shared settings are listed in the table above.
 
 ## RTA failure notifications

@@ -323,7 +323,7 @@ public static class UiPages
         var environment = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(environmentValue) ? "UNKNOWN" : environmentValue);
         var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
         var pollControls = canManuallyPoll
-            ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
+            ? "<div class=\"admin-actions\"><button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span><button id=\"serviceBusTestButton\" type=\"button\" onclick=\"testServiceBus()\">Test Service Bus</button><span id=\"serviceBusTestStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span></div>"
             : string.Empty;
 
         return RequestHistoryPage
@@ -361,6 +361,8 @@ h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-siz
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.admin-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.admin-actions .muted{font-size:12px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 .history-cleanup{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 14px;padding:10px 12px;border:1px solid #3c2930;border-radius:9px;background:#120d12}
 .history-cleanup label{font-size:12px;color:var(--muted)}
@@ -400,6 +402,12 @@ button{cursor:pointer}.muted{color:var(--muted)}
 .timing-summary-title{display:flex;align-items:center;gap:8px;min-width:0;position:relative}
 .timing-summary-heading h2{font-size:14px;margin:0;color:#c7d9f2}
 .timing-help{position:relative;flex:none}
+.metric-label{display:flex;align-items:center;gap:6px}
+.metric-info{position:relative;display:inline-flex;flex:none}
+.metric-info summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border:1px solid #314154;border-radius:50%;color:#829bb7;font:700 10px/1 system-ui;cursor:pointer;text-transform:none;letter-spacing:0}
+.metric-info summary::-webkit-details-marker{display:none}
+.metric-info summary:hover,.metric-info summary:focus-visible,.metric-info[open] summary{border-color:var(--cyan);color:var(--cyan);outline:none}
+.metric-info-popover{position:absolute;left:0;top:calc(100% + 6px);z-index:40;width:min(270px,calc(100vw - 80px));padding:9px 11px;border:1px solid #314154;border-radius:8px;background:#0b111a;box-shadow:0 12px 30px rgba(0,0,0,.45);color:var(--text);font-size:11px;font-weight:400;line-height:1.45;letter-spacing:normal;text-transform:none}
 .timing-help summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #314154;border-radius:50%;color:#9db1c7;cursor:pointer}
 .timing-help summary::-webkit-details-marker{display:none}
 .timing-help summary:hover,.timing-help summary:focus-visible,.timing-help[open] summary{border-color:var(--cyan);color:var(--cyan);outline:none}
@@ -619,7 +627,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
+let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let openRunDetails=new Map(); let renderGeneration=0; let activeViewState=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
   if(value===null||value===undefined)return 'N/A';
@@ -750,7 +758,43 @@ function renderSummary(list){
     '<span class="pill">'+buffered.toLocaleString()+' buffered</span>'+
     '<span class="pill">'+alerted.toLocaleString()+' alerted</span>';
 }
+function captureViewState(){
+  const body=document.getElementById('rows');
+  const expanded=body.querySelector('.expand-row.open');
+  const anchor=Array.from(body.querySelectorAll('.data-row')).find(row=>{
+    const rect=row.getBoundingClientRect();
+    return rect.bottom>0&&rect.top<window.innerHeight;
+  });
+  const openRuns=new Map();
+  body.querySelectorAll('.expand-row.open').forEach(row=>{
+    const key=row.dataset.groupKey;
+    const indices=new Set(Array.from(row.querySelectorAll('.run-details')).flatMap((detail,index)=>detail.open?[index]:[]));
+    openRuns.set(key,indices);
+  });
+  openRuns.forEach((indices,key)=>{
+    if(indices.size)openRunDetails.set(key,indices);
+    else openRunDetails.delete(key);
+  });
+  return {
+    scrollY:window.scrollY,
+    anchorGroupKey:anchor?.dataset.groupKey||expanded?.dataset.groupKey||null,
+    anchorTop:anchor?.getBoundingClientRect().top??expanded?.getBoundingClientRect().top??null
+  };
+}
+function restoreViewState(view){
+  if(!view)return;
+  requestAnimationFrame(()=>{
+    if(view.anchorGroupKey&&view.anchorTop!==null){
+      const row=Array.from(document.querySelectorAll('#rows .data-row')).find(x=>x.dataset.groupKey===view.anchorGroupKey);
+      if(row){window.scrollBy(0,row.getBoundingClientRect().top-view.anchorTop);return}
+    }
+    window.scrollTo(0,view.scrollY);
+  });
+}
 function render(){
+  const view=captureViewState();
+  activeViewState=view;
+  const renderId=++renderGeneration;
   const list=filtered(); renderSummary(list);
   visibleGroups=new Map(list.map(group=>[group.GroupKey,group]));
   const tbody=document.getElementById('rows');
@@ -775,7 +819,7 @@ function render(){
     const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.groupKey===expandedRecordId);
     if(expandedRow){
       expandedRow.classList.add('open');
-      void renderDetail(expandedRow,expandedRecordId);
+      void renderDetail(expandedRow,expandedRecordId,renderId,true);
     }else{
       expandedRecordId=null;
     }
@@ -954,7 +998,10 @@ async function toggleDetail(rowId,groupKey){
   if(!opening){if(expandedRecordId===groupKey)expandedRecordId=null;return}
   expandedRecordId=groupKey;
   row.classList.add('open');
-  await renderDetail(row,groupKey);
+  await renderDetail(row,groupKey,renderGeneration,false);
+}
+function metricInfo(text){
+  return '<details class="metric-info"><summary aria-label="More information">i</summary><span class="metric-info-popover">'+esc(text)+'</span></details>';
 }
 function renderRecordDetails(x){
   const validationFailure=x.Status==='Rejected'&&x.Reason==='InvalidApimResponseToken'
@@ -971,20 +1018,20 @@ function renderRecordDetails(x){
   return validationFailure+
     writebackFailure+
     '<div class="detail-grid">'+
-      '<div class="card"><div class="label">Batch ID</div><div class="id">'+esc(x.BatchId)+'</div></div>'+
-      '<div class="card"><div class="label">Processed by</div><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></div>'+
-      '<div class="card"><div class="label">Claims in Batch</div>'+esc(groupByBatch(items).find(b=>b.BatchId===x.BatchId)?.ClaimCount??1)+'</div>'+
-      '<div class="card"><div class="label">Sent to APIM</div>'+(x.SentToApimAtUtc?new Date(x.SentToApimAtUtc).toLocaleString():'N/A')+'</div>'+
-      '<div class="card"><div class="label">APIM Response</div>'+(x.ApimResponseAtUtc?new Date(x.ApimResponseAtUtc).toLocaleString():'N/A')+'</div>'+
-      '<div class="card"><div class="label">Service Bus</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
+      '<div class="card"><div class="label metric-label">Batch ID'+metricInfo('Identifier assigned to this processing batch/run. Use it to match related lifecycle events and logs.')+'</div><div class="id">'+esc(x.BatchId)+'</div></div>'+
+      '<div class="card"><div class="label metric-label">Processed by'+metricInfo('The Project Pulse component that handled this run, such as the RTA Poller or Service Bus Worker.')+'</div><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></div>'+
+      '<div class="card"><div class="label metric-label">Claims in Batch'+metricInfo('Number of request records handled in this batch. Some timings, such as RTA pull, may be shared across the batch.')+'</div>'+esc(groupByBatch(items).find(b=>b.BatchId===x.BatchId)?.ClaimCount??1)+'</div>'+
+      '<div class="card"><div class="label metric-label">Sent to APIM'+metricInfo('Time when Project Pulse sent the request to APIM. N/A means no send time was recorded for this run.')+'</div>'+(x.SentToApimAtUtc?new Date(x.SentToApimAtUtc).toLocaleString():'N/A')+'</div>'+
+      '<div class="card"><div class="label metric-label">APIM Response'+metricInfo('Time when Project Pulse received APIM’s response. N/A means no response time was recorded.')+'</div>'+(x.ApimResponseAtUtc?new Date(x.ApimResponseAtUtc).toLocaleString():'N/A')+'</div>'+
+      '<div class="card"><div class="label metric-label">Service Bus'+metricInfo('Time when a Service Bus event was recorded for this run. N/A means this run has no recorded Service Bus event.')+'</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
     '</div>'+
     '<div class="timing-grid">'+
-      '<div class="card"><div class="label">RTA Pull</div>'+durationLabel(x.RtaPullDurationMs)+'</div>'+
-      '<div class="card"><div class="label">Translation</div>'+durationLabel(x.TranslationDurationMs)+'</div>'+
-      '<div class="card"><div class="label">DOCMP Round Trip</div>'+durationLabel(x.ApimRoundTripDurationMs)+'</div>'+
-      '<div class="card"><div class="label">RTA Writeback</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
-      '<div class="card"><div class="label">Other processing</div>'+durationLabel(x.OtherProcessingDurationMs)+'</div>'+
-      '<div class="card"><div class="label">Total</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">RTA Pull'+metricInfo('Time spent fetching and reading the pending request data from RTA. It is measured once for the poll and can cover multiple claims.')+'</div>'+durationLabel(x.RtaPullDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">Translation'+metricInfo('Time to map the RTA request into the JSON sent to APIM.')+'</div>'+durationLabel(x.TranslationDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">APIM Round Trip'+metricInfo('Elapsed time for the request to APIM and its response. This includes network time and APIM/backend processing.')+'</div>'+durationLabel(x.ApimRoundTripDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">RTA Writeback'+metricInfo('Time spent sending the result/status update to RTA, including retries and retry delays when they occur.')+'</div>'+durationLabel(x.RtaWritebackDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">Other Processing'+metricInfo('Total elapsed time minus the separately measured stages. It covers orchestration and other work or waiting that is not separately timed.')+'</div>'+durationLabel(x.OtherProcessingDurationMs)+'</div>'+
+      '<div class="card"><div class="label metric-label">Total'+metricInfo('Elapsed time for this run from after the RTA response is read and parsed until the outcome is recorded. It is a per-run elapsed time, not the total time for all records.')+'</div>'+durationLabel(x.EndToEndDurationMs)+'</div>'+
     '</div>'+
     renderExchangeOutcomes(x)+
     (x.PayloadLoggingEnabled
@@ -993,8 +1040,9 @@ function renderRecordDetails(x){
       : '<div class="payload-note">Payload capture and display are disabled because REQUEST_HISTORY_PAYLOAD_MODE=OFF.</div>');
 
 }
-async function renderDetail(row,groupKey){
+async function renderDetail(row,groupKey,renderId,restoreOnUpdate=false){
   const group=visibleGroups.get(groupKey);
+  if(renderId!==renderGeneration||!row.isConnected)return;
   if(!group){row.querySelector('td').innerHTML='<div class="payload-note">This transaction is no longer in the loaded history window. Refresh to load it again.</div>';return}
   let details=detailCache.get(groupKey);
   if(!details){
@@ -1005,10 +1053,13 @@ async function renderDetail(row,groupKey){
         if(!response.ok)throw new Error('Could not load run details (HTTP '+response.status+').');
         return response.json();
       }));
+      if(renderId!==renderGeneration||!row.isConnected)return;
       details=responses.sort((a,b)=>Date.parse(a.UpdatedAtUtc||a.CreatedAtUtc||0)-Date.parse(b.UpdatedAtUtc||b.CreatedAtUtc||0));
       detailCache.set(groupKey,details);
     }catch(error){
+      if(renderId!==renderGeneration||!row.isConnected)return;
       row.querySelector('td').innerHTML='<div class="payload-note">Could not load transaction details: '+esc(error.message)+'</div>';
+      if(restoreOnUpdate)restoreViewState(activeViewState);
       return;
     }
   }
@@ -1021,7 +1072,9 @@ async function renderDetail(row,groupKey){
     '<div class="transaction-intro"><strong>'+esc(group.UniqueId)+'</strong> · '+details.length.toLocaleString()+' recorded run(s). '+
     'The timeline shows milestones Project Pulse stored; a missing outcome means no outcome was recorded for that stage.</div>'+
     runs+attemptDetails;
-  requestAnimationFrame(()=>syncCopyButtonOffsets(row));
+  const openIndices=openRunDetails.get(groupKey)||new Set();
+  row.querySelectorAll('.run-details').forEach((detail,index)=>{detail.open=openIndices.has(index)});
+  requestAnimationFrame(()=>{syncCopyButtonOffsets(row);if(restoreOnUpdate)restoreViewState(activeViewState)});
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
 const timingThresholds={RtaPull:[1000,5000],Translation:[100,500],ApimRoundTrip:[1000,5000],RtaWriteback:[1000,5000],EndToEnd:[5000,15000]};
@@ -1189,6 +1242,27 @@ async function requestPoll(){
       : 'Poll queued; it will start after the current cycle, if one is running.';
   }catch(error){
     status.textContent='Could not queue poll: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
+}
+async function testServiceBus(){
+  const button=document.getElementById('serviceBusTestButton');
+  const status=document.getElementById('serviceBusTestStatus');
+  if(!button||!status)return;
+  button.disabled=true;
+  status.textContent='Sending a diagnostic message...';
+  try{
+    const response=await fetch('/requests/servicebus-test',{
+      method:'POST',
+      cache:'no-store',
+      headers:{'X-Requested-With':'XMLHttpRequest'}
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.message||result.error||'Service Bus test returned HTTP '+response.status);
+    status.textContent='Sent to '+result.queue+' · Test ID '+result.testId+' · check SERVICEBUS logs for receipt.';
+  }catch(error){
+    status.textContent='Service Bus test failed: '+error.message;
   }finally{
     button.disabled=false;
   }
