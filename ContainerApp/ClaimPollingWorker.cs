@@ -112,14 +112,17 @@ public sealed class ClaimPollingWorker(
         if (outageDecision.OutageStarted)
         {
             logger.LogWarning(
-                "APIM outage detected. Mode decision={Action}. Temporary buffering window started",
+                "APIM outage detected. Mode decision={Action}.",
                 outageDecision.Action);
 
+            var impact = outageDecision.Action == ApimOutageAction.BufferToServiceBus
+                ? "RTA polling will continue, and records returned by RTA will be buffered to Service Bus for retry."
+                : "RTA polling is suspended, so no new records are being fetched until APIM health recovers.";
             var notificationSent = await rtaNotificationClient.SendFailureAsync(
                 null,
                 "APIM",
                 "APIM_UNAVAILABLE",
-                "Project Pulse detected that the APIM health check is failing. While APIM is unavailable, records returned by RTA are being buffered to Service Bus. In BUFFER_THEN_STOP mode, RTA polling will suspend after the configured outage threshold and resume when APIM health recovers.",
+                $"Project Pulse detected that the APIM health check is failing. {impact}",
                 new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["APIM_HEALTH_STATUS_CODE"] = apimHealth.StatusCode?.ToString() ?? "N/A",
