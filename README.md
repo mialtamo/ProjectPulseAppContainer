@@ -150,7 +150,7 @@ The admin-only `/ledger.html` page presents a searchable lifecycle view of store
 /live
 ```
 
-The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA.
+The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA. The same page provides an admin-only `Test Service Bus` button on the `RTA` role. It sends a short-lived diagnostic message to the configured queue; the RTA log stream records send acceptance and the Service Bus worker log stream records receipt/completion. The worker completes this diagnostic message without treating it as a retry.
 
 The RTA role can process records within a fetched batch using `PROCESSING_CONCURRENCY_MODE` (`SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, or `FULL`) and `PROCESSING_MAX_CONCURRENCY`. These settings affect per-record APIM/backend calls and/or RTA status PUTs; they do not overlap polling cycles. The limit applies per active batch and per replica, so replica counts multiply downstream load. They do not control the Service Bus worker, which currently handles one queued record at a time.
 
