@@ -1,7 +1,7 @@
 # Current State
 
-Last reviewed: 2026-11-05  
-Repository image tag: `0.0.101` (from `VERSION`; Azure's active/latest-ready revision must be verified separately.)
+Last reviewed: 2026-11-06  
+Repository image tag: `0.0.104` (from `VERSION`; Azure's active/latest-ready revision must be verified separately.)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
@@ -21,6 +21,7 @@ Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps i
 - RTA writeback failure logs report the actual number of attempts made, which may be fewer than the configured maximum for non-retryable HTTP responses.
 - Configured APIM failure handling can buffer claim retry envelopes in Azure Service Bus. When APIM/backend has already responded but the RTA status PUT fails, Project Pulse stores the exact translated RTA PUT payload in a distinct message. The SERVICEBUS role sends that payload directly to RTA without replaying APIM/backend; scheduled retries stop at `ServiceBusMessageTtlMinutes` (10 minutes by default) and dead-letter if still unsuccessful. Writeback retry messages are gated on RTA health, not APIM health. Service Bus connectivity/certificate configuration is independent of the RTA client certificate trust setup.
 - Request history stores transaction metadata in Azure Table Storage and payload bodies in Blob Storage. `REQUEST_HISTORY_PAYLOAD_MODE` supports `FULL`, `PARTIAL`, and `OFF`. `OFF` suppresses payload capture for new history records; it does not remove payloads already stored.
+- The admin-only requests page can send a short-lived Service Bus connectivity-test message from the RTA role. The sender logs broker acceptance; the Service Bus worker recognizes and completes the test message without treating it as a claim retry.
 - The authenticated request-history UI uses Microsoft Entra sign-in and the `ProjectPulse.Admin` app role, assigned to the `PROJECT_PULSE_ADMINS` group. The UI shows the signed-in user, provides sign-out/navigation, and offers confirmed history cleanup for the last 24 hours, week, 30 days, or all history. Cleanup deletes Table records and removes batch payload blobs only when no remaining history row references them. Cleanup batches Table transactions, scans payload blobs once, and deletes payload files with bounded parallelism; the progress display separates removed history records from deleted payload files.
 - `PROJECT_PULSE_ENVIRONMENT` is shown beside the image version and runtime role on the landing, requests, lifecycle ledger, and poll-batch pages. It is read at runtime so a shared image identifies the environment configured on each Container App.
 - The admin-only `/ledger.html` lifecycle ledger filters request-history attempts by time range, status, destination, and processor role, and searches across correlation/unique ID, RTA request ID, and batch ID. It shows the exact matching count and paginated records, with a timeline based only on milestones present in stored history. The APIM stage is labeled as an attempt recorded because its timestamp is saved before the network POST; absence of later milestones means the app has no outcome recorded for those stages. The ledger does not expose payload bodies.
