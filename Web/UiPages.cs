@@ -1018,12 +1018,12 @@ function renderRecordDetails(x){
   return validationFailure+
     writebackFailure+
     '<div class="detail-grid">'+
-      '<div class="card"><div class="label">Batch ID</div><div class="id">'+esc(x.BatchId)+'</div></div>'+
-      '<div class="card"><div class="label">Processed by</div><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></div>'+
-      '<div class="card"><div class="label">Claims in Batch</div>'+esc(groupByBatch(items).find(b=>b.BatchId===x.BatchId)?.ClaimCount??1)+'</div>'+
-      '<div class="card"><div class="label">Sent to APIM</div>'+(x.SentToApimAtUtc?new Date(x.SentToApimAtUtc).toLocaleString():'N/A')+'</div>'+
-      '<div class="card"><div class="label">APIM Response</div>'+(x.ApimResponseAtUtc?new Date(x.ApimResponseAtUtc).toLocaleString():'N/A')+'</div>'+
-      '<div class="card"><div class="label">Service Bus</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
+      '<div class="card"><div class="label metric-label">Batch ID'+metricInfo('Identifier assigned to this processing batch/run. Use it to match related lifecycle events and logs.')+'</div><div class="id">'+esc(x.BatchId)+'</div></div>'+
+      '<div class="card"><div class="label metric-label">Processed by'+metricInfo('The Project Pulse component that handled this run, such as the RTA Poller or Service Bus Worker.')+'</div><span class="tag '+esc(x.ProcessingRole||'Unknown')+'">'+esc(processorLabel(x.ProcessingRole))+'</span></div>'+
+      '<div class="card"><div class="label metric-label">Claims in Batch'+metricInfo('Number of request records handled in this batch. Some timings, such as RTA pull, may be shared across the batch.')+'</div>'+esc(groupByBatch(items).find(b=>b.BatchId===x.BatchId)?.ClaimCount??1)+'</div>'+
+      '<div class="card"><div class="label metric-label">Sent to APIM'+metricInfo('Time when Project Pulse sent the request to APIM. N/A means no send time was recorded for this run.')+'</div>'+(x.SentToApimAtUtc?new Date(x.SentToApimAtUtc).toLocaleString():'N/A')+'</div>'+
+      '<div class="card"><div class="label metric-label">APIM Response'+metricInfo('Time when Project Pulse received APIM’s response. N/A means no response time was recorded.')+'</div>'+(x.ApimResponseAtUtc?new Date(x.ApimResponseAtUtc).toLocaleString():'N/A')+'</div>'+
+      '<div class="card"><div class="label metric-label">Service Bus'+metricInfo('Time when a Service Bus event was recorded for this run. N/A means this run has no recorded Service Bus event.')+'</div>'+(x.BufferedToServiceBusAtUtc?new Date(x.BufferedToServiceBusAtUtc).toLocaleString():'N/A')+'</div>'+
     '</div>'+
     '<div class="timing-grid">'+
       '<div class="card"><div class="label metric-label">RTA Pull'+metricInfo('Time spent fetching and reading the pending request data from RTA. It is measured once for the poll and can cover multiple claims.')+'</div>'+durationLabel(x.RtaPullDurationMs)+'</div>'+
