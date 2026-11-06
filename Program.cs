@@ -550,6 +550,87 @@ app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTri
     });
 });
 
+app.MapPost("/requests/servicebus-test", async (
+    HttpContext context,
+    ServiceBusClient serviceBusClient,
+    IOptions<ClaimProcessorOptions> options,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (projectPulseRole != ProjectPulseRole.Rta)
+    {
+        return Results.Conflict(new { error = "Service Bus connectivity testing is available only on the RTA role." });
+    }
+
+    if (!string.Equals(
+            context.Request.Headers["X-Requested-With"],
+            "XMLHttpRequest",
+            StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var testId = Guid.NewGuid().ToString("N");
+    var queueName = options.Value.ServiceBusQueueName;
+    var logger = loggerFactory.CreateLogger("ProjectPulse.ServiceBusConnectivity");
+    var sentAtUtc = DateTimeOffset.UtcNow;
+    var body = JsonSerializer.Serialize(new
+    {
+        MessageType = "ServiceBusConnectivityTest",
+        TestId = testId,
+        SentAtUtc = sentAtUtc
+    });
+    var message = new ServiceBusMessage(body)
+    {
+        ContentType = "application/json",
+        MessageId = "connectivity-" + testId,
+        CorrelationId = testId,
+        TimeToLive = TimeSpan.FromMinutes(2),
+        Subject = "ConnectivityTest"
+    };
+    message.ApplicationProperties["messageType"] = "ServiceBusConnectivityTest";
+    message.ApplicationProperties["testId"] = testId;
+
+    try
+    {
+        await using var sender = serviceBusClient.CreateSender(queueName);
+        await sender.SendMessageAsync(message, cancellationToken);
+        logger.LogInformation(
+            "Service Bus connectivity test message accepted. TestId={TestId} Queue={Queue} SentAtUtc={SentAtUtc}",
+            testId,
+            queueName,
+            sentAtUtc);
+        LogAdminAudit(adminAuditLogger, context, "ServiceBusConnectivityTest", "Sent", testId);
+        return Results.Accepted(value: new
+        {
+            testId,
+            queue = queueName,
+            sentAtUtc,
+            message = "Message accepted by Service Bus. Check the SERVICEBUS app log stream for a receive confirmation."
+        });
+    }
+    catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+    {
+        logger.LogError(
+            ex,
+            "Service Bus connectivity test send failed. TestId={TestId} Queue={Queue}",
+            testId,
+            queueName);
+        LogAdminAudit(adminAuditLogger, context, "ServiceBusConnectivityTest", "Failed", testId);
+        return Results.Json(new
+        {
+            testId,
+            queue = queueName,
+            error = ex.GetType().Name,
+            message = ex.Message
+        }, statusCode: StatusCodes.Status502BadGateway);
+    }
+});
+
 app.MapGet("/requests/{id}", async (HttpContext context, string id, IRequestHistoryStore store, CancellationToken cancellationToken) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
