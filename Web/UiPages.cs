@@ -819,7 +819,7 @@ function render(){
     const expandedRow=Array.from(tbody.querySelectorAll('.expand-row')).find(row=>row.dataset.groupKey===expandedRecordId);
     if(expandedRow){
       expandedRow.classList.add('open');
-      void renderDetail(expandedRow,expandedRecordId,renderId);
+      void renderDetail(expandedRow,expandedRecordId,renderId,true);
     }else{
       expandedRecordId=null;
     }
@@ -998,7 +998,7 @@ async function toggleDetail(rowId,groupKey){
   if(!opening){if(expandedRecordId===groupKey)expandedRecordId=null;return}
   expandedRecordId=groupKey;
   row.classList.add('open');
-  await renderDetail(row,groupKey);
+  await renderDetail(row,groupKey,renderGeneration,false);
 }
 function metricInfo(text){
   return '<details class="metric-info"><summary aria-label="More information">i</summary><span class="metric-info-popover">'+esc(text)+'</span></details>';
@@ -1040,7 +1040,7 @@ function renderRecordDetails(x){
       : '<div class="payload-note">Payload capture and display are disabled because REQUEST_HISTORY_PAYLOAD_MODE=OFF.</div>');
 
 }
-async function renderDetail(row,groupKey,renderId){
+async function renderDetail(row,groupKey,renderId,restoreOnUpdate=false){
   const group=visibleGroups.get(groupKey);
   if(renderId!==renderGeneration||!row.isConnected)return;
   if(!group){row.querySelector('td').innerHTML='<div class="payload-note">This transaction is no longer in the loaded history window. Refresh to load it again.</div>';return}
@@ -1059,7 +1059,7 @@ async function renderDetail(row,groupKey,renderId){
     }catch(error){
       if(renderId!==renderGeneration||!row.isConnected)return;
       row.querySelector('td').innerHTML='<div class="payload-note">Could not load transaction details: '+esc(error.message)+'</div>';
-      restoreViewState(activeViewState);
+      if(restoreOnUpdate)restoreViewState(activeViewState);
       return;
     }
   }
@@ -1074,7 +1074,7 @@ async function renderDetail(row,groupKey,renderId){
     runs+attemptDetails;
   const openIndices=openRunDetails.get(groupKey)||new Set();
   row.querySelectorAll('.run-details').forEach((detail,index)=>{detail.open=openIndices.has(index)});
-  requestAnimationFrame(()=>{syncCopyButtonOffsets(row);restoreViewState(activeViewState)});
+  requestAnimationFrame(()=>{syncCopyButtonOffsets(row);if(restoreOnUpdate)restoreViewState(activeViewState)});
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
 const timingThresholds={RtaPull:[1000,5000],Translation:[100,500],ApimRoundTrip:[1000,5000],RtaWriteback:[1000,5000],EndToEnd:[5000,15000]};
