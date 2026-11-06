@@ -23,6 +23,7 @@ public sealed class ApimOutageTracker(IOptions<ClaimProcessorOptions> options)
     private readonly object _sync = new();
     private DateTimeOffset? _unhealthySince;
     private bool _bufferFailureDetected;
+    private bool _outageNotificationIssued;
 
     public ApimOutageDecision Evaluate(bool apimHealthy)
     {
@@ -33,6 +34,7 @@ public sealed class ApimOutageTracker(IOptions<ClaimProcessorOptions> options)
                 var recovered = _unhealthySince is not null || _bufferFailureDetected;
                 _unhealthySince = null;
                 _bufferFailureDetected = false;
+                _outageNotificationIssued = false;
 
                 return new ApimOutageDecision(
                     ApimOutageAction.SendToApim,
@@ -41,12 +43,13 @@ public sealed class ApimOutageTracker(IOptions<ClaimProcessorOptions> options)
                     Recovered: recovered);
             }
 
-            var started = false;
             if (_unhealthySince is null)
             {
                 _unhealthySince = DateTimeOffset.UtcNow;
-                started = true;
             }
+
+            var started = !_outageNotificationIssued;
+            _outageNotificationIssued = true;
 
             var outageSeconds = Math.Max(0, (DateTimeOffset.UtcNow - _unhealthySince.Value).TotalSeconds);
 
