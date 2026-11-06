@@ -323,7 +323,7 @@ public static class UiPages
         var environment = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(environmentValue) ? "UNKNOWN" : environmentValue);
         var role = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(roleValue) ? "UNKNOWN" : roleValue);
         var pollControls = canManuallyPoll
-            ? "<button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span>"
+            ? "<div class=\"admin-actions\"><button id=\"pollNowButton\" type=\"button\" onclick=\"requestPoll()\">Poll now</button><span id=\"pollStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span><button id=\"serviceBusTestButton\" type=\"button\" onclick=\"testServiceBus()\">Test Service Bus</button><span id=\"serviceBusTestStatus\" class=\"muted\" role=\"status\" aria-live=\"polite\"></span></div>"
             : string.Empty;
 
         return RequestHistoryPage
@@ -361,6 +361,8 @@ h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-siz
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
 .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.admin-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.admin-actions .muted{font-size:12px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
 .history-cleanup{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 14px;padding:10px 12px;border:1px solid #3c2930;border-radius:9px;background:#120d12}
 .history-cleanup label{font-size:12px;color:var(--muted)}
@@ -1189,6 +1191,27 @@ async function requestPoll(){
       : 'Poll queued; it will start after the current cycle, if one is running.';
   }catch(error){
     status.textContent='Could not queue poll: '+error.message;
+  }finally{
+    button.disabled=false;
+  }
+}
+async function testServiceBus(){
+  const button=document.getElementById('serviceBusTestButton');
+  const status=document.getElementById('serviceBusTestStatus');
+  if(!button||!status)return;
+  button.disabled=true;
+  status.textContent='Sending a diagnostic message...';
+  try{
+    const response=await fetch('/requests/servicebus-test',{
+      method:'POST',
+      cache:'no-store',
+      headers:{'X-Requested-With':'XMLHttpRequest'}
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.message||result.error||'Service Bus test returned HTTP '+response.status);
+    status.textContent='Sent to '+result.queue+' · Test ID '+result.testId+' · check SERVICEBUS logs for receipt.';
+  }catch(error){
+    status.textContent='Service Bus test failed: '+error.message;
   }finally{
     button.disabled=false;
   }
