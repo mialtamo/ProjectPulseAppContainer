@@ -188,6 +188,27 @@ public sealed class ServiceBusWorker(
             if (messageDocument.RootElement.ValueKind == JsonValueKind.Object &&
                 messageDocument.RootElement.TryGetProperty("MessageType", out var messageType) &&
                 messageType.ValueKind == JsonValueKind.String &&
+                string.Equals(messageType.GetString(), "ServiceBusConnectivityTest", StringComparison.OrdinalIgnoreCase))
+            {
+                var testId = messageDocument.RootElement.TryGetProperty("TestId", out var testIdValue)
+                    ? testIdValue.GetString()
+                    : null;
+                await receiver.CompleteMessageAsync(message, cancellationToken);
+                telemetry.TrackEvent("ServiceBusConnectivityTestReceived", new Dictionary<string, string>
+                {
+                    ["testId"] = testId ?? "unknown",
+                    ["queue"] = _options.ServiceBusQueueName
+                });
+                logger.LogInformation(
+                    "Service Bus connectivity test message received and completed. TestId={TestId} Queue={Queue}",
+                    testId ?? "unknown",
+                    _options.ServiceBusQueueName);
+                return;
+            }
+
+            if (messageDocument.RootElement.ValueKind == JsonValueKind.Object &&
+                messageDocument.RootElement.TryGetProperty("MessageType", out messageType) &&
+                messageType.ValueKind == JsonValueKind.String &&
                 string.Equals(messageType.GetString(), RtaWritebackRetryEnvelope.TypeName, StringComparison.OrdinalIgnoreCase))
             {
                 await ProcessRtaWritebackMessageAsync(receiver, message, messageDocument.RootElement, cancellationToken);
