@@ -11,6 +11,7 @@ namespace ProjectPulse.Processor.ContainerApp;
 
 public sealed class ClaimPollingWorker(
     IHealthGate healthGate,
+    IRtaNotificationClient rtaNotificationClient,
     IAppApiClient appApiClient,
     IClaimProcessor claimProcessor,
     IPollBatchLedger pollBatchLedger,
@@ -113,6 +114,24 @@ public sealed class ClaimPollingWorker(
             logger.LogWarning(
                 "APIM outage detected. Mode decision={Action}. Temporary buffering window started",
                 outageDecision.Action);
+
+            var notificationSent = await rtaNotificationClient.SendFailureAsync(
+                null,
+                "APIM",
+                "APIM_UNAVAILABLE",
+                "Project Pulse detected that the APIM health check is failing. While APIM is unavailable, records returned by RTA are being buffered to Service Bus. In BUFFER_THEN_STOP mode, RTA polling will suspend after the configured outage threshold and resume when APIM health recovers.",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["APIM_HEALTH_STATUS_CODE"] = apimHealth.StatusCode?.ToString() ?? "N/A",
+                    ["APIM_HEALTH_DETAIL"] = apimHealth.Detail ?? string.Empty,
+                    ["APIM_OUTAGE_MODE"] = claimProcessorOptions.Value.GetApimOutageMode().ToString(),
+                    ["APIM_POLL_STOP_SECONDS"] = claimProcessorOptions.Value.GetApimOutagePollStopSeconds().ToString()
+                },
+                cancellationToken);
+
+            telemetry.TrackEvent(notificationSent
+                ? "ApimOutageAdminNotificationSent"
+                : "ApimOutageAdminNotificationFailed");
         }
 
         if (outageDecision.Recovered)
