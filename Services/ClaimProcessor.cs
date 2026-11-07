@@ -199,8 +199,7 @@ public sealed class ClaimProcessor(
         var stopwatch = Stopwatch.StartNew();
 
         if (retryEnvelope is not null &&
-            DateTimeOffset.UtcNow >= (retryEnvelope.RetryUntilUtc
-                ?? retryEnvelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes)))
+            DateTimeOffset.UtcNow >= GetApimRetryFinalizationAtUtc(retryEnvelope))
         {
             var finalResult = await FinalizeApimRetryAsync(
                 claims[0],
@@ -397,7 +396,7 @@ public sealed class ClaimProcessor(
                     ?? (retryEnvelope?.QueuedAtUtc ?? DateTimeOffset.UtcNow)
                         .AddMinutes(_options.ServiceBusMessageTtlMinutes);
 
-                if (retryEnvelope is not null && DateTimeOffset.UtcNow >= retryUntilUtc)
+                if (retryEnvelope is not null && DateTimeOffset.UtcNow >= retryUntilUtc.AddSeconds(-_options.GetServiceBusFinalizationReserveSeconds()))
                 {
                     var exhaustedEnvelope = retryEnvelope with
                     {
@@ -1051,8 +1050,8 @@ public sealed class ClaimProcessor(
             {
                 PollRunId = retryContext?.PollRunId ?? pollRunId,
                 PollRecordOrdinal = retryContext?.PollRecordOrdinal ?? pollRecordOrdinal + i,
-                // The Service Bus worker starts the per-record retry clock on first pickup.
-                RetryUntilUtc = retryContext?.RetryUntilUtc,
+                // Keep one absolute 10-minute deadline from the first enqueue; requeues never reset it.
+                RetryUntilUtc = retryContext?.RetryUntilUtc ?? queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
                 RetryAttempt = (retryContext?.RetryAttempt ?? 0) + (retryContext is null ? 0 : 1),
                 LastHttpStatusCode = lastHttpStatusCode ?? retryContext?.LastHttpStatusCode,
                 LastHttpReasonPhrase = lastHttpReasonPhrase ?? retryContext?.LastHttpReasonPhrase,
@@ -1064,6 +1063,10 @@ public sealed class ClaimProcessor(
             await retryQueue.EnqueueAsync(envelope, cancellationToken);
         }
     }
+
+    private DateTimeOffset GetApimRetryFinalizationAtUtc(RetryEnvelope envelope) =>
+        (envelope.RetryUntilUtc ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes))
+            .AddSeconds(-_options.GetServiceBusFinalizationReserveSeconds());
 
     private async Task<IReadOnlyList<ClaimProcessingResult>> FinalizeApimRetryAsync(
         JsonElement claim,
@@ -1115,7 +1118,8 @@ public sealed class ClaimProcessor(
                 rawApimResponseBody: responseBody,
                 outboundApimRequestBody: envelope.TransformedPayload,
                 pollRunId: envelope.PollRunId,
-                pollRecordOrdinal: envelope.PollRecordOrdinal ?? 0);
+                pollRecordOrdinal: envelope.PollRecordOrdinal ?? 0,
+                retryUntilUtc: envelope.RetryUntilUtc);
             if (!string.IsNullOrWhiteSpace(envelope.PollRunId) && envelope.PollRecordOrdinal is { } pollRecordOrdinal)
             {
                 await TryRecordHistoryAsync(
@@ -1282,7 +1286,8 @@ public sealed class ClaimProcessor(
         string? rawApimResponseBody = null,
         string? outboundApimRequestBody = null,
         string? pollRunId = null,
-        int pollRecordOrdinal = 0)
+        int pollRecordOrdinal = 0,
+        DateTimeOffset? retryUntilUtc = null)
     {
         if (string.IsNullOrWhiteSpace(responseJson))
         {
@@ -1469,7 +1474,7 @@ public sealed class ClaimProcessor(
                     GetScalar(originatingRequest, "IDEMPOTENCY_KEY"),
                     "RtaStatusWritebackFailed",
                     queuedAtUtc,
-                    queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
+                    retryUntilUtc ?? queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
                     0,
                     correlationId,
                     statusPayloadJson)
