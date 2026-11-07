@@ -31,9 +31,13 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
     {
         var payload = JsonSerializer.Serialize(envelope);
         var retryUntilUtc = envelope.RetryUntilUtc
-            ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
+            ?? (envelope.RetryAttempt > 0
+                ? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes)
+                : (DateTimeOffset?)null);
         var nowUtc = DateTimeOffset.UtcNow;
-        var remaining = retryUntilUtc - nowUtc;
+        var remaining = retryUntilUtc is { } deadlineUtc
+            ? deadlineUtc - nowUtc
+            : TimeSpan.MaxValue;
         var message = new ServiceBusMessage(payload)
         {
             ContentType = "application/json",
@@ -100,7 +104,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             ["uniqueId"] = envelope.UniqueId,
             ["reason"] = envelope.Reason,
             ["retryAttempt"] = envelope.RetryAttempt.ToString(),
-            ["retryUntilUtc"] = retryUntilUtc.ToString("O"),
+            ["retryUntilUtc"] = retryUntilUtc?.ToString("O") ?? "starts-on-worker-pickup",
             ["retryDelaySeconds"] = scheduled ? (scheduledAtUtc - nowUtc).TotalSeconds.ToString("0") : "0"
         });
 
@@ -109,8 +113,8 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             envelope.UniqueId,
             envelope.Reason,
             envelope.RetryAttempt,
-            retryUntilUtc,
-            scheduled ? retryDelay.TotalSeconds : 0);
+            retryUntilUtc?.ToString("O") ?? "starts-on-worker-pickup",
+            scheduled ? (scheduledAtUtc - nowUtc).TotalSeconds : 0);
     }
 
     public async Task EnqueueRtaWritebackAsync(
