@@ -101,7 +101,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             ["reason"] = envelope.Reason,
             ["retryAttempt"] = envelope.RetryAttempt.ToString(),
             ["retryUntilUtc"] = retryUntilUtc.ToString("O"),
-            ["retryDelaySeconds"] = scheduled ? retryDelay.TotalSeconds.ToString("0") : "0"
+            ["retryDelaySeconds"] = scheduled ? (scheduledAtUtc - nowUtc).TotalSeconds.ToString("0") : "0"
         });
 
         _logger.LogWarning(
@@ -123,12 +123,12 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         {
             ["uniqueId"] = envelope.UniqueId,
             ["correlationId"] = envelope.CorrelationId,
-            ["ttlMinutes"] = _options.ServiceBusMessageTtlMinutes.ToString()
+            ["retentionMinutes"] = _options.GetServiceBusMessageRetentionMinutes().ToString()
         });
         _logger.LogWarning(
-            "Stored RTA writeback payload queued for direct retry. CorrelationId={CorrelationId} RetryWindowMinutes={RetryWindowMinutes}",
+            "Stored RTA writeback payload queued for direct retry. CorrelationId={CorrelationId} BrokerRetentionMinutes={RetentionMinutes}",
             envelope.CorrelationId,
-            _options.ServiceBusMessageTtlMinutes);
+            _options.GetServiceBusMessageRetentionMinutes());
     }
 
     public async Task ScheduleRtaWritebackRetryAsync(
