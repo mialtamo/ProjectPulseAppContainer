@@ -5,7 +5,8 @@
 - Routed incoming `UPDATE_REQUEST` records to the separately configurable `ApimUpdateAdjudicationPath` using HTTP PUT; other request types continue to use `ApimAdjudicationPath` with HTTP POST.
 - Kept backward compatibility: if the update path is unset, update requests use the existing adjudication path and a warning is logged.
 - Recorded the selected APIM endpoint and HTTP method in the generated RTA API call history for applicable status payloads.
-- Updated the default update mapping to read all request fields from the RTA `UPDATE_REQUEST_METADATA` object, including `SOURCE` and the three adjustment deltas.
+- Mapped `UPDATE_REQUEST` request fields from `UPDATE_REQUEST_METADATA` into the DOCMP payload, including a list of individual, family, and costshare accumulator deltas.
+- Added update-specific RTA writeback: `INITIAL_REQUEST_METADATA` is null and the DOCMP response JSON is stored in `UPDATE_REQUEST_METADATA`. The existing initial-request response handling is unchanged.
 - Bumped the image version in `VERSION` to `0.0.106`.
 
 ## 2026-11-02 — Build 0.0.87
