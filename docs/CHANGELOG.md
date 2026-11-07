@@ -1,3 +1,12 @@
+# Change log
+
+## 2026-11-06 — Build 0.0.106
+
+- Routed incoming `UPDATE_REQUEST` records to the separately configurable `ApimUpdateAdjudicationPath` using HTTP PUT; other request types continue to use `ApimAdjudicationPath` with HTTP POST.
+- Kept backward compatibility: if the update path is unset, update requests use the existing adjudication path and a warning is logged.
+- Recorded the selected APIM endpoint and HTTP method in the generated RTA API call history for applicable status payloads.
+- Bumped the image version in `VERSION` to `0.0.106`.
+
 ## 2026-11-02 — Build 0.0.87
 
 - Grouped request history by Unique ID so repeated processing runs appear as one transaction summary instead of separate top-level status rows.
