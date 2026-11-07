@@ -1373,22 +1373,40 @@ public sealed class ClaimProcessor(
             var originatingRequest = requestsByCorrelationId[correlationId];
             var requestType = GetScalar(originatingRequest, "REQUEST_TYPE");
             var isInitialRequest = string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase);
+            var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
+            var selectedApimEndpoint = GetApimEndpointForRequest(originatingRequest);
+            var selectedApimMethod = GetApimMethodForRequest(originatingRequest);
             var statusPayload = apimErrorMessage is not null
-                ? BuildInitialRtaStatusPayload(
-                    item,
-                    originatingRequest,
-                    rawApimResponseBody ?? responseJson,
-                    apimStatusCode,
-                    apimResponseReceivedAtUtc,
-                    apimResponseTimeMs,
-                    _options.ApimBaseUrl,
-                    GetApimEndpointForRequest(originatingRequest),
-                    GetApimMethodForRequest(originatingRequest),
-                    apimResponseHeaders,
-                    outboundApimRequestBody ?? string.Empty,
-                    apimErrorMessage,
-                    apimErrorStack,
-                    isErrorResponse: true)
+                ? isUpdateRequest
+                    ? BuildUpdateRtaStatusPayload(
+                        originatingRequest,
+                        rawApimResponseBody ?? responseJson,
+                        apimStatusCode,
+                        apimResponseReceivedAtUtc,
+                        apimResponseTimeMs,
+                        _options.ApimBaseUrl,
+                        selectedApimEndpoint,
+                        selectedApimMethod,
+                        apimResponseHeaders,
+                        outboundApimRequestBody ?? string.Empty,
+                        apimErrorMessage,
+                        apimErrorStack,
+                        isErrorResponse: true)
+                    : BuildInitialRtaStatusPayload(
+                        item,
+                        originatingRequest,
+                        rawApimResponseBody ?? responseJson,
+                        apimStatusCode,
+                        apimResponseReceivedAtUtc,
+                        apimResponseTimeMs,
+                        _options.ApimBaseUrl,
+                        selectedApimEndpoint,
+                        selectedApimMethod,
+                        apimResponseHeaders,
+                        outboundApimRequestBody ?? string.Empty,
+                        apimErrorMessage,
+                        apimErrorStack,
+                        isErrorResponse: true)
                 : isInitialRequest
                     ? BuildInitialRtaStatusPayload(
                         item,
@@ -1398,10 +1416,23 @@ public sealed class ClaimProcessor(
                         apimResponseReceivedAtUtc,
                         apimResponseTimeMs,
                         _options.ApimBaseUrl,
-                        _options.ApimAdjudicationPath,
+                        selectedApimEndpoint,
+                        selectedApimMethod,
                         apimResponseHeaders,
                         outboundApimRequestBody ?? string.Empty)
-                    : BuildLegacyRtaStatusPayload(item, originatingRequest);
+                    : isUpdateRequest
+                        ? BuildUpdateRtaStatusPayload(
+                            originatingRequest,
+                            responseJson,
+                            apimStatusCode,
+                            apimResponseReceivedAtUtc,
+                            apimResponseTimeMs,
+                            _options.ApimBaseUrl,
+                            selectedApimEndpoint,
+                            selectedApimMethod,
+                            apimResponseHeaders,
+                            outboundApimRequestBody ?? string.Empty)
+                        : BuildLegacyRtaStatusPayload(item, originatingRequest);
             var statusPayloadJson = statusPayload.ToJsonString();
 
             await TryRecordHistoryAsync(
@@ -1596,6 +1627,63 @@ public sealed class ClaimProcessor(
         }
 
         target[targetName] = null;
+    }
+
+    private static JsonObject BuildUpdateRtaStatusPayload(
+        JsonElement originatingRequest,
+        string rawApimResponse,
+        int apimStatusCode,
+        DateTimeOffset apimResponseReceivedAtUtc,
+        long apimResponseTimeMs,
+        string apimBaseUrl,
+        string apimEndpoint,
+        string apimHttpMethod,
+        string apimResponseHeaders,
+        string outboundApimRequestBody,
+        string? errorMessage = null,
+        string? errorStack = null,
+        bool isErrorResponse = false)
+    {
+        var payload = new JsonObject();
+        CopyJsonProperty(originatingRequest, payload, "REQUEST_TYPE");
+        payload["STATUS"] = isErrorResponse
+            ? "FAILURE"
+            : apimStatusCode is >= 200 and < 300 ? "SUCCESS" : "FAILURE";
+        payload["SUBSTATUS"] = null;
+        payload["PROCESS_DT"] = apimResponseReceivedAtUtc
+            .ToUniversalTime()
+            .ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+
+        var apiCallHistory = new JsonObject();
+        CopyJsonProperty(originatingRequest, apiCallHistory, "REQUEST_ID");
+        CopyJsonProperty(originatingRequest, apiCallHistory, "IDEMPOTENCY_KEY");
+        apiCallHistory["EXTERNAL_CORRELATION_ID"] = null;
+        CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
+        apiCallHistory["IDENTIFIER"] = "update-accum-request";
+        apiCallHistory["HTTP_METHOD"] = apimHttpMethod;
+        apiCallHistory["API_URL"] = $"{apimBaseUrl.TrimEnd('/')}/";
+        apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
+        apiCallHistory["REQUEST_HEADER"] = apimResponseHeaders;
+        apiCallHistory["REQUEST_QUERY_PARAMETER"] = null;
+        apiCallHistory["REQUEST_BODY"] = outboundApimRequestBody;
+        apiCallHistory["RESPONSE_HTTP_STATUS_CODE"] = apimStatusCode;
+        apiCallHistory["RESPONSE_BODY"] = rawApimResponse;
+        apiCallHistory["RESPONSE_TIME_MS"] = apimResponseTimeMs;
+        apiCallHistory["ERROR_MESSAGE"] = errorMessage;
+        apiCallHistory["ERROR_STACK"] = errorStack;
+        payload["API_CALL_HISTORY"] = apiCallHistory;
+
+        payload["INITIAL_REQUEST_METADATA"] = null;
+        try
+        {
+            payload["UPDATE_REQUEST_METADATA"] = JsonNode.Parse(rawApimResponse);
+        }
+        catch (JsonException)
+        {
+            payload["UPDATE_REQUEST_METADATA"] = JsonValue.Create(rawApimResponse);
+        }
+
+        return payload;
     }
 
     private static JsonObject BuildLegacyRtaStatusPayload(JsonElement apimResponse, JsonElement originatingRequest)
