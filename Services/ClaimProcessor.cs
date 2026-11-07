@@ -292,7 +292,7 @@ public sealed class ClaimProcessor(
                 "ApimUpdateAdjudicationPath is not configured; UPDATE_REQUEST is falling back to ApimAdjudicationPath.");
         }
 
-        using var request = new HttpRequestMessage(apimMethod, apimEndpoint)
+        using var request = new HttpRequestMessage(apimMethod, EndpointUri.Combine(client.BaseAddress!, apimEndpoint))
         {
             Content = new StringContent(outboundPayloadJson, Encoding.UTF8, "application/json")
         };
@@ -546,7 +546,7 @@ public sealed class ClaimProcessor(
                         statusCode,
                         apimResponseReceivedAtUtc,
                         apimRoundTripStopwatch.ElapsedMilliseconds,
-                        request.RequestUri?.ToString() ?? new Uri(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
+                        request.RequestUri?.ToString() ?? EndpointUri.Combine(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
                         SerializeApimResponseHeaders(response),
                         batchId,
                         claims,
@@ -684,7 +684,7 @@ public sealed class ClaimProcessor(
                     statusCode,
                     apimResponseReceivedAtUtc,
                     apimRoundTripStopwatch.ElapsedMilliseconds,
-                    request.RequestUri?.ToString() ?? new Uri(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
+                    request.RequestUri?.ToString() ?? EndpointUri.Combine(client.BaseAddress!, _options.ApimAdjudicationPath).ToString(),
                     SerializeApimResponseHeaders(response),
                     batchId,
                     claims,
@@ -1552,8 +1552,8 @@ public sealed class ClaimProcessor(
         CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
         apiCallHistory["IDENTIFIER"] = "initial-accum-request";
         apiCallHistory["HTTP_METHOD"] = apimHttpMethod;
-        apiCallHistory["API_URL"] = $"{apimBaseUrl.TrimEnd('/')}/";
-        apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
+        apiCallHistory["API_URL"] = EndpointUri.NormalizeBaseAddress(apimBaseUrl, nameof(apimBaseUrl)).ToString();
+        apiCallHistory["API_ENDPOINT"] = EndpointUri.NormalizePath(apimEndpoint);
         apiCallHistory["REQUEST_HEADER"] = apimResponseHeaders;
         apiCallHistory["REQUEST_QUERY_PARAMETER"] = null;
         apiCallHistory["REQUEST_BODY"] = outboundApimRequestBody;
@@ -1661,8 +1661,8 @@ public sealed class ClaimProcessor(
         CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
         apiCallHistory["IDENTIFIER"] = "update-accum-request";
         apiCallHistory["HTTP_METHOD"] = apimHttpMethod;
-        apiCallHistory["API_URL"] = $"{apimBaseUrl.TrimEnd('/')}/";
-        apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
+        apiCallHistory["API_URL"] = EndpointUri.NormalizeBaseAddress(apimBaseUrl, nameof(apimBaseUrl)).ToString();
+        apiCallHistory["API_ENDPOINT"] = EndpointUri.NormalizePath(apimEndpoint);
         apiCallHistory["REQUEST_HEADER"] = apimResponseHeaders;
         apiCallHistory["REQUEST_QUERY_PARAMETER"] = null;
         apiCallHistory["REQUEST_BODY"] = outboundApimRequestBody;
@@ -1673,14 +1673,14 @@ public sealed class ClaimProcessor(
         apiCallHistory["ERROR_STACK"] = errorStack;
         payload["API_CALL_HISTORY"] = apiCallHistory;
 
-        payload["INITIAL_REQUEST_METADATA"] = null;
+        payload["INITIAL_REQUEST_RESPONSE"] = null;
         try
         {
-            payload["UPDATE_REQUEST_METADATA"] = JsonNode.Parse(rawApimResponse);
+            payload["UPDATE_REQUEST_RESPONSE"] = JsonNode.Parse(rawApimResponse);
         }
         catch (JsonException)
         {
-            payload["UPDATE_REQUEST_METADATA"] = JsonValue.Create(rawApimResponse);
+            payload["UPDATE_REQUEST_RESPONSE"] = JsonValue.Create(rawApimResponse);
         }
 
         return payload;

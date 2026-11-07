@@ -24,6 +24,10 @@ ServiceBusWorker
     +--> writeback retry envelope -----------------------------> RTA
 ```
 
+## Request routing and translation
+
+Project Pulse processes each RTA record separately. The root-level `REQUEST_TYPE` selects the APIM operation: `UPDATE_REQUEST` uses the configured relative update path with HTTP PUT; other requests use the general adjudication path with HTTP POST. If the update path is unset, update requests fall back to the general path. Update bodies are mapped from `UPDATE_REQUEST_METADATA` into the downstream update contract, including accumulator adjustment items. The record's `IDEMPOTENCY_KEY` is sent as the `Idempotency-Key` header for APIM to forward downstream. Update writeback sets `INITIAL_REQUEST_METADATA` to null and stores the raw APIM response JSON in `UPDATE_REQUEST_METADATA`; initial-request handling is unchanged.
+
 ## Polling model
 
 `POLL_INTERVAL_SECONDS` controls the application polling interval. Default is 5 seconds; supported range is 1 through 300 seconds.
@@ -33,6 +37,10 @@ The worker does not overlap polling cycles within a single replica. For the POC,
 ### Per-record concurrency
 
 Within an RTA polling batch, `PROCESSING_CONCURRENCY_MODE` selects which stages may overlap: `SEQUENTIAL` keeps APIM/backend and RTA PUTs serial; `RTA_ONLY` overlaps RTA PUTs; `APIM_ONLY` overlaps APIM/backend calls; `FULL` overlaps both. `PROCESSING_MAX_CONCURRENCY` caps each enabled stage (default 5, clamped to 1-100). The limit is per active batch and per replica, so replicas multiply potential downstream concurrency. Poll cycles remain non-overlapping. These settings do not control the Service Bus worker, which currently processes one queued record at a time.
+
+## URL construction
+
+Configured API base URLs are normalized with one trailing separator, and endpoint paths are normalized before requests are sent. This accepts path settings with or without leading/trailing slashes, removes duplicate separators at and within the path boundary, preserves a base URL path prefix, and keeps configured query parameters. The HTTP and HTTPS scheme separator remains intact.
 
 ## Container
 

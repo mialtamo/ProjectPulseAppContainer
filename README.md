@@ -93,6 +93,12 @@ Project Pulse
      +--> Service Bus fallback when required
 ```
 
+## Update request processing
+
+Project Pulse selects the APIM operation from the incoming root-level `REQUEST_TYPE`. An `UPDATE_REQUEST` uses the separately configured `ApimUpdateAdjudicationPath` with HTTP PUT; other request types use `ApimAdjudicationPath` with HTTP POST. Configure the update setting as a relative path under `ApimBaseUrl`. If it is empty, update requests use the general adjudication path for backward compatibility.
+
+The update body is built from `UPDATE_REQUEST_METADATA`. The default mapping sends the patient identifier, service start date, claim number, and source, plus an `adjustments` array containing individual, family, and cost-share accumulator deltas. Each record's `IDEMPOTENCY_KEY` is sent to APIM in the `Idempotency-Key` request header so APIM can pass it to the downstream service. For update writeback, Project Pulse sets `INITIAL_REQUEST_METADATA` to null and stores the raw APIM response JSON in `UPDATE_REQUEST_METADATA`. The existing initial-request mapping and writeback remain unchanged. See [the update configuration details](docs/CONFIGURATION.md#configuration-reference) and [product specification](docs/PRODUCT-SPEC.md#response-translation-and-writeback).
+
 ## Runtime
 
 - .NET 10
@@ -280,7 +286,7 @@ x-api-key=<secret reference>
 
 ApimBaseUrl=<APIM URL>
 ApimAdjudicationPath=pulse/pending
-ApimUpdateAdjudicationPath=accumulator/api/1.0/update
+ApimUpdateAdjudicationPath=<relative update endpoint path>
 ApimRequestTimeoutSeconds=15
 
 ServiceBusFullyQualifiedNamespace=<namespace>.servicebus.windows.net
@@ -304,6 +310,8 @@ RequestHistoryStorageConnectionString=<secret reference>
 REQUEST_HISTORY_PAYLOAD_MODE=OFF
 ```
 
+For URL settings, base URLs can include or omit a final slash. Endpoint path settings can include or omit leading/trailing slashes; Project Pulse normalizes the join to avoid duplicate separators and preserves any path prefix in the base URL. See the [URL and path formatting guidance](docs/CONFIGURATION.md#url-and-path-formatting).
+
 ### RTA page size
 
 `RtaPageSize` controls how many records Project Pulse requests in each RTA GET page (default 100). `RtaMaxPageSize` sets the configurable upper bound (default 5,000); set it higher if the RTA endpoint supports larger pages. The RTA endpoint may impose its own lower maximum. Larger pages increase response size and memory use but do not increase processing concurrency. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical per-poll maximum is `RtaMaxPageSize × RtaPagesPerPoll`. Increase the page limit only after confirming the RTA limit and checking container memory and request duration.
@@ -320,9 +328,7 @@ Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
 `PROCESSING_MAX_CONCURRENCY` sets the per-batch concurrency (default `5`). `PROCESSING_MAX_CONCURRENCY_LIMIT` sets its configurable upper bound (default `300`); the effective concurrency is clamped between 1 and that limit. Raise both values when intentionally increasing concurrency. For batches larger than the configured concurrency, remaining records wait while the configured number are processed concurrently. APIM
 concurrency also increases the number of simultaneous requests that can reach downstream API through APIM;
 use it only after checking APIM and downstream API capacity. RTA concurrency increases simultaneous status
-PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
-so multiple replicas add to the aggregate load. The Service Bus worker handles one queued record
-at a time.
+PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica, so multiple replicas add to the aggregate load. The Service Bus role also uses the concurrency setting for messages; its default mode remains sequential.
 
 ### Request-history payload capture
 

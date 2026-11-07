@@ -37,14 +37,14 @@ builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential()
 builder.Services.AddHttpClient("AppApi", (sp, client) =>
 {
     var options = sp.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value;
-    client.BaseAddress = new Uri(options.AppApiBaseUrl);
+    client.BaseAddress = EndpointUri.NormalizeBaseAddress(options.AppApiBaseUrl, nameof(options.AppApiBaseUrl));
     client.Timeout = TimeSpan.FromSeconds(options.AppApiTimeoutSeconds);
 });
 
 builder.Services.AddHttpClient("Apim", (sp, client) =>
 {
     var options = sp.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value;
-    client.BaseAddress = new Uri(options.ApimBaseUrl);
+    client.BaseAddress = EndpointUri.NormalizeBaseAddress(options.ApimBaseUrl, nameof(options.ApimBaseUrl));
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
 
