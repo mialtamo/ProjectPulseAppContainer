@@ -45,6 +45,10 @@ The configured storage account must be reachable from the Container App environm
 
 ## Configuration reference
 
+### URL and path formatting
+
+The base URL settings (`AppApiBaseUrl`, `ApimBaseUrl`, and `RTANotificationsBaseURL`) accept a trailing slash or no trailing slash. They must be absolute HTTP or HTTPS URLs without a query string or fragment. Endpoint path settings for RTA, APIM, health checks, status writebacks, and notifications accept leading or trailing slashes. Project Pulse removes redundant separators when joining a path to its base URL, producing one separator at the boundary while preserving any path prefix in the base URL. Query parameters already present in a configured endpoint path are preserved.
+
 | Variable | Role | Required | Default / example | Secret | Purpose |
 | --- | --- | --- | --- | --- | --- |
 | `PROJECT_PULSE_ENVIRONMENT` | Both | No | `POC` | No | Display/environment label used by the UI. |
@@ -71,7 +75,7 @@ The configured storage account must be reachable from the Container App environm
 | `ApimBaseUrl` | Both | Yes | APIM base URL | No | Base URL for APIM. |
 | `ApimHealthPath` | Both | No | `/health` | No | APIM health endpoint path. |
 | `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path used for non-update requests. |
-| `ApimUpdateAdjudicationPath` | Both | No | Empty | No | Relative APIM endpoint path for records whose incoming `REQUEST_TYPE` is `UPDATE_REQUEST`. These requests use HTTP PUT. Configure it relative to `ApimBaseUrl`, without a leading slash. If unset, update requests fall back to `ApimAdjudicationPath` for compatibility. |
+| `ApimUpdateAdjudicationPath` | Both | No | Empty | No | APIM endpoint path for records whose incoming `REQUEST_TYPE` is `UPDATE_REQUEST`. These requests use HTTP PUT. Leading and trailing slashes are optional and normalized when the request URL is built. If unset, update requests fall back to `ApimAdjudicationPath` for compatibility. |
 | `ApimRequestTimeoutSeconds` | Both | No | `15` | No | APIM request timeout used by Project Pulse processing logic. |
 | `APIM_AUTHENTICATION_ENABLED` | Both | No | `true` | No | Enables Pulse's APIM bearer-token authentication and APIM response-token validation. Set to `false` only to test a legacy APIM policy that does not validate the bearer token or return the response-token header. |
 | `ApimScope` | Both | Required when authentication is enabled | `api://<API-application-client-id>/.default` | No | Managed-identity OAuth scope for APIM. Required when `APIM_AUTHENTICATION_ENABLED=true`; use the Application ID URI of the APIM resource app registration with `/.default`. |
