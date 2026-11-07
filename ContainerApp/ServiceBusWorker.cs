@@ -171,6 +171,42 @@ public sealed class ServiceBusWorker(
         }
     }
 
+    private async Task NotifyExpiredClaimFailureAsync(
+        RetryEnvelope envelope,
+        DateTimeOffset retryUntilUtc,
+        CancellationToken cancellationToken)
+    {
+        using var itemDocument = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            REQUEST_ID = envelope.RequestId,
+            CORRELATION_ID = envelope.UniqueId,
+            IDEMPOTENCY_KEY = envelope.IdempotencyKey
+        }));
+        var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CORRELATION_ID"] = envelope.UniqueId,
+            ["REQUEST_ID"] = envelope.RequestId ?? string.Empty,
+            ["RETRY_ATTEMPT"] = envelope.RetryAttempt.ToString(),
+            ["RETRY_UNTIL_UTC"] = retryUntilUtc.ToString("O")
+        };
+
+        try
+        {
+            await rtaNotificationClient.SendFailureAsync(
+                itemDocument.RootElement,
+                "SERVICEBUS",
+                "APIM_RETRY_DEADLINE_MISSED",
+                "The Service Bus record reached its hard 10-minute deadline before Project Pulse could send the final status to RTA.",
+                attributes,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Could not send the deadline-missed notification for claim {UniqueId}.", envelope.UniqueId);
+            telemetry.TrackException(ex);
+        }
+    }
+
     private async Task ProcessDeadLetterMessageAsync(
         ServiceBusReceiver deadLetterReceiver,
         ServiceBusReceivedMessage message,
@@ -240,6 +276,7 @@ public sealed class ServiceBusWorker(
                     ["uniqueId"] = envelope.UniqueId,
                     ["retryUntilUtc"] = retryUntilUtc.ToString("O")
                 });
+                await NotifyExpiredClaimFailureAsync(envelope, retryUntilUtc, cancellationToken);
                 await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
                 return;
             }
