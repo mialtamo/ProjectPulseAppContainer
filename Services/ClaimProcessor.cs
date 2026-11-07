@@ -1745,7 +1745,7 @@ public sealed class ClaimProcessor(
     private static JsonArray MapUpdateAdjustments(JsonObject docmpResponse)
     {
         var mappedAdjustments = new JsonArray();
-        if (GetJsonObjectPropertyIgnoreCase(docmpResponse, "lastAdjustments") is not JsonArray adjustments)
+        if (GetJsonNodePropertyIgnoreCase(docmpResponse, "lastAdjustments") is not JsonArray adjustments)
         {
             return mappedAdjustments;
         }
@@ -1778,6 +1778,11 @@ public sealed class ClaimProcessor(
 
     private static JsonObject? GetJsonObjectPropertyIgnoreCase(JsonObject? source, string propertyName)
     {
+        return GetJsonNodePropertyIgnoreCase(source, propertyName) as JsonObject;
+    }
+
+    private static JsonNode? GetJsonNodePropertyIgnoreCase(JsonObject? source, string propertyName)
+    {
         if (source is null)
         {
             return null;
@@ -1787,7 +1792,7 @@ public sealed class ClaimProcessor(
         {
             if (string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase))
             {
-                return property.Value as JsonObject;
+                return property.Value;
             }
         }
 
