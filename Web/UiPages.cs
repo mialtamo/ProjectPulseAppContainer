@@ -360,7 +360,7 @@ h1{margin:0;font-size:19px;letter-spacing:.08em}.sub{color:var(--muted);font-siz
 .sign-out:hover,.sign-out:focus-visible{border-color:var(--cyan);outline:none}
 a{color:var(--cyan);text-decoration:none}
 main{padding:20px 24px 40px;max-width:1800px;margin:0 auto}
-.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) auto auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:14px}
+.toolbar{display:grid;grid-template-columns:minmax(240px,1fr) repeat(8,auto);gap:10px;align-items:center;margin-bottom:14px}
 .admin-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .admin-actions .muted{font-size:12px}
 .refresh-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}
@@ -531,6 +531,19 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     </select>
     <button onclick="load()">Refresh</button>
     {{POLL_CONTROL}}
+    <label class="refresh-control">Runs
+      <select id="runOrder" aria-label="Run order" onchange="changeRunOrder()">
+        <option value="asc">Oldest first (1 → latest)</option>
+        <option value="desc">Newest first (latest → 1)</option>
+      </select>
+    </label>
+    <label class="refresh-control">Page size
+      <select id="historyPageSize" aria-label="History records per page" onchange="changePageSize()">
+        <option value="100" selected>100</option>
+        <option value="200">200</option>
+        <option value="300">300</option>
+      </select>
+    </label>
     <label class="refresh-control">Auto refresh
       <select id="refreshInterval" aria-label="Auto refresh interval" onchange="setRefreshRate()">
         <option value="5">5 seconds</option>
@@ -804,7 +817,7 @@ function captureViewState(){
   const openRuns=new Map();
   body.querySelectorAll('.expand-row.open').forEach(row=>{
     const key=row.dataset.groupKey;
-    const indices=new Set(Array.from(row.querySelectorAll('.run-details')).flatMap((detail,index)=>detail.open?[index]:[]));
+    const indices=new Set(Array.from(row.querySelectorAll('.run-details')).flatMap(detail=>detail.open?[Number(detail.dataset.runIndex)]:[]));
     openRuns.set(key,indices);
   });
   openRuns.forEach((indices,key)=>{
@@ -1099,17 +1112,19 @@ async function renderDetail(row,groupKey,renderId,restoreOnUpdate=false){
       return;
     }
   }
-  const runs=details.map((x,index)=>lifecycleRun(x,index)).join('');
-  const attemptDetails=details.map((x,index)=>
-    '<details class="run-details"><summary>Run '+(index+1)+' diagnostics and payloads · '+esc(x.Status)+' · '+esc(x.BatchId)+'</summary>'+
-    renderRecordDetails(x)+'</details>'
-  ).join('');
+  const orderedDetails=document.getElementById('runOrder')?.value==='desc'?details.slice().reverse():details;
+  const runs=orderedDetails.map(x=>lifecycleRun(x,details.indexOf(x))).join('');
+  const attemptDetails=orderedDetails.map(x=>{
+    const index=details.indexOf(x);
+    return '<details class="run-details" data-run-index="'+index+'"><summary>Run '+(index+1)+' diagnostics and payloads · '+esc(x.Status)+' · '+esc(x.BatchId)+'</summary>'+
+      renderRecordDetails(x)+'</details>';
+  }).join('');
   row.querySelector('td').innerHTML=
     '<div class="transaction-intro"><strong>'+esc(group.UniqueId)+'</strong> · '+details.length.toLocaleString()+' recorded run(s). '+
     'The timeline shows milestones Project Pulse stored; a missing outcome means no outcome was recorded for that stage.</div>'+
     runs+attemptDetails;
   const openIndices=openRunDetails.get(groupKey)||new Set();
-  row.querySelectorAll('.run-details').forEach((detail,index)=>{detail.open=openIndices.has(index)});
+  row.querySelectorAll('.run-details').forEach(detail=>{detail.open=openIndices.has(Number(detail.dataset.runIndex))});
   requestAnimationFrame(()=>{syncCopyButtonOffsets(row);if(restoreOnUpdate)restoreViewState(activeViewState)});
 }
 window.addEventListener('resize',()=>syncCopyButtonOffsets());
@@ -1291,7 +1306,7 @@ function changeHistoryRange(){
   void load();
 }
 function historyUrl(pageToken=null){
-  const params=new URLSearchParams({limit:'100',range:document.getElementById('historyRange').value});
+  const params=new URLSearchParams({limit:document.getElementById('historyPageSize').value,range:document.getElementById('historyRange').value});
   if(activeSearch)params.set('search',activeSearch);
   if(pageToken)params.set('pageToken',pageToken);
   if(pageToken&&rangeStartUtc)params.set('fromUtc',rangeStartUtc);
@@ -1522,12 +1537,36 @@ async function loadMore(){
   }
 }
 document.querySelectorAll('th[data-key]').forEach(th=>th.addEventListener('click',()=>{const k=th.dataset.key;if(sortKey===k)sortDir=sortDir==='asc'?'desc':'asc';else{sortKey=k;sortDir='asc'}render()}));
+function changePageSize(){
+  try{localStorage.setItem('projectPulse.requests.pageSize',document.getElementById('historyPageSize').value)}catch{}
+  historyTotalCount=null;
+  rangeStartUtc=null;
+  void load();
+}
+function changeRunOrder(){
+  try{localStorage.setItem('projectPulse.requests.runOrder',document.getElementById('runOrder').value)}catch{}
+  if(!expandedRecordId)return;
+  activeViewState=captureViewState();
+  const row=Array.from(document.querySelectorAll('.expand-row.open')).find(x=>x.dataset.groupKey===expandedRecordId);
+  if(row)void renderDetail(row,expandedRecordId,renderGeneration,true);
+}
+function restoreRequestPreferences(){
+  try{
+    const pageSize=localStorage.getItem('projectPulse.requests.pageSize');
+    if(['100','200','300'].includes(pageSize))document.getElementById('historyPageSize').value=pageSize;
+    const runOrder=localStorage.getItem('projectPulse.requests.runOrder');
+    if(['asc','desc'].includes(runOrder))document.getElementById('runOrder').value=runOrder;
+    const refreshInterval=localStorage.getItem('projectPulse.requests.refreshSeconds');
+    if(['5','10','30','60','300'].includes(refreshInterval))document.getElementById('refreshInterval').value=refreshInterval;
+  }catch{}
+}
 function setRefreshRate(){
   const seconds=Number(document.getElementById('refreshInterval').value);
+  try{localStorage.setItem('projectPulse.requests.refreshSeconds',String(seconds))}catch{}
   if(refreshTimer)clearInterval(refreshTimer);
   refreshTimer=setInterval(load,seconds*1000);
 }
-load(); setRefreshRate(); void loadAutoCleanupSettings();
+restoreRequestPreferences(); load(); setRefreshRate(); void loadAutoCleanupSettings();
 </script>
 </body>
 </html>
