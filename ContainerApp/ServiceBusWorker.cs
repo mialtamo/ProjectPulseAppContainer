@@ -389,6 +389,12 @@ public sealed class ServiceBusWorker(
             return;
         }
 
+        // Queue wait time does not consume this record's retry window. Set the fixed deadline
+        // when the Service Bus worker first starts the record, then preserve it on every requeue.
+        envelope = envelope.RetryUntilUtc is null
+            ? envelope with { RetryUntilUtc = DateTimeOffset.UtcNow.AddMinutes(_options.ServiceBusMessageTtlMinutes) }
+            : envelope;
+
         try
         {
             using var document = JsonDocument.Parse(envelope.OriginalPayload);
