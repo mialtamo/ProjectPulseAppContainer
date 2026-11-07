@@ -31,6 +31,10 @@ For the current Project Pulse API POC:
 
 Set `REQUEST_HISTORY_PAYLOAD_MODE=FULL` only for fake/POC data. Use `PARTIAL` for masked diagnostics or `OFF` for no payload bodies. Transaction metadata remains available in request history. `LOG_POLL_PAYLOADS` is a deprecated compatibility fallback used only when the new setting is unset.
 
+## UPDATE_REQUEST writeback
+
+Successful update responses are translated into RTA's `UPDATE_REQUEST_RESPONSE` shape. Patient and program values come from the original `UPDATE_REQUEST_METADATA`, with DOCMP response values used when the original values are unavailable. Current/maximum accumulator values and last-adjustment fields are mapped from DOCMP's response. `INITIAL_REQUEST_RESPONSE` remains null for UPDATE requests, and the existing INITIAL request translation is unchanged.
+
 ## Service Bus retry envelope
 
 Fallback messages contain:
