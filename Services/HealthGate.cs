@@ -55,7 +55,7 @@ public sealed class HealthGate(
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            using var request = new HttpRequestMessage(HttpMethod.Get, EndpointUri.Combine(client.BaseAddress!, path));
             RtaApiKeyHeader.Apply(request, _options);
             await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
@@ -89,7 +89,7 @@ public sealed class HealthGate(
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            using var request = new HttpRequestMessage(HttpMethod.Get, EndpointUri.Combine(client.BaseAddress!, path));
             if (_options.IsApimAuthenticationEnabled())
             {
                 await authHeaderProvider.ApplyBearerTokenAsync(request, scope, cancellationToken);
