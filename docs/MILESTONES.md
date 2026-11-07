@@ -1,6 +1,6 @@
 # Project Pulse Milestones
 
-Statuses reflect the repository and POC evidence reviewed on 2026-11-02. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
+Statuses reflect the repository and POC evidence reviewed on 2026-11-06. “Complete” means the stated scope is implemented/documented for the POC; it does not certify production readiness. Environment-specific integrations must be verified in their target environment.
 
 ## M0 - Baseline and development framework — Complete
 
@@ -8,7 +8,7 @@ The repository has product, architecture, security, milestone, current-state, an
 
 ## M1 - APIM request/response path — Complete for POC
 
-Project Pulse transforms and submits claim requests, validates the configured response token, processes the APIM response, and records the request/response. A successful POC response has been observed. APIM policy and environment configuration remain external to this repository.
+Project Pulse transforms and submits request records, validates the configured response token, processes the APIM response, and records the request/response. Initial requests use the general APIM POST route; update requests can use a separately configured APIM PUT route selected by `REQUEST_TYPE`. Update input mapping and update-specific RTA writeback are implemented. A successful POC response has been observed. APIM policy and environment configuration remain external to this repository.
 
 ## M2 - RTA writeback — In progress
 
@@ -24,7 +24,7 @@ Remaining: exercise and document the full failure/recovery matrix in the target 
 
 ## M4 - Idempotency and duplicate protection — In progress
 
-Correlation and idempotency values are propagated through the processing path.
+Correlation and idempotency values are propagated through the processing path. The per-record `IDEMPOTENCY_KEY` is sent to APIM in the `Idempotency-Key` header; downstream forwarding and duplicate-prevention behavior still require environment validation.
 
 Remaining: establish and validate duplicate behavior across redelivery, Service Bus replay, process restarts, and RTA polling. Propagating an idempotency key alone does not prove end-to-end duplicate prevention.
 
@@ -54,7 +54,7 @@ Deliverables: durable state if required, restart/recovery validation, concurrenc
 
 ## M9 - Performance and scale — In progress
 
-Azure Container Apps with a continuous worker is the selected POC execution model. The RTA role has configurable per-record concurrency modes and limits; the Service Bus role remains one-message-at-a-time. The UI includes timing averages and configurable date ranges.
+Azure Container Apps with a continuous worker is the selected POC execution model. Both the RTA role and Service Bus role use configurable concurrency limits; RTA concurrency applies within a polling batch, while Service Bus concurrency controls concurrent message processing. The UI includes timing averages and configurable date ranges.
 
 Remaining: load and soak testing, throughput/bottleneck analysis, scale behavior, and a production sizing decision. Configurable concurrency is available but has not established safe production throughput or scale-out limits.
 
