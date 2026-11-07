@@ -1674,9 +1674,35 @@ public sealed class ClaimProcessor(
         payload["API_CALL_HISTORY"] = apiCallHistory;
 
         payload["INITIAL_REQUEST_RESPONSE"] = null;
+        if (isErrorResponse)
+        {
+            payload["UPDATE_REQUEST_RESPONSE"] = null;
+            return payload;
+        }
+
         try
         {
-            payload["UPDATE_REQUEST_RESPONSE"] = JsonNode.Parse(rawApimResponse);
+            var docmpResponse = JsonNode.Parse(rawApimResponse) as JsonObject;
+            if (docmpResponse is null)
+            {
+                payload["UPDATE_REQUEST_RESPONSE"] = JsonValue.Create(rawApimResponse);
+                return payload;
+            }
+
+            var updateResponse = new JsonObject();
+            SetUpdateResponseValue(updateResponse, "PATIENT_ICN", originatingRequest, "PATIENT_ICN", docmpResponse, "patientIcn");
+            SetUpdateResponseValue(updateResponse, "PROGRAM", originatingRequest, "PROGRAM", docmpResponse, "program");
+
+            var updatedAccumulator = GetJsonObjectPropertyIgnoreCase(docmpResponse, "updatedAccumulator") ?? new JsonObject();
+            updateResponse["UPDATED_ACCUMULATOR"] = new JsonObject
+            {
+                ["INDIVIDUAL_DEDUCTIBLE"] = MapUpdateAccumulator(updatedAccumulator, "individualDeductible"),
+                ["FAMILY_DEDUCTIBLE"] = MapUpdateAccumulator(updatedAccumulator, "familyDeductible"),
+                ["OUT_OF_POCKET_MAX"] = MapUpdateAccumulator(updatedAccumulator, "outOfPocketMax")
+            };
+            updateResponse["LAST_ADJUSTMENTS"] = MapUpdateAdjustments(docmpResponse);
+
+            payload["UPDATE_REQUEST_RESPONSE"] = updateResponse;
         }
         catch (JsonException)
         {
@@ -1684,6 +1710,106 @@ public sealed class ClaimProcessor(
         }
 
         return payload;
+    }
+
+    private static void SetUpdateResponseValue(
+        JsonObject target,
+        string targetName,
+        JsonElement originatingRequest,
+        string requestPropertyName,
+        JsonObject docmpResponse,
+        string docmpPropertyName)
+    {
+        if (TryGetPropertyIgnoreCase(originatingRequest, "UPDATE_REQUEST_METADATA", out var updateMetadata) &&
+            updateMetadata.ValueKind == JsonValueKind.Object &&
+            TryGetPropertyIgnoreCase(updateMetadata, requestPropertyName, out var requestValue) &&
+            requestValue.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+        {
+            target[targetName] = JsonNode.Parse(requestValue.GetRawText());
+            return;
+        }
+
+        target[targetName] = CloneJsonObjectPropertyIgnoreCase(docmpResponse, docmpPropertyName);
+    }
+
+    private static JsonObject MapUpdateAccumulator(JsonObject source, string propertyName)
+    {
+        var sourceAccumulator = GetJsonObjectPropertyIgnoreCase(source, propertyName);
+        return new JsonObject
+        {
+            ["CURRENT"] = CloneJsonObjectPropertyIgnoreCase(sourceAccumulator, "current"),
+            ["MAX"] = CloneJsonObjectPropertyIgnoreCase(sourceAccumulator, "max")
+        };
+    }
+
+    private static JsonArray MapUpdateAdjustments(JsonObject docmpResponse)
+    {
+        var mappedAdjustments = new JsonArray();
+        if (GetJsonObjectPropertyIgnoreCase(docmpResponse, "lastAdjustments") is not JsonArray adjustments)
+        {
+            return mappedAdjustments;
+        }
+
+        foreach (var adjustment in adjustments)
+        {
+            if (adjustment is not JsonObject adjustmentObject)
+            {
+                mappedAdjustments.Add(adjustment?.DeepClone());
+                continue;
+            }
+
+            mappedAdjustments.Add(new JsonObject
+            {
+                ["ADJUSTMENT_ID"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "adjustmentId"),
+                ["CLAIM_NUMBER"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "claimNumber"),
+                ["DELTA"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "delta"),
+                ["ACCUMULATOR_TYPE"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "accumulatorType"),
+                ["START_DATE_OF_SERVICE"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "startDateOfService"),
+                ["END_DATE_OF_SERVICE"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "endDateOfService"),
+                ["UNITS"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "units"),
+                ["SOURCE"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "source"),
+                ["NOTES"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "notes"),
+                ["CREATE_DATE"] = CloneJsonObjectPropertyIgnoreCase(adjustmentObject, "createDate")
+            });
+        }
+
+        return mappedAdjustments;
+    }
+
+    private static JsonObject? GetJsonObjectPropertyIgnoreCase(JsonObject? source, string propertyName)
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        foreach (var property in source)
+        {
+            if (string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                return property.Value as JsonObject;
+            }
+        }
+
+        return null;
+    }
+
+    private static JsonNode? CloneJsonObjectPropertyIgnoreCase(JsonObject? source, string propertyName)
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        foreach (var property in source)
+        {
+            if (string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                return property.Value?.DeepClone();
+            }
+        }
+
+        return null;
     }
 
     private static JsonObject BuildLegacyRtaStatusPayload(JsonElement apimResponse, JsonElement originatingRequest)
