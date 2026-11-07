@@ -141,7 +141,8 @@ public sealed class ServiceBusWorker(
                                     "Service Bus dead-letter message is not eligible for automatic recovery and remains available for support review. MessageId={MessageId} Reason={DeadLetterReason}",
                                     deadLetterMessage.MessageId,
                                     deadLetterMessage.DeadLetterReason ?? "unknown");
-                                await deadLetterReceiver.AbandonMessageAsync(deadLetterMessage, cancellationToken: stoppingToken);
+                                // Leave it parked in the dead-letter queue; repeated abandon would create a hot loop.
+                                nextDeadLetterPollUtc = DateTimeOffset.UtcNow.AddMinutes(1);
                             }
                         }
                     }
