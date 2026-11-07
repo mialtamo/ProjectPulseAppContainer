@@ -153,17 +153,18 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
     {
         var nowUtc = DateTimeOffset.UtcNow;
         var remaining = envelope.RetryUntilUtc - nowUtc;
-        if (remaining <= TimeSpan.FromSeconds(1))
+        // Leave at least 15 seconds after a scheduled message activates for the worker to attempt the PUT.
+        if (remaining <= TimeSpan.FromSeconds(15))
         {
             throw new InvalidOperationException($"RTA writeback deadline is too close for another retry for claim {envelope.UniqueId}.");
         }
 
         var next = envelope with { RetryAttempt = envelope.RetryAttempt + 1 };
-        var scheduledTime = nowUtc.Add(delay < remaining - TimeSpan.FromSeconds(1)
-            ? delay
-            : remaining - TimeSpan.FromSeconds(1));
-        var scheduledDelay = scheduledTime - nowUtc;
-        var message = CreateRtaWritebackMessage(next, remaining - scheduledDelay);
+        var latestUsefulDelay = remaining - TimeSpan.FromSeconds(15);
+        var scheduledDelay = delay < latestUsefulDelay ? delay : TimeSpan.FromSeconds(1);
+        var scheduledTime = nowUtc.Add(scheduledDelay);
+        var actualScheduledDelay = scheduledTime - nowUtc;
+        var message = CreateRtaWritebackMessage(next, remaining - actualScheduledDelay);
         await _sender.ScheduleMessageAsync(message, scheduledTime, cancellationToken);
 
         _telemetry.TrackEvent("RtaWritebackRetryScheduled", new Dictionary<string, string>
