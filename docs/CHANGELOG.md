@@ -1,5 +1,11 @@
 # Change log
 
+## 2026-11-06 — Build 0.0.107
+
+- Updated deployment and product documentation to describe update-request routing, HTTP method, field mapping, idempotency header, and update-specific writeback.
+- Replaced the concrete update endpoint example with generic relative-path guidance.
+- Bumped the base image version in `VERSION` to `0.0.107`.
+
 ## 2026-11-06 — Build 0.0.106
 
 - Routed incoming `UPDATE_REQUEST` records to the separately configurable `ApimUpdateAdjudicationPath` using HTTP PUT; other request types continue to use `ApimAdjudicationPath` with HTTP POST.
