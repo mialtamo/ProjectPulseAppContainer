@@ -35,11 +35,21 @@ public sealed class ServiceBusWorker(
                 ReceiveMode = ServiceBusReceiveMode.PeekLock,
                 PrefetchCount = 0
             });
+        await using var deadLetterReceiver = serviceBusClient.CreateReceiver(
+            _options.ServiceBusQueueName,
+            new ServiceBusReceiverOptions
+            {
+                ReceiveMode = ServiceBusReceiveMode.PeekLock,
+                PrefetchCount = 0,
+                SubQueue = SubQueue.DeadLetter
+            });
+        await using var deadLetterReplaySender = serviceBusClient.CreateSender(_options.ServiceBusQueueName);
 
         var mode = _concurrencyGates.Mode;
         var maxConcurrency = _concurrencyGates.MaxConcurrentMessages;
         var inFlight = new List<Task>();
         var nextRtaHealthCheckUtc = DateTimeOffset.MinValue;
+        var nextDeadLetterPollUtc = DateTimeOffset.MinValue;
         var isRtaHealthy = false;
 
         logger.LogInformation(
@@ -86,6 +96,58 @@ public sealed class ServiceBusWorker(
                             TimeSpan.FromSeconds(_options.GetServiceBusDependencyRetrySeconds()),
                             stoppingToken);
 
+                        continue;
+                    }
+
+                    if (inFlight.Count < maxConcurrency && DateTimeOffset.UtcNow >= nextDeadLetterPollUtc)
+                    {
+                        nextDeadLetterPollUtc = DateTimeOffset.UtcNow.AddSeconds(_options.GetServiceBusReceiveWaitSeconds());
+                        var deadLetterMessage = await deadLetterReceiver.ReceiveMessageAsync(
+                            TimeSpan.FromMilliseconds(100),
+                            stoppingToken);
+                        if (deadLetterMessage is not null)
+                        {
+                            if (IsReplayableDeadLetterMessage(deadLetterMessage))
+                            {
+                                try
+                                {
+                                    await ReplayDeadLetterMessageAsync(
+                                        deadLetterReceiver,
+                                        deadLetterReplaySender,
+                                        deadLetterMessage,
+                                        stoppingToken);
+                                    telemetry.TrackEvent("ServiceBusDeadLetterRecoveryStarted", new Dictionary<string, string>
+                                    {
+                                        ["messageId"] = deadLetterMessage.MessageId,
+                                        ["deadLetterReason"] = deadLetterMessage.DeadLetterReason ?? "unknown",
+                                        ["queue"] = _options.ServiceBusQueueName
+                                    });
+                                }
+                                catch (Exception ex) when (ex is not OperationCanceledException)
+                                {
+                                    logger.LogError(
+                                        ex,
+                                        "Could not return a recoverable dead-letter message to the active queue. MessageId={MessageId}",
+                                        deadLetterMessage.MessageId);
+                                    telemetry.TrackException(ex);
+                                    await deadLetterReceiver.AbandonMessageAsync(
+                                        deadLetterMessage,
+                                        cancellationToken: stoppingToken);
+                                }
+                            }
+                            else
+                            {
+                                logger.LogError(
+                                    "Service Bus dead-letter message is not eligible for automatic recovery and remains available for support review. MessageId={MessageId} Reason={DeadLetterReason}",
+                                    deadLetterMessage.MessageId,
+                                    deadLetterMessage.DeadLetterReason ?? "unknown");
+                                await deadLetterReceiver.AbandonMessageAsync(deadLetterMessage, cancellationToken: stoppingToken);
+                            }
+                        }
+                    }
+
+                    if (inFlight.Count >= maxConcurrency)
+                    {
                         continue;
                     }
 
@@ -175,6 +237,76 @@ public sealed class ServiceBusWorker(
                 telemetry.TrackException(ex);
             }
         }
+    }
+
+    private static bool IsReplayableDeadLetterMessage(ServiceBusReceivedMessage message)
+    {
+        var reason = message.DeadLetterReason;
+        var isRecoverableReason =
+            string.Equals(reason, "TTLExpiredException", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(reason, "MaxDeliveryCountExceeded", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(reason, "RtaWritebackRetryWindowExpired", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(reason, "RtaWritebackRetryScheduleFailed", StringComparison.OrdinalIgnoreCase);
+        if (!isRecoverableReason)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(message.Body.ToString());
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (root.TryGetProperty("MessageType", out var messageType) &&
+                messageType.ValueKind == JsonValueKind.String &&
+                string.Equals(messageType.GetString(), RtaWritebackRetryEnvelope.TypeName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var envelope = JsonSerializer.Deserialize<RetryEnvelope>(message.Body.ToString());
+            return envelope is not null && !string.IsNullOrWhiteSpace(envelope.OriginalPayload);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private async Task ReplayDeadLetterMessageAsync(
+        ServiceBusReceiver deadLetterReceiver,
+        ServiceBusSender replaySender,
+        ServiceBusReceivedMessage deadLetterMessage,
+        CancellationToken cancellationToken)
+    {
+        var replay = new ServiceBusMessage(deadLetterMessage.Body)
+        {
+            ContentType = deadLetterMessage.ContentType,
+            CorrelationId = deadLetterMessage.CorrelationId,
+            Subject = deadLetterMessage.Subject,
+            MessageId = $"{deadLetterMessage.MessageId}-recovered-{Guid.NewGuid():N}",
+            TimeToLive = TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes())
+        };
+
+        foreach (var property in deadLetterMessage.ApplicationProperties)
+        {
+            replay.ApplicationProperties[property.Key] = property.Value;
+        }
+
+        replay.ApplicationProperties["recoveredFromDeadLetter"] = true;
+        replay.ApplicationProperties["recoveredDeadLetterReason"] = deadLetterMessage.DeadLetterReason ?? "unknown";
+
+        await replaySender.SendMessageAsync(replay, cancellationToken);
+        await deadLetterReceiver.CompleteMessageAsync(deadLetterMessage, cancellationToken);
+
+        logger.LogWarning(
+            "Recovered Service Bus retry message to the active queue. MessageId={MessageId} DeadLetterReason={DeadLetterReason}",
+            deadLetterMessage.MessageId,
+            deadLetterMessage.DeadLetterReason ?? "unknown");
     }
 
     private async Task ProcessMessageAsync(
@@ -367,24 +499,10 @@ public sealed class ServiceBusWorker(
 
         if (DateTimeOffset.UtcNow >= envelope.RetryUntilUtc)
         {
-            await RecordPollBatchWritebackAsync(envelope, false, null, "RtaWritebackRetryWindowExpired");
-            await receiver.DeadLetterMessageAsync(
-                message,
-                "RtaWritebackRetryWindowExpired",
-                "The direct RTA writeback retry message reached its configured lifetime before processing.",
-                cancellationToken);
-            telemetry.TrackEvent("RtaWritebackRetryExpired", new Dictionary<string, string>
-            {
-                ["uniqueId"] = envelope.UniqueId,
-                ["correlationId"] = envelope.CorrelationId
-            });
-            await NotifyWritebackFailureAsync(
-                envelope,
-                "WRITEBACK_RETRY_EXHAUSTED",
-                "RTA status writeback did not succeed within the configured 10-minute retry window.",
-                null,
-                cancellationToken);
-            return;
+            logger.LogWarning(
+                "RTA writeback retry is past its initial retry window and will continue until RTA accepts it. CorrelationId={CorrelationId} RetryAttempt={RetryAttempt}",
+                envelope.CorrelationId,
+                envelope.RetryAttempt);
         }
 
         if (!_options.RtaStatusWritebackEnabled)
@@ -435,6 +553,31 @@ public sealed class ServiceBusWorker(
                 return;
             }
 
+            if (result.HttpStatusCode is int statusCode &&
+                statusCode >= 400 &&
+                statusCode < 500 &&
+                statusCode != 408 &&
+                statusCode != 429)
+            {
+                await RecordPollBatchWritebackAsync(envelope, false, statusCode, "RtaWritebackRejected");
+                await receiver.DeadLetterMessageAsync(
+                    message,
+                    "RtaWritebackRejected",
+                    $"RTA permanently rejected the status writeback with HTTP {statusCode}.",
+                    cancellationToken);
+                await NotifyWritebackFailureAsync(
+                    envelope,
+                    "RTA_WRITEBACK_REJECTED",
+                    $"RTA rejected the final status writeback with HTTP {statusCode}; the payload is retained in the dead-letter queue for support review.",
+                    null,
+                    cancellationToken);
+                logger.LogCritical(
+                    "RTA rejected final status writeback with a non-retryable HTTP response. CorrelationId={CorrelationId} StatusCode={StatusCode}",
+                    envelope.CorrelationId,
+                    statusCode);
+                return;
+            }
+
             await RecordPollBatchWritebackAsync(envelope, null, result.HttpStatusCode, "RtaWritebackRetrying");
             await ScheduleOrDeadLetterAsync(receiver, message, envelope, cancellationToken, result.HttpStatusCode);
         }
@@ -458,31 +601,9 @@ public sealed class ServiceBusWorker(
         CancellationToken cancellationToken,
         int? lastHttpStatusCode = null)
     {
-        var remaining = envelope.RetryUntilUtc - DateTimeOffset.UtcNow;
-        var delaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt, 0, 10)));
+        // Keep retrying transient RTA failures beyond the APIM retry window. The final status is not complete until RTA accepts it.
+        var delaySeconds = Math.Min(300, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt, 0, 10)));
         var delay = TimeSpan.FromSeconds(delaySeconds);
-        if (remaining <= delay)
-        {
-            await RecordPollBatchWritebackAsync(envelope, false, lastHttpStatusCode, "RtaWritebackRetryWindowExpired");
-            await receiver.DeadLetterMessageAsync(
-                message,
-                "RtaWritebackRetryWindowExpired",
-                "RTA writeback did not succeed within the configured message lifetime.",
-                cancellationToken);
-            telemetry.TrackEvent("RtaWritebackRetryExpired", new Dictionary<string, string>
-            {
-                ["uniqueId"] = envelope.UniqueId,
-                ["correlationId"] = envelope.CorrelationId
-            });
-            logger.LogError("RTA writeback retry window expired; moved to DLQ. CorrelationId={CorrelationId}", envelope.CorrelationId);
-            await NotifyWritebackFailureAsync(
-                envelope,
-                "WRITEBACK_RETRY_EXHAUSTED",
-                "RTA status writeback did not succeed within the configured retry window.",
-                null,
-                cancellationToken);
-            return;
-        }
 
         try
         {
