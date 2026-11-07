@@ -274,7 +274,7 @@ public sealed class ServiceBusWorker(
                 case ClaimProcessingDisposition.FailedWriteback:
                     await receiver.CompleteMessageAsync(message, cancellationToken);
                     logger.LogCritical(
-                        "Dead-lettered claim retry {UniqueId} because its failed RTA writeback could not be buffered. APIM will not be replayed. Reason={Reason}",
+                        "Completed claim retry {UniqueId} after its failed RTA writeback could not be buffered. APIM will not be replayed. Reason={Reason}",
                         envelope.UniqueId,
                         result.Reason);
                     break;
