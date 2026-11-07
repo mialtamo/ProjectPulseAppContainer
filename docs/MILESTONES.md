@@ -8,7 +8,7 @@ The repository has product, architecture, security, milestone, current-state, an
 
 ## M1 - APIM request/response path — Complete for POC
 
-Project Pulse transforms and submits request records, validates the configured response token, processes the APIM response, and records the request/response. Initial requests use the general APIM POST route; update requests can use a separately configured APIM PUT route selected by `REQUEST_TYPE`. Update input mapping and update-specific RTA writeback are implemented. A successful POC response has been observed. APIM policy and environment configuration remain external to this repository.
+Project Pulse transforms and submits request records, validates the configured response token, processes the APIM response, and records the request/response. Initial requests use the general APIM POST route; update requests can use a separately configured APIM PUT route selected by `REQUEST_TYPE`. Configured base URLs and endpoint paths are normalized during URL construction. Update input mapping and update-specific RTA writeback are implemented. A successful POC response has been observed. APIM policy and environment configuration remain external to this repository.
 
 ## M2 - RTA writeback — In progress
 
