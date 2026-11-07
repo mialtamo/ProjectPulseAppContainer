@@ -132,10 +132,10 @@ public sealed class ClaimProcessorOptions
     public string ServiceBusFullyQualifiedNamespace { get; init; } = string.Empty;
 
     public string ServiceBusQueueName { get; init; } = "claim-retry";
-    // Logical APIM retry window per record. Broker retention is configured separately.
+    // Absolute lifetime of a record from its first Service Bus enqueue. Must match the queue's Max TTL.
     public int ServiceBusMessageTtlMinutes { get; init; } = 10;
-    // Must be less than or equal to the queue's Max TTL. Expired messages are dead-lettered and recovered by the worker.
-    public int ServiceBusMessageRetentionMinutes { get; init; } = 1440;
+    // Stop APIM attempts this long before expiry so the final RTA writeback has time to run.
+    public int ServiceBusFinalizationReserveSeconds { get; init; } = 60;
     public int ServiceBusReceiveBatchSize { get; init; } = 10;
     public int ServiceBusReceiveWaitSeconds { get; init; } = 5;
     public int ServiceBusDependencyRetrySeconds { get; init; } = 5;
@@ -159,8 +159,8 @@ public sealed class ClaimProcessorOptions
 
     public int GetProcessingMaxConcurrency() =>
         Math.Clamp(ProcessingMaxConcurrency, 1, Math.Max(1, ProcessingMaxConcurrencyLimit));
-    public int GetServiceBusMessageRetentionMinutes() =>
-        Math.Max(ServiceBusMessageRetentionMinutes, ServiceBusMessageTtlMinutes + 10);
+    public int GetServiceBusFinalizationReserveSeconds() =>
+        Math.Clamp(ServiceBusFinalizationReserveSeconds, 1, Math.Max(1, ServiceBusMessageTtlMinutes * 60 - 1));
     public int GetServiceBusReceiveBatchSize() => Math.Clamp(ServiceBusReceiveBatchSize, 1, 100);
     public int GetServiceBusReceiveWaitSeconds() => Math.Clamp(ServiceBusReceiveWaitSeconds, 1, 60);
     public int GetServiceBusDependencyRetrySeconds() => Math.Clamp(ServiceBusDependencyRetrySeconds, 1, 300);
