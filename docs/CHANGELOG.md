@@ -1,5 +1,10 @@
 # Change log
 
+## 2026-11-06 — Build 0.0.108
+
+- Normalized configured HTTP base URLs and endpoint paths across RTA, APIM, health checks, status writebacks, and admin notifications. Leading/trailing slashes are optional; URL joins avoid duplicate path separators and preserve base URL prefixes.
+- Bumped the base image version in `VERSION` to `0.0.108`.
+
 ## 2026-11-06 — Build 0.0.107
 
 - Updated deployment and product documentation to describe update-request routing, HTTP method, field mapping, idempotency header, and update-specific writeback.
