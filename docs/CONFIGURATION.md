@@ -70,7 +70,8 @@ The configured storage account must be reachable from the Container App environm
 | `PROCESSING_MAX_CONCURRENCY_LIMIT` | Both | No | `300` | No | Configurable upper bound for `PROCESSING_MAX_CONCURRENCY`; values below 1 are treated as 1. Set both variables to control the desired concurrency within this bound. |
 | `ApimBaseUrl` | Both | Yes | APIM base URL | No | Base URL for APIM. |
 | `ApimHealthPath` | Both | No | `/health` | No | APIM health endpoint path. |
-| `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path. |
+| `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path used for non-update requests. |
+| `ApimUpdateAdjudicationPath` | Both | No | Empty | No | APIM endpoint path for records whose incoming `REQUEST_TYPE` is `UPDATE_REQUEST`. These requests use HTTP PUT. Set a path relative to `ApimBaseUrl` without a leading slash (for example, `accumulator/api/1.0/update`). If unset, update requests fall back to `ApimAdjudicationPath` for compatibility. |
 | `ApimRequestTimeoutSeconds` | Both | No | `15` | No | APIM request timeout used by Project Pulse processing logic. |
 | `APIM_AUTHENTICATION_ENABLED` | Both | No | `true` | No | Enables Pulse's APIM bearer-token authentication and APIM response-token validation. Set to `false` only to test a legacy APIM policy that does not validate the bearer token or return the response-token header. |
 | `ApimScope` | Both | Required when authentication is enabled | `api://<API-application-client-id>/.default` | No | Managed-identity OAuth scope for APIM. Required when `APIM_AUTHENTICATION_ENABLED=true`; use the Application ID URI of the APIM resource app registration with `/.default`. |
