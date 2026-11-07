@@ -23,7 +23,7 @@
   "ApimBaseUrl": "https://example.invalid",
   "ApimHealthPath": "/health",
   "ApimAdjudicationPath": "pulse/pending",
-  "ApimUpdateAdjudicationPath": "accumulator/api/1.0/update",
+  "ApimUpdateAdjudicationPath": "",
   "ApimRequestTimeoutSeconds": "15",
   "APIM_AUTHENTICATION_ENABLED": "true",
   "ApimScope": "api://<Project-Pulse-API-Verify-client-id>/.default",
