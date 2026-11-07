@@ -93,6 +93,12 @@ Project Pulse
      +--> Service Bus fallback when required
 ```
 
+## Update request processing
+
+Project Pulse selects the APIM operation from the incoming root-level `REQUEST_TYPE`. An `UPDATE_REQUEST` uses the separately configured `ApimUpdateAdjudicationPath` with HTTP PUT; other request types use `ApimAdjudicationPath` with HTTP POST. Configure the update setting as a relative path under `ApimBaseUrl`. If it is empty, update requests use the general adjudication path for backward compatibility.
+
+The update body is built from `UPDATE_REQUEST_METADATA`. The default mapping sends the patient identifier, service start date, claim number, and source, plus an `adjustments` array containing individual, family, and cost-share accumulator deltas. Each record's `IDEMPOTENCY_KEY` is sent to APIM in the `Idempotency-Key` request header so APIM can pass it to the downstream service. For update writeback, Project Pulse sets `INITIAL_REQUEST_METADATA` to null and stores the raw APIM response JSON in `UPDATE_REQUEST_METADATA`. The existing initial-request mapping and writeback remain unchanged. See [the update configuration details](docs/CONFIGURATION.md#configuration-reference) and [product specification](docs/PRODUCT-SPEC.md#response-translation-and-writeback).
+
 ## Runtime
 
 - .NET 10
@@ -280,7 +286,7 @@ x-api-key=<secret reference>
 
 ApimBaseUrl=<APIM URL>
 ApimAdjudicationPath=pulse/pending
-ApimUpdateAdjudicationPath=accumulator/api/1.0/update
+ApimUpdateAdjudicationPath=<relative update endpoint path>
 ApimRequestTimeoutSeconds=15
 
 ServiceBusFullyQualifiedNamespace=<namespace>.servicebus.windows.net
