@@ -662,7 +662,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
-let serviceBusHealthLoading=false;
+let serviceBusHealthLoading=false; let serviceBusHealthLastFetch=0;
 let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let openRunDetails=new Map(); let renderGeneration=0; let activeViewState=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
@@ -1244,8 +1244,10 @@ function formatQueueAge(seconds){
   return (value/86400).toFixed(1)+' days';
 }
 async function loadServiceBusHealth(){
-  if(serviceBusHealthLoading)return;
+  const requestedAt=Date.now();
+  if(serviceBusHealthLoading||requestedAt-serviceBusHealthLastFetch<15000)return;
   serviceBusHealthLoading=true;
+  serviceBusHealthLastFetch=requestedAt;
   const updated=document.getElementById('serviceBusHealthUpdated');
   const errorElement=document.getElementById('serviceBusHealthError');
   try{
@@ -1263,7 +1265,7 @@ async function loadServiceBusHealth(){
     const originalCount=Number(snapshot.OriginalQueueTimestampSampleCount||0);
     const sampleCount=Number(snapshot.AgeSampleCount||0);
     document.getElementById('serviceBusAgeNote').textContent=
-      'Age is sampled from up to 100 active messages in '+esc(snapshot.QueueName||'the configured queue')+
+      'Age is sampled from up to 100 active messages in '+(snapshot.QueueName||'the configured queue')+
       '. Scheduled retries are counted separately. '+originalCount.toLocaleString()+' of '+sampleCount.toLocaleString()+
       ' sampled messages had an original queue timestamp; older messages use their current enqueue time.';
     errorElement.hidden=true;
