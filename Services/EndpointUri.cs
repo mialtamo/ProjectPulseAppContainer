@@ -30,7 +30,11 @@ public static class EndpointUri
         var route = queryIndex < 0 ? value : value[..queryIndex];
         var query = queryIndex < 0 ? string.Empty : value[queryIndex..];
 
-        if (Uri.TryCreate(value, UriKind.Absolute, out _))
+        // On Linux, Uri.TryCreate can classify a slash-prefixed route (for example,
+        // "/health") as an absolute file URI. Keep root-relative endpoint paths valid;
+        // reject actual absolute URI values such as "https://host/health".
+        if (!value.StartsWith("/", StringComparison.Ordinal)
+            && Uri.TryCreate(value, UriKind.Absolute, out _))
         {
             throw new UriFormatException("Endpoint paths must be relative to their configured base URL.");
         }
