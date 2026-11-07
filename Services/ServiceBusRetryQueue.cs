@@ -50,6 +50,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         };
 
         message.ApplicationProperties["reason"] = envelope.Reason;
+        message.ApplicationProperties["originalQueuedAtUtc"] = envelope.QueuedAtUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
         if (!string.IsNullOrWhiteSpace(envelope.RequestId))
         {
             message.ApplicationProperties["requestId"] = envelope.RequestId;
@@ -170,6 +171,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
 
         message.ApplicationProperties["messageType"] = RtaWritebackRetryEnvelope.TypeName;
         message.ApplicationProperties["reason"] = envelope.Reason;
+        message.ApplicationProperties["originalQueuedAtUtc"] = envelope.QueuedAtUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
         message.ApplicationProperties["correlationId"] = envelope.CorrelationId;
         message.ApplicationProperties["retryAttempt"] = envelope.RetryAttempt;
         if (!string.IsNullOrWhiteSpace(envelope.RequestId))
