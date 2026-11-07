@@ -206,12 +206,12 @@ Project Pulse authenticates to Azure Service Bus with the Container App's manage
 
 | Container App role (`PROJECT_PULSE_ROLE`) | Azure Service Bus role | Why |
 | --- | --- | --- |
-| `RTA` | `Azure Service Bus Data Sender` | Sends records to the retry queue when a retry is needed. |
+| `RTA` | `Azure Service Bus Data Sender`; use `Azure Service Bus Data Owner` when queue metrics are enabled | Sends retry messages. Data Owner is also required to read runtime queue counts and peek messages for the requests-page metrics. |
 | `SERVICEBUS` | `Azure Service Bus Data Receiver` and `Azure Service Bus Data Sender` | Receives, completes, and dead-letters queued messages; it also needs to send replacement messages when a retry is needed. |
 
 Use the queue as the role-assignment scope when possible. The Service Bus role assignments can take several minutes to propagate.
 
-The admin-only `requests.html` page can show Service Bus runtime counts and a non-destructive age sample. To enable these metrics, grant the RTA managed identity `Azure Service Bus Data Owner` on the queue; this is broader than the sender-only permission otherwise needed by the RTA role. Without that permission, the panel reports metrics as unavailable. Age is sampled from up to 100 active messages (scheduled retries are counted separately); new messages carry their original queue timestamp so retries do not reset their displayed age. Legacy messages without that timestamp use their current enqueue time.
+The admin-only `requests.html` page loads queue metrics from `GET /requests/servicebus-health` on the RTA deployment. Configure `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on that RTA Container App to identify the namespace and queue (see step 4), then grant the managed identity actually assigned to the RTA app `Azure Service Bus Data Owner` at the queue's **Access control (IAM)** scope. The endpoint uses this role to read runtime counts and non-destructively peek at messages. Data Owner is broader than the sender-only access used for normal RTA queue sends; use it only when the metrics are needed. Role assignments can take several minutes to propagate. The page also requires an account authorized to access the Project Pulse admin UI. If configuration, permissions, or role assignment have not taken effect, the panel reports metrics as unavailable. Age is sampled from up to 100 active messages (scheduled retries are counted separately); new messages carry their original queue timestamp so retries do not reset their displayed age. Legacy messages without that timestamp use their current enqueue time.
 
 4. Configure the namespace and queue on **both** Container Apps. The namespace is the host name only, without `https://`:
 
