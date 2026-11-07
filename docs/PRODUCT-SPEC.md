@@ -34,7 +34,7 @@ The source item, APIM request, APIM response, mapped RTA response, status, and t
 - `PROJECT_PULSE_ENVIRONMENT`: environment label shown alongside the image version and runtime role on the landing, request-history, lifecycle, and batch pages.
 - `POLL_INTERVAL_SECONDS`: RTA polling cadence, subject to application bounds.
 - RTA paging settings control page size and number of pages; mock-mode `maxRecords` is separate.
-- APIM endpoint, credentials/token validation, and response mapping are configured independently.
+- APIM endpoint, credentials/token validation, and response mapping are configured independently. Base URLs accept an optional trailing slash; endpoint path settings accept optional leading/trailing slashes and are normalized to avoid duplicate separators when constructing request URLs.
 - RTA writeback is controlled by its writeback setting and target API configuration.
 - Azure Table Storage stores searchable history metadata; Blob Storage holds captured payload bodies.
 - `REQUEST_HISTORY_PAYLOAD_MODE` controls capture of new payloads:
