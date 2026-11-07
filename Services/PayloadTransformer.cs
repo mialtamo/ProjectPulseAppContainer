@@ -23,6 +23,7 @@ public sealed class PayloadTransformer(
         var missingSources = new List<string>();
 
         var isInitialRequest = string.Equals(requestType, "INITIAL_REQUEST", StringComparison.OrdinalIgnoreCase);
+        var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
 
         foreach (var (targetField, sourcePath) in mapping)
         {
@@ -43,6 +44,11 @@ public sealed class PayloadTransformer(
             {
                 missingSources.Add(sourcePath);
             }
+        }
+
+        if (isUpdateRequest)
+        {
+            AddUpdateAdjustments(source, output, mappedTargets, missingSources);
         }
 
         if (missingSources.Count > 0)
@@ -68,6 +74,45 @@ public sealed class PayloadTransformer(
         }
 
         return output;
+    }
+
+    private static void AddUpdateAdjustments(
+        JsonElement source,
+        JsonObject output,
+        ICollection<string> mappedTargets,
+        ICollection<string> missingSources)
+    {
+        var adjustments = new JsonArray();
+        AddUpdateAdjustment(source, adjustments, mappedTargets, missingSources, "individual", "ADJ_IND_DEDUCTIBLE");
+        AddUpdateAdjustment(source, adjustments, mappedTargets, missingSources, "family", "ADJ_FAM_DEDUCTIBLE");
+        AddUpdateAdjustment(source, adjustments, mappedTargets, missingSources, "costshare", "ADJ_OUT_OF_POCKET");
+        output["adjustments"] = adjustments;
+    }
+
+    private static void AddUpdateAdjustment(
+        JsonElement source,
+        JsonArray adjustments,
+        ICollection<string> mappedTargets,
+        ICollection<string> missingSources,
+        string accumulator,
+        string sourceField)
+    {
+        var sourcePath = $"UPDATE_REQUEST_METADATA.{sourceField}";
+        if (!TryGetValue(source, sourcePath, out var value) || !IsPresent(value))
+        {
+            missingSources.Add(sourcePath);
+            return;
+        }
+
+        adjustments.Add(new JsonObject
+        {
+            ["updateAccumulator"] = new JsonObject
+            {
+                ["accumulator"] = accumulator,
+                ["delta"] = JsonNode.Parse(value.GetRawText())
+            }
+        });
+        mappedTargets.Add($"adjustments.updateAccumulator.{accumulator}");
     }
 
     private static string? GetWireTargetField(string targetField, bool isInitialRequest)
