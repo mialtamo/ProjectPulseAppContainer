@@ -223,7 +223,7 @@ public sealed class ServiceBusWorker(
         {
             logger.LogError(ex, "Invalid Service Bus message JSON. MessageId={MessageId}", message.MessageId);
             telemetry.TrackException(ex);
-            await receiver.DeadLetterMessageAsync(message, "InvalidRetryEnvelope", "Message body was not valid JSON.", cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
             return;
         }
 
@@ -238,11 +238,7 @@ public sealed class ServiceBusWorker(
             logger.LogError(ex, "Invalid Service Bus retry envelope. MessageId={MessageId}", message.MessageId);
             telemetry.TrackException(ex);
 
-            await receiver.DeadLetterMessageAsync(
-                message,
-                "InvalidRetryEnvelope",
-                "Message body could not be deserialized as a Project Pulse RetryEnvelope.",
-                cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
 
             return;
         }
@@ -251,11 +247,7 @@ public sealed class ServiceBusWorker(
         {
             logger.LogError("Service Bus retry envelope is missing OriginalPayload. MessageId={MessageId}", message.MessageId);
 
-            await receiver.DeadLetterMessageAsync(
-                message,
-                "InvalidRetryEnvelope",
-                "RetryEnvelope was null or OriginalPayload was empty.",
-                cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
 
             return;
         }
@@ -309,11 +301,7 @@ public sealed class ServiceBusWorker(
                     break;
 
                 case ClaimProcessingDisposition.FailedWriteback:
-                    await receiver.DeadLetterMessageAsync(
-                        message,
-                        "RtaWritebackRetryCouldNotBeBuffered",
-                        "APIM/DOCMP had already returned a result, but the exact RTA writeback could not be queued. APIM will not be replayed.",
-                        cancellationToken);
+                    await receiver.CompleteMessageAsync(message, cancellationToken);
                     logger.LogCritical(
                         "Dead-lettered claim retry {UniqueId} because its failed RTA writeback could not be buffered. APIM will not be replayed. Reason={Reason}",
                         envelope.UniqueId,
@@ -340,11 +328,7 @@ public sealed class ServiceBusWorker(
             logger.LogError(ex, "OriginalPayload is invalid JSON for Service Bus message {MessageId}", message.MessageId);
             telemetry.TrackException(ex);
 
-            await receiver.DeadLetterMessageAsync(
-                message,
-                "InvalidOriginalPayload",
-                "RetryEnvelope OriginalPayload was not valid JSON.",
-                cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -370,7 +354,7 @@ public sealed class ServiceBusWorker(
         var envelope = JsonSerializer.Deserialize<RtaWritebackRetryEnvelope>(body.GetRawText());
         if (envelope is null || string.IsNullOrWhiteSpace(envelope.CorrelationId) || string.IsNullOrWhiteSpace(envelope.WritebackPayload))
         {
-            await receiver.DeadLetterMessageAsync(message, "InvalidRtaWritebackRetry", "RTA writeback retry message is missing required fields.", cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
             return;
         }
 
@@ -394,7 +378,7 @@ public sealed class ServiceBusWorker(
         if (!_options.RtaStatusWritebackEnabled)
         {
             await RecordPollBatchWritebackAsync(envelope, false, null, "RtaStatusWritebackDisabled");
-            await receiver.DeadLetterMessageAsync(message, "RtaWritebackDisabled", "RTA status writeback is disabled in this Service Bus role configuration.", cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
             return;
         }
 
@@ -405,7 +389,7 @@ public sealed class ServiceBusWorker(
         catch (JsonException ex)
         {
             logger.LogError(ex, "Invalid stored RTA writeback JSON. CorrelationId={CorrelationId}", envelope.CorrelationId);
-            await receiver.DeadLetterMessageAsync(message, "InvalidRtaWritebackPayload", "Stored RTA writeback body is invalid JSON.", cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
             return;
         }
 
