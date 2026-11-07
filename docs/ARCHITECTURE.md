@@ -38,6 +38,10 @@ The worker does not overlap polling cycles within a single replica. For the POC,
 
 Within an RTA polling batch, `PROCESSING_CONCURRENCY_MODE` selects which stages may overlap: `SEQUENTIAL` keeps APIM/backend and RTA PUTs serial; `RTA_ONLY` overlaps RTA PUTs; `APIM_ONLY` overlaps APIM/backend calls; `FULL` overlaps both. `PROCESSING_MAX_CONCURRENCY` caps each enabled stage (default 5, clamped to 1-100). The limit is per active batch and per replica, so replicas multiply potential downstream concurrency. Poll cycles remain non-overlapping. These settings do not control the Service Bus worker, which currently processes one queued record at a time.
 
+## URL construction
+
+Configured API base URLs are normalized with one trailing separator, and endpoint paths are normalized before requests are sent. This accepts path settings with or without leading/trailing slashes, removes duplicate separators at and within the path boundary, preserves a base URL path prefix, and keeps configured query parameters. The HTTP and HTTPS scheme separator remains intact.
+
 ## Container
 
 The application listens on port 8080.
