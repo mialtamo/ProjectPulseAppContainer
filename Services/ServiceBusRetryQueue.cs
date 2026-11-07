@@ -31,20 +31,23 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
     {
         var payload = JsonSerializer.Serialize(envelope);
         var retryUntilUtc = envelope.RetryUntilUtc
-            ?? (envelope.RetryAttempt > 0
-                ? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes)
-                : (DateTimeOffset?)null);
+            ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
+        var finalizeAtUtc = retryUntilUtc.AddSeconds(-_options.GetServiceBusFinalizationReserveSeconds());
         var nowUtc = DateTimeOffset.UtcNow;
-        var remaining = retryUntilUtc is { } deadlineUtc
-            ? deadlineUtc - nowUtc
-            : TimeSpan.MaxValue;
+        var remaining = retryUntilUtc - nowUtc;
+        if (remaining <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException($"Service Bus retry deadline has elapsed for claim {envelope.UniqueId}.");
+        }
+
         var message = new ServiceBusMessage(payload)
         {
             ContentType = "application/json",
             MessageId = envelope.UniqueId + "-apim-" + envelope.RetryAttempt + "-" + Guid.NewGuid().ToString("N"),
             CorrelationId = envelope.UniqueId,
-            // Keep the broker message past the logical retry deadline so the worker can send a final RTA outcome.
-            TimeToLive = TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes()),
+            TimeToLive = remaining < TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes)
+                ? remaining
+                : TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes),
             Subject = "ClaimRetry"
         };
 
@@ -62,21 +65,23 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
 
         var retryDelaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt - 1, 0, 10)));
         var retryDelay = TimeSpan.FromSeconds(retryDelaySeconds);
-        var scheduled = envelope.RetryAttempt > 0 && remaining > TimeSpan.Zero;
-        var scheduledAtUtc = scheduled
-            ? nowUtc.Add(remaining < retryDelay ? remaining : retryDelay)
-            : nowUtc;
+        var scheduledAtUtc = nowUtc.Add(retryDelay);
+        if (scheduledAtUtc > finalizeAtUtc)
+        {
+            scheduledAtUtc = finalizeAtUtc;
+        }
+        var scheduled = envelope.RetryAttempt > 0 && scheduledAtUtc > nowUtc;
 
         try
         {
             if (scheduled)
             {
-                // The last retry is scheduled at the logical deadline; when received, the worker finalizes it.
+                // APIM retries stop before expiry; the worker then has the reserved interval to write the final status.
                 await _sender.ScheduleMessageAsync(message, scheduledAtUtc, cancellationToken);
             }
             else
             {
-                // If the deadline elapsed during processing, deliver immediately for finalization instead of dropping it.
+                // The finalization window has begun; deliver immediately so the worker can write the final status.
                 await _sender.SendMessageAsync(message, cancellationToken);
             }
         }
@@ -104,7 +109,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             ["uniqueId"] = envelope.UniqueId,
             ["reason"] = envelope.Reason,
             ["retryAttempt"] = envelope.RetryAttempt.ToString(),
-            ["retryUntilUtc"] = retryUntilUtc?.ToString("O") ?? "starts-on-worker-pickup",
+            ["retryUntilUtc"] = retryUntilUtc.ToString("O"),
             ["retryDelaySeconds"] = scheduled ? (scheduledAtUtc - nowUtc).TotalSeconds.ToString("0") : "0"
         });
 
@@ -113,7 +118,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             envelope.UniqueId,
             envelope.Reason,
             envelope.RetryAttempt,
-            retryUntilUtc?.ToString("O") ?? "starts-on-worker-pickup",
+            retryUntilUtc.ToString("O"),
             scheduled ? (scheduledAtUtc - nowUtc).TotalSeconds : 0);
     }
 
@@ -121,18 +126,24 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         RtaWritebackRetryEnvelope envelope,
         CancellationToken cancellationToken)
     {
-        await _sender.SendMessageAsync(CreateRtaWritebackMessage(envelope, TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes())), cancellationToken);
+        var remaining = envelope.RetryUntilUtc - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException($"RTA writeback deadline has elapsed for claim {envelope.UniqueId}.");
+        }
+
+        await _sender.SendMessageAsync(CreateRtaWritebackMessage(envelope, remaining), cancellationToken);
 
         _telemetry.TrackEvent("RtaWritebackQueuedForRetry", new Dictionary<string, string>
         {
             ["uniqueId"] = envelope.UniqueId,
             ["correlationId"] = envelope.CorrelationId,
-            ["retentionMinutes"] = _options.GetServiceBusMessageRetentionMinutes().ToString()
+            ["remainingSeconds"] = remaining.TotalSeconds.ToString("0")
         });
         _logger.LogWarning(
-            "Stored RTA writeback payload queued for direct retry. CorrelationId={CorrelationId} BrokerRetentionMinutes={RetentionMinutes}",
+            "Stored RTA writeback payload queued for direct retry. CorrelationId={CorrelationId} RemainingSeconds={RemainingSeconds}",
             envelope.CorrelationId,
-            _options.GetServiceBusMessageRetentionMinutes());
+            remaining.TotalSeconds);
     }
 
     public async Task ScheduleRtaWritebackRetryAsync(
@@ -140,11 +151,18 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         TimeSpan delay,
         CancellationToken cancellationToken)
     {
+        var nowUtc = DateTimeOffset.UtcNow;
+        var remaining = envelope.RetryUntilUtc - nowUtc;
+        if (remaining <= TimeSpan.FromSeconds(1))
+        {
+            throw new InvalidOperationException($"RTA writeback deadline is too close for another retry for claim {envelope.UniqueId}.");
+        }
+
         var next = envelope with { RetryAttempt = envelope.RetryAttempt + 1 };
-        var message = CreateRtaWritebackMessage(
-            next,
-            TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes()));
-        var scheduledTime = DateTimeOffset.UtcNow.Add(delay);
+        var scheduledTime = nowUtc.Add(delay < remaining - TimeSpan.FromSeconds(1)
+            ? delay
+            : remaining - TimeSpan.FromSeconds(1));
+        var message = CreateRtaWritebackMessage(next, remaining);
         await _sender.ScheduleMessageAsync(message, scheduledTime, cancellationToken);
 
         _telemetry.TrackEvent("RtaWritebackRetryScheduled", new Dictionary<string, string>
