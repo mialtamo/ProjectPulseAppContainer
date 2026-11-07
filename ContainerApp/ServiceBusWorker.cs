@@ -35,21 +35,10 @@ public sealed class ServiceBusWorker(
                 ReceiveMode = ServiceBusReceiveMode.PeekLock,
                 PrefetchCount = 0
             });
-        await using var deadLetterReceiver = serviceBusClient.CreateReceiver(
-            _options.ServiceBusQueueName,
-            new ServiceBusReceiverOptions
-            {
-                ReceiveMode = ServiceBusReceiveMode.PeekLock,
-                PrefetchCount = 0,
-                SubQueue = SubQueue.DeadLetter
-            });
-        await using var deadLetterReplaySender = serviceBusClient.CreateSender(_options.ServiceBusQueueName);
-
         var mode = _concurrencyGates.Mode;
         var maxConcurrency = _concurrencyGates.MaxConcurrentMessages;
         var inFlight = new List<Task>();
         var nextRtaHealthCheckUtc = DateTimeOffset.MinValue;
-        var nextDeadLetterPollUtc = DateTimeOffset.MinValue;
         var isRtaHealthy = false;
 
         logger.LogInformation(
@@ -97,54 +86,6 @@ public sealed class ServiceBusWorker(
                             stoppingToken);
 
                         continue;
-                    }
-
-                    if (inFlight.Count < maxConcurrency && DateTimeOffset.UtcNow >= nextDeadLetterPollUtc)
-                    {
-                        nextDeadLetterPollUtc = DateTimeOffset.UtcNow.AddSeconds(_options.GetServiceBusReceiveWaitSeconds());
-                        var deadLetterMessage = await deadLetterReceiver.ReceiveMessageAsync(
-                            TimeSpan.FromMilliseconds(100),
-                            stoppingToken);
-                        if (deadLetterMessage is not null)
-                        {
-                            if (IsReplayableDeadLetterMessage(deadLetterMessage))
-                            {
-                                try
-                                {
-                                    await ReplayDeadLetterMessageAsync(
-                                        deadLetterReceiver,
-                                        deadLetterReplaySender,
-                                        deadLetterMessage,
-                                        stoppingToken);
-                                    telemetry.TrackEvent("ServiceBusDeadLetterRecoveryStarted", new Dictionary<string, string>
-                                    {
-                                        ["messageId"] = deadLetterMessage.MessageId,
-                                        ["deadLetterReason"] = deadLetterMessage.DeadLetterReason ?? "unknown",
-                                        ["queue"] = _options.ServiceBusQueueName
-                                    });
-                                }
-                                catch (Exception ex) when (ex is not OperationCanceledException)
-                                {
-                                    logger.LogError(
-                                        ex,
-                                        "Could not return a recoverable dead-letter message to the active queue. MessageId={MessageId}",
-                                        deadLetterMessage.MessageId);
-                                    telemetry.TrackException(ex);
-                                    await deadLetterReceiver.AbandonMessageAsync(
-                                        deadLetterMessage,
-                                        cancellationToken: stoppingToken);
-                                }
-                            }
-                            else
-                            {
-                                logger.LogError(
-                                    "Service Bus dead-letter message is not eligible for automatic recovery and remains available for support review. MessageId={MessageId} Reason={DeadLetterReason}",
-                                    deadLetterMessage.MessageId,
-                                    deadLetterMessage.DeadLetterReason ?? "unknown");
-                                // Leave it parked in the dead-letter queue; repeated abandon would create a hot loop.
-                                nextDeadLetterPollUtc = DateTimeOffset.UtcNow.AddMinutes(1);
-                            }
-                        }
                     }
 
                     if (inFlight.Count >= maxConcurrency)
@@ -240,76 +181,6 @@ public sealed class ServiceBusWorker(
         }
     }
 
-    private static bool IsReplayableDeadLetterMessage(ServiceBusReceivedMessage message)
-    {
-        var reason = message.DeadLetterReason;
-        var isRecoverableReason =
-            string.Equals(reason, "TTLExpiredException", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(reason, "MaxDeliveryCountExceeded", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(reason, "RtaWritebackRetryWindowExpired", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(reason, "RtaWritebackRetryScheduleFailed", StringComparison.OrdinalIgnoreCase);
-        if (!isRecoverableReason)
-        {
-            return false;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(message.Body.ToString());
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-            {
-                return false;
-            }
-
-            if (root.TryGetProperty("MessageType", out var messageType) &&
-                messageType.ValueKind == JsonValueKind.String &&
-                string.Equals(messageType.GetString(), RtaWritebackRetryEnvelope.TypeName, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            var envelope = JsonSerializer.Deserialize<RetryEnvelope>(message.Body.ToString());
-            return envelope is not null && !string.IsNullOrWhiteSpace(envelope.OriginalPayload);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private async Task ReplayDeadLetterMessageAsync(
-        ServiceBusReceiver deadLetterReceiver,
-        ServiceBusSender replaySender,
-        ServiceBusReceivedMessage deadLetterMessage,
-        CancellationToken cancellationToken)
-    {
-        var replay = new ServiceBusMessage(deadLetterMessage.Body)
-        {
-            ContentType = deadLetterMessage.ContentType,
-            CorrelationId = deadLetterMessage.CorrelationId,
-            Subject = deadLetterMessage.Subject,
-            MessageId = $"{deadLetterMessage.MessageId}-recovered-{Guid.NewGuid():N}",
-            TimeToLive = TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes())
-        };
-
-        foreach (var property in deadLetterMessage.ApplicationProperties)
-        {
-            replay.ApplicationProperties[property.Key] = property.Value;
-        }
-
-        replay.ApplicationProperties["recoveredFromDeadLetter"] = true;
-        replay.ApplicationProperties["recoveredDeadLetterReason"] = deadLetterMessage.DeadLetterReason ?? "unknown";
-
-        await replaySender.SendMessageAsync(replay, cancellationToken);
-        await deadLetterReceiver.CompleteMessageAsync(deadLetterMessage, cancellationToken);
-
-        logger.LogWarning(
-            "Recovered Service Bus retry message to the active queue. MessageId={MessageId} DeadLetterReason={DeadLetterReason}",
-            deadLetterMessage.MessageId,
-            deadLetterMessage.DeadLetterReason ?? "unknown");
-    }
-
     private async Task ProcessMessageAsync(
         ServiceBusReceiver receiver,
         ServiceBusReceivedMessage message,
@@ -389,10 +260,9 @@ public sealed class ServiceBusWorker(
             return;
         }
 
-        // Queue wait time does not consume this record's retry window. Set the fixed deadline
-        // when the Service Bus worker first starts the record, then preserve it on every requeue.
+        // The original enqueue time starts the hard record lifetime. Never reset it on pickup or requeue.
         envelope = envelope.RetryUntilUtc is null
-            ? envelope with { RetryUntilUtc = DateTimeOffset.UtcNow.AddMinutes(_options.ServiceBusMessageTtlMinutes) }
+            ? envelope with { RetryUntilUtc = envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes) }
             : envelope;
 
         try
@@ -506,10 +376,19 @@ public sealed class ServiceBusWorker(
 
         if (DateTimeOffset.UtcNow >= envelope.RetryUntilUtc)
         {
-            logger.LogWarning(
-                "RTA writeback retry is past its initial retry window and will continue until RTA accepts it. CorrelationId={CorrelationId} RetryAttempt={RetryAttempt}",
+            await RecordPollBatchWritebackAsync(envelope, false, null, "RtaWritebackRetryWindowExpired");
+            await NotifyWritebackFailureAsync(
+                envelope,
+                "RTA_WRITEBACK_WINDOW_EXPIRED",
+                "The final RTA status writeback was not accepted before the record's 10-minute Service Bus lifetime expired.",
+                null,
+                cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
+            logger.LogCritical(
+                "RTA writeback window expired; the payload is being removed from Service Bus. CorrelationId={CorrelationId} RetryAttempt={RetryAttempt}",
                 envelope.CorrelationId,
                 envelope.RetryAttempt);
+            return;
         }
 
         if (!_options.RtaStatusWritebackEnabled)
@@ -567,17 +446,13 @@ public sealed class ServiceBusWorker(
                 statusCode != 429)
             {
                 await RecordPollBatchWritebackAsync(envelope, false, statusCode, "RtaWritebackRejected");
-                await receiver.DeadLetterMessageAsync(
-                    message,
-                    "RtaWritebackRejected",
-                    $"RTA permanently rejected the status writeback with HTTP {statusCode}.",
-                    cancellationToken);
                 await NotifyWritebackFailureAsync(
                     envelope,
                     "RTA_WRITEBACK_REJECTED",
-                    $"RTA rejected the final status writeback with HTTP {statusCode}; the payload is retained in the dead-letter queue for support review.",
+                    $"RTA rejected the final status writeback with HTTP {statusCode}. The message was removed from Service Bus.",
                     null,
                     cancellationToken);
+                await receiver.CompleteMessageAsync(message, cancellationToken);
                 logger.LogCritical(
                     "RTA rejected final status writeback with a non-retryable HTTP response. CorrelationId={CorrelationId} StatusCode={StatusCode}",
                     envelope.CorrelationId,
@@ -631,17 +506,13 @@ public sealed class ServiceBusWorker(
             logger.LogCritical(ex, "Could not schedule RTA writeback retry; moving message to DLQ. CorrelationId={CorrelationId}", envelope.CorrelationId);
             telemetry.TrackException(ex);
             await RecordPollBatchWritebackAsync(envelope, false, lastHttpStatusCode, "RtaWritebackRetryScheduleFailed");
-            await receiver.DeadLetterMessageAsync(
-                message,
-                "RtaWritebackRetryScheduleFailed",
-                "The next direct RTA writeback retry could not be scheduled.",
-                cancellationToken);
             await NotifyWritebackFailureAsync(
                 envelope,
                 "SERVICE_BUS_RETRY_SCHEDULE_FAILED",
-                "Project Pulse could not schedule the next direct RTA status writeback retry.",
+                "Project Pulse could not schedule another direct RTA status writeback attempt before the hard 10-minute deadline. The message was removed from Service Bus.",
                 ex,
                 cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
         }
     }
 
