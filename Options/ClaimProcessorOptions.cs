@@ -116,9 +116,6 @@ public sealed class ClaimProcessorOptions
 
     public string ApimUpdateRequestFieldMapping { get; init; } = """
     {
-      "correlationId": "CORRELATION_ID",
-      "requestId": "REQUEST_ID",
-      "requestType": "REQUEST_TYPE",
       "patientIcn": "UPDATE_REQUEST_METADATA.PATIENT_ICN",
       "startDateOfService": "UPDATE_REQUEST_METADATA.START_DATE_OF_SERVICE",
       "claimNumber": "UPDATE_REQUEST_METADATA.CLAIM_NUMBER",
