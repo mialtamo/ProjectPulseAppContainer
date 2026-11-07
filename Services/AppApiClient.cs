@@ -45,7 +45,7 @@ public sealed class AppApiClient(
 
         logger.LogInformation("Polling App API mock endpoint GET {Path}", path);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        using var request = new HttpRequestMessage(HttpMethod.Get, EndpointUri.Combine(client.BaseAddress!, path));
 
         RtaApiKeyHeader.Apply(request, _options);
         await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
@@ -99,7 +99,7 @@ public sealed class AppApiClient(
 
             logger.LogInformation("Polling RTA queued endpoint GET {Path}", path);
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            using var request = new HttpRequestMessage(HttpMethod.Get, EndpointUri.Combine(client.BaseAddress!, path));
 
             RtaApiKeyHeader.Apply(request, _options);
             await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
@@ -247,7 +247,7 @@ public sealed class AppApiClient(
             attemptsMade = attempt;
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Put, path)
+                using var request = new HttpRequestMessage(HttpMethod.Put, EndpointUri.Combine(client.BaseAddress!, path))
                 {
                     Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
                 };
