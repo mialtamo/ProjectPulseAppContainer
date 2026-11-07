@@ -83,7 +83,7 @@ The configured storage account must be reachable from the Container App environm
 | `CorrelationIdField` | Both | No | `CORRELATION_ID` | No | Input JSON field containing the correlation ID. |
 | `ApimFieldMapping` | Both | No | built-in JSON mapping | No | Fallback JSON mapping for request types without a dedicated mapping. |
 | `ApimInitialRequestFieldMapping` | Both | No | built-in initial-request mapping | No | JSON mapping for `INITIAL_REQUEST` fields. |
-| `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields, including nested adjustment deltas. |
+| `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields. The default reads values from `UPDATE_REQUEST_METADATA`, including `SOURCE` and the nested adjustment deltas. |
 
 `RtaPageSize` controls how many records Project Pulse requests in each RTA GET page (default 100). `RtaMaxPageSize` sets its configurable upper bound (default 5,000); set it higher when the RTA endpoint supports larger pages. The RTA endpoint may impose its own lower maximum. Larger pages increase response size and in-memory batch size; they do not increase processing concurrency. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical per-poll maximum is `RtaMaxPageSize × RtaPagesPerPoll`. Increase the page limit only after confirming the RTA limit and checking memory and request duration.
 
