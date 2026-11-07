@@ -391,6 +391,18 @@ input,select,button{background:#0b1520;border:1px solid #24405a;color:var(--text
 .load-more-wrap button[hidden]{display:none}
 button{cursor:pointer}.muted{color:var(--muted)}
 .summary{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.servicebus-health{margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
+.servicebus-health-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.servicebus-health-heading h2{font-size:14px;margin:0;color:#c7d9f2}
+.servicebus-health-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}
+.servicebus-health-card{border:1px solid var(--border);border-radius:8px;padding:10px;background:#08111a}
+.servicebus-health-label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.servicebus-health-value{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.servicebus-health-age{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.servicebus-health-age summary{cursor:pointer;color:#c7d9f2;font-size:12px;font-weight:600}
+.servicebus-health-note,.servicebus-health-error{margin-top:9px;font-size:11px;line-height:1.45;color:var(--muted)}
+.servicebus-health-error{color:var(--amber)}
+@media(max-width:800px){.servicebus-health-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.servicebus-health-heading{align-items:flex-start;flex-direction:column}}
 .timing-summary{margin:0 0 16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
 .timing-range-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 12px;color:var(--muted);font-size:12px}
 .timing-range-controls select,.timing-range-controls input,.timing-range-controls button{border:1px solid var(--border);border-radius:6px;background:#0a121c;color:var(--text);padding:7px 9px;font:inherit}
@@ -562,6 +574,29 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
     <div class="history-auto-cleanup-note">When enabled, Project Pulse permanently deletes request history and matching poll details after they pass the retention age. Unreferenced payload files are deleted too. Settings apply across both app roles; automatic cleanup runs from the RTA role.</div>
   </section>
   <div id="summary" class="summary"></div>
+  <section class="servicebus-health" aria-labelledby="serviceBusHealthTitle">
+    <div class="servicebus-health-heading">
+      <h2 id="serviceBusHealthTitle">Service Bus queue health</h2>
+      <span id="serviceBusHealthUpdated" class="muted" role="status" aria-live="polite">Loading queue metrics…</span>
+    </div>
+    <div id="serviceBusHealthError" class="servicebus-health-error" role="status" hidden></div>
+    <div id="serviceBusHealthMetrics" class="servicebus-health-grid" aria-live="polite">
+      <div class="servicebus-health-card"><div class="servicebus-health-label">Pending messages</div><div id="serviceBusPending" class="servicebus-health-value">—</div></div>
+      <div class="servicebus-health-card"><div class="servicebus-health-label">Active now</div><div id="serviceBusActive" class="servicebus-health-value">—</div></div>
+      <div class="servicebus-health-card"><div class="servicebus-health-label">Scheduled retries</div><div id="serviceBusScheduled" class="servicebus-health-value">—</div></div>
+      <div class="servicebus-health-card"><div class="servicebus-health-label">Dead-lettered</div><div id="serviceBusDeadLetter" class="servicebus-health-value">—</div></div>
+    </div>
+    <details class="servicebus-health-age">
+      <summary>Message age sample</summary>
+      <div class="servicebus-health-grid" style="margin-top:10px">
+        <div class="servicebus-health-card"><div class="servicebus-health-label">Average age</div><div id="serviceBusAverageAge" class="servicebus-health-value">—</div></div>
+        <div class="servicebus-health-card"><div class="servicebus-health-label">Oldest age</div><div id="serviceBusOldestAge" class="servicebus-health-value">—</div></div>
+        <div class="servicebus-health-card"><div class="servicebus-health-label">Newest age</div><div id="serviceBusYoungestAge" class="servicebus-health-value">—</div></div>
+        <div class="servicebus-health-card"><div class="servicebus-health-label">Messages sampled</div><div id="serviceBusAgeSampleCount" class="servicebus-health-value">—</div></div>
+      </div>
+      <div id="serviceBusAgeNote" class="servicebus-health-note">Age is sampled from up to 100 active messages. Scheduled retries are counted separately.</div>
+    </details>
+  </section>
   <section class="timing-summary" aria-label="Average request timings">
     <div class="timing-summary-heading">
       <div class="timing-summary-title">
@@ -627,6 +662,7 @@ pre::-webkit-scrollbar-corner{background:#0b111a}
   <div class="load-more-wrap"><button id="loadMoreButton" onclick="loadMore()" hidden>Load more</button></div>
 </main>
 <script>
+let serviceBusHealthLoading=false; let serviceBusHealthLastFetch=0;
 let items=[]; let sortKey='UpdatedAtUtc'; let sortDir='desc'; let expandedRecordId=null; let visibleGroups=new Map(); let refreshTimer=null; let openRunDetails=new Map(); let renderGeneration=0; let activeViewState=null; let searchTimer=null; let activeSearch=''; let nextPageToken=null; let historyTotalCount=null; let rangeStartUtc=null; let loading=false; let averagesLoading=false; let averagesRequestId=0; const detailCache=new Map();
 
 function durationLabel(value){
@@ -1199,6 +1235,49 @@ async function loadAverages(){
     if(requestId===averagesRequestId)averagesLoading=false;
   }
 }
+function formatQueueAge(seconds){
+  if(seconds===null||seconds===undefined)return 'N/A';
+  const value=Math.max(0,Number(seconds));
+  if(value<60)return Math.round(value)+' sec';
+  if(value<3600)return (value/60).toFixed(1)+' min';
+  if(value<86400)return (value/3600).toFixed(1)+' hr';
+  return (value/86400).toFixed(1)+' days';
+}
+async function loadServiceBusHealth(){
+  const requestedAt=Date.now();
+  if(serviceBusHealthLoading||requestedAt-serviceBusHealthLastFetch<15000)return;
+  serviceBusHealthLoading=true;
+  serviceBusHealthLastFetch=requestedAt;
+  const updated=document.getElementById('serviceBusHealthUpdated');
+  const errorElement=document.getElementById('serviceBusHealthError');
+  try{
+    const response=await fetch('/requests/servicebus-health',{cache:'no-store'});
+    const snapshot=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(snapshot.detail||snapshot.title||'HTTP '+response.status);
+    document.getElementById('serviceBusPending').textContent=Number(snapshot.PendingMessageCount||0).toLocaleString();
+    document.getElementById('serviceBusActive').textContent=Number(snapshot.ActiveMessageCount||0).toLocaleString();
+    document.getElementById('serviceBusScheduled').textContent=Number(snapshot.ScheduledMessageCount||0).toLocaleString();
+    document.getElementById('serviceBusDeadLetter').textContent=Number(snapshot.DeadLetterMessageCount||0).toLocaleString();
+    document.getElementById('serviceBusAverageAge').textContent=formatQueueAge(snapshot.AverageAgeSeconds);
+    document.getElementById('serviceBusOldestAge').textContent=formatQueueAge(snapshot.OldestAgeSeconds);
+    document.getElementById('serviceBusYoungestAge').textContent=formatQueueAge(snapshot.YoungestAgeSeconds);
+    document.getElementById('serviceBusAgeSampleCount').textContent=Number(snapshot.AgeSampleCount||0).toLocaleString();
+    const originalCount=Number(snapshot.OriginalQueueTimestampSampleCount||0);
+    const sampleCount=Number(snapshot.AgeSampleCount||0);
+    document.getElementById('serviceBusAgeNote').textContent=
+      'Age is sampled from up to 100 active messages in '+(snapshot.QueueName||'the configured queue')+
+      '. Scheduled retries are counted separately. '+originalCount.toLocaleString()+' of '+sampleCount.toLocaleString()+
+      ' sampled messages had an original queue timestamp; older messages use their current enqueue time.';
+    errorElement.hidden=true;
+    updated.textContent='Updated '+new Date(snapshot.CheckedAtUtc).toLocaleTimeString();
+  }catch(error){
+    errorElement.textContent='Queue metrics unavailable: '+error.message;
+    errorElement.hidden=false;
+    updated.textContent='Unavailable';
+  }finally{
+    serviceBusHealthLoading=false;
+  }
+}
 function queueSearch(){
   if(searchTimer)clearTimeout(searchTimer);
   searchTimer=setTimeout(()=>void load(),300);
@@ -1405,6 +1484,7 @@ async function saveAutoCleanupSettings(){
 }
 async function load(){
   if(loading)return; loading=true;
+  void loadServiceBusHealth();
   void loadAverages();
   const status=document.getElementById('status');
   activeSearch=document.getElementById('search').value.trim().slice(0,200);

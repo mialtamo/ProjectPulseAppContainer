@@ -211,6 +211,8 @@ Project Pulse authenticates to Azure Service Bus with the Container App's manage
 
 Use the queue as the role-assignment scope when possible. The Service Bus role assignments can take several minutes to propagate.
 
+The admin-only `requests.html` page can show Service Bus runtime counts and a non-destructive age sample. To enable these metrics, grant the RTA managed identity `Azure Service Bus Data Owner` on the queue; this is broader than the sender-only permission otherwise needed by the RTA role. Without that permission, the panel reports metrics as unavailable. Age is sampled from up to 100 active messages (scheduled retries are counted separately); new messages carry their original queue timestamp so retries do not reset their displayed age. Legacy messages without that timestamp use their current enqueue time.
+
 4. Configure the namespace and queue on **both** Container Apps. The namespace is the host name only, without `https://`:
 
 ```text
