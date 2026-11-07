@@ -1081,7 +1081,7 @@ public sealed class ClaimProcessor(
         var responseHeaders = envelope.LastHttpResponseHeaders ?? string.Empty;
         var responseTimeMs = envelope.LastResponseTimeMs ?? 0;
         var reasonPhrase = envelope.LastHttpReasonPhrase ?? "No successful APIM response";
-        var errorMessage = $"We were unable to contact DOCMP for this record after retrying for {_options.ServiceBusMessageTtlMinutes} minutes. Last APIM HTTP status: {statusCode} {reasonPhrase}.";
+        var errorMessage = $"We were unable to contact DOCMP for this record within the {_options.ServiceBusMessageTtlMinutes}-minute retry window. Last APIM HTTP status: {statusCode} {reasonPhrase}.";
         if (!string.IsNullOrWhiteSpace(responseBody))
         {
             errorMessage += " Last response: " + responseBody;
