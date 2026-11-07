@@ -230,7 +230,6 @@ ServiceBusFullyQualifiedNamespace=<same-namespace>.servicebus.windows.net
 ServiceBusQueueName=<same-queue-name>
 ServiceBusMessageTtlMinutes=10
 ServiceBusFinalizationReserveSeconds=60
-ServiceBusMessageRetentionMinutes=1440
 ServiceBusReceiveBatchSize=10
 ServiceBusReceiveWaitSeconds=5
 ServiceBusDependencyRetrySeconds=5
