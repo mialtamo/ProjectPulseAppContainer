@@ -1546,8 +1546,9 @@ function changePageSize(){
 function changeRunOrder(){
   try{localStorage.setItem('projectPulse.requests.runOrder',document.getElementById('runOrder').value)}catch{}
   if(!expandedRecordId)return;
+  activeViewState=captureViewState();
   const row=Array.from(document.querySelectorAll('.expand-row.open')).find(x=>x.dataset.groupKey===expandedRecordId);
-  if(row)void renderDetail(row,expandedRecordId,renderGeneration,false);
+  if(row)void renderDetail(row,expandedRecordId,renderGeneration,true);
 }
 function restoreRequestPreferences(){
   try{
