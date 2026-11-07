@@ -40,7 +40,7 @@
   "ServiceBusFullyQualifiedNamespace": "example.servicebus.windows.net",
   "ServiceBusQueueName": "projectpulsequeue",
   "ServiceBusMessageTtlMinutes": "10",
-  "ServiceBusMessageRetentionMinutes": "1440",
+  "ServiceBusFinalizationReserveSeconds": "60",
   "ServiceBusReceiveBatchSize": "10",
   "ServiceBusReceiveWaitSeconds": "5",
   "ServiceBusDependencyRetrySeconds": "5",
