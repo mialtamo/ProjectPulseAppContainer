@@ -280,17 +280,18 @@ public sealed class ServiceBusWorker(
                     break;
 
                 case ClaimProcessingDisposition.Skipped:
-                    await receiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
-
+                    await RequeueClaimOrFinalizeAsync(
+                        receiver, message, envelope, "ServiceBusProcessingSkipped", cancellationToken);
                     logger.LogWarning(
-                        "Service Bus claim {UniqueId} was not completed. Disposition={Disposition} Reason={Reason}. Message will be retried.",
+                        "Service Bus claim {UniqueId} was rescheduled within its original deadline. Disposition={Disposition} Reason={Reason}.",
                         envelope.UniqueId,
                         result.Disposition,
                         result.Reason);
                     break;
 
                 default:
-                    await receiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
+                    await RequeueClaimOrFinalizeAsync(
+                        receiver, message, envelope, "ServiceBusProcessingUnresolved", cancellationToken);
                     break;
             }
         }
@@ -309,13 +310,76 @@ public sealed class ServiceBusWorker(
         {
             logger.LogError(
                 ex,
-                "Service Bus retry processing failed for message {MessageId}. Message will be retried.",
+                "Service Bus retry processing failed for message {MessageId}. Rescheduling within the original record deadline.",
                 message.MessageId);
 
+            telemetry.TrackException(ex);
+            await RequeueClaimOrFinalizeAsync(
+                receiver, message, envelope, "ServiceBusProcessingFailure", cancellationToken);
+        }
+    }
+    private async Task RequeueClaimOrFinalizeAsync(
+        ServiceBusReceiver receiver,
+        ServiceBusReceivedMessage message,
+        RetryEnvelope envelope,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var retryUntilUtc = envelope.RetryUntilUtc
+            ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
+
+        if (DateTimeOffset.UtcNow >= retryUntilUtc)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(envelope.OriginalPayload);
+                var claim = document.RootElement.Clone();
+                await claimProcessor.ProcessBatchAsync(
+                    [claim],
+                    [],
+                    cancellationToken,
+                    retryEnvelope: envelope with { RetryUntilUtc = retryUntilUtc });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogCritical(
+                    ex,
+                    "Could not send the final RTA status after the Service Bus deadline for claim {UniqueId}.",
+                    envelope.UniqueId);
+                telemetry.TrackException(ex);
+            }
+
+            await receiver.CompleteMessageAsync(message, cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await retryQueue.EnqueueAsync(
+                envelope with
+                {
+                    Reason = reason,
+                    RetryUntilUtc = retryUntilUtc,
+                    RetryAttempt = envelope.RetryAttempt + 1
+                },
+                cancellationToken);
+            await receiver.CompleteMessageAsync(message, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(
+                ex,
+                "Could not reschedule claim {UniqueId} before its original Service Bus deadline. Keeping the current delivery for broker retry.",
+                envelope.UniqueId);
             telemetry.TrackException(ex);
             await receiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
         }
     }
+
     private async Task ProcessRtaWritebackMessageAsync(
         ServiceBusReceiver receiver,
         ServiceBusReceivedMessage message,
