@@ -70,7 +70,8 @@ The configured storage account must be reachable from the Container App environm
 | `PROCESSING_MAX_CONCURRENCY_LIMIT` | Both | No | `300` | No | Configurable upper bound for `PROCESSING_MAX_CONCURRENCY`; values below 1 are treated as 1. Set both variables to control the desired concurrency within this bound. |
 | `ApimBaseUrl` | Both | Yes | APIM base URL | No | Base URL for APIM. |
 | `ApimHealthPath` | Both | No | `/health` | No | APIM health endpoint path. |
-| `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path. |
+| `ApimAdjudicationPath` | Both | No | `/claims/adjudicate` in code | No | APIM adjudication endpoint path used for non-update requests. |
+| `ApimUpdateAdjudicationPath` | Both | No | Empty | No | APIM endpoint path for records whose incoming `REQUEST_TYPE` is `UPDATE_REQUEST`. These requests use HTTP PUT. Set a path relative to `ApimBaseUrl` without a leading slash (for example, `accumulator/api/1.0/update`). If unset, update requests fall back to `ApimAdjudicationPath` for compatibility. |
 | `ApimRequestTimeoutSeconds` | Both | No | `15` | No | APIM request timeout used by Project Pulse processing logic. |
 | `APIM_AUTHENTICATION_ENABLED` | Both | No | `true` | No | Enables Pulse's APIM bearer-token authentication and APIM response-token validation. Set to `false` only to test a legacy APIM policy that does not validate the bearer token or return the response-token header. |
 | `ApimScope` | Both | Required when authentication is enabled | `api://<API-application-client-id>/.default` | No | Managed-identity OAuth scope for APIM. Required when `APIM_AUTHENTICATION_ENABLED=true`; use the Application ID URI of the APIM resource app registration with `/.default`. |
@@ -82,7 +83,7 @@ The configured storage account must be reachable from the Container App environm
 | `CorrelationIdField` | Both | No | `CORRELATION_ID` | No | Input JSON field containing the correlation ID. |
 | `ApimFieldMapping` | Both | No | built-in JSON mapping | No | Fallback JSON mapping for request types without a dedicated mapping. |
 | `ApimInitialRequestFieldMapping` | Both | No | built-in initial-request mapping | No | JSON mapping for `INITIAL_REQUEST` fields. |
-| `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields, including nested adjustment deltas. |
+| `ApimUpdateRequestFieldMapping` | Both | No | built-in update-request mapping | No | JSON mapping for `UPDATE_REQUEST` fields. The default reads `patientIcn`, `startDateOfService`, `claimNumber`, and `source` from `UPDATE_REQUEST_METADATA`, then creates an `adjustments` array with `individual`, `family`, and `costshare` delta updates. |
 
 `RtaPageSize` controls how many records Project Pulse requests in each RTA GET page (default 100). `RtaMaxPageSize` sets its configurable upper bound (default 5,000); set it higher when the RTA endpoint supports larger pages. The RTA endpoint may impose its own lower maximum. Larger pages increase response size and in-memory batch size; they do not increase processing concurrency. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical per-poll maximum is `RtaMaxPageSize × RtaPagesPerPoll`. Increase the page limit only after confirming the RTA limit and checking memory and request duration.
 

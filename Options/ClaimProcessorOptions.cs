@@ -58,6 +58,7 @@ public sealed class ClaimProcessorOptions
 
     public string ApimHealthPath { get; init; } = "/health";
     public string ApimAdjudicationPath { get; init; } = "/claims/adjudicate";
+    public string ApimUpdateAdjudicationPath { get; init; } = string.Empty;
     public int ApimRequestTimeoutSeconds { get; init; } = 15;
     [ConfigurationKeyName("APIM_AUTHENTICATION_ENABLED")]
     public bool ApimAuthenticationEnabled { get; init; } = true;
@@ -115,20 +116,10 @@ public sealed class ClaimProcessorOptions
 
     public string ApimUpdateRequestFieldMapping { get; init; } = """
     {
-      "correlationId": "CORRELATION_ID",
-      "requestId": "REQUEST_ID",
-      "requestType": "REQUEST_TYPE",
-      "patientIcn": "METADATA.PATIENT_ICN",
-      "sponsorIcn": "METADATA.SPONSOR_ICN",
-      "startDateOfService": "METADATA.START_DATE_OF_SERVICE",
-      "endDateOfService": "METADATA.END_DATE_OF_SERVICE",
-      "program": "METADATA.PROGRAM",
-      "claimNumber": "METADATA.CLAIM_NUMBER",
-      "RTA": "METADATA.RTA",
-      "notes": "METADATA.NOTES",
-      "adjustments.individual.delta": "METADATA.ADJ_IND_DEDUCTIBLE",
-      "adjustments.family.delta": "METADATA.ADJ_FAM_DEDUCTIBLE",
-      "adjustments.outOfPocket.delta": "METADATA.ADJ_OUT_OF_POCKET"
+      "patientIcn": "UPDATE_REQUEST_METADATA.PATIENT_ICN",
+      "startDateOfService": "UPDATE_REQUEST_METADATA.START_DATE_OF_SERVICE",
+      "claimNumber": "UPDATE_REQUEST_METADATA.CLAIM_NUMBER",
+      "source": "UPDATE_REQUEST_METADATA.SOURCE"
     }
     """;
 
