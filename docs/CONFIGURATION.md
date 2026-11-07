@@ -106,8 +106,8 @@ For `UPDATE_REQUEST` writeback, the RTA status PUT body sets `INITIAL_REQUEST_RE
 | `JsonAlertCodes` | Both | No | `419` | No | Comma-separated application response codes that should be alerted. |
 | `ServiceBusFullyQualifiedNamespace` | Both | Yes | `<namespace>.servicebus.windows.net` | No | Service Bus namespace used by the retry queue. Authentication uses managed identity. |
 | `ServiceBusQueueName` | Both | No | `claim-retry` in code | No | Retry queue name. |
-| `ServiceBusMessageTtlMinutes` | Both | No | `10` | No | Per-record APIM retry window. It starts when the Service Bus worker first picks up the record, so queue wait time does not use up its retry window. The deadline is then preserved across retries and is not extended by re-enqueueing. At the deadline, the worker writes the final failure status to RTA. |
-| `ServiceBusMessageRetentionMinutes` | Both | No | `1440` (24 hours) | No | Broker retention for each retry message, separate from the APIM retry window. Set the Service Bus queue's **Message time to live** to at least this value and enable **Dead lettering on message expiration**. The worker recovers recognized retry messages from the dead-letter queue; malformed/unrecognized messages remain there for support review. Must be at least the retry window plus 10 minutes. |
+| `ServiceBusMessageTtlMinutes` | Both | No | `10` | No | Hard maximum lifetime for each queued record, measured from first enqueue. Queue wait, APIM retries, and (for exhausted APIM retries) final RTA writeback retries all use this same deadline. Configure the queue's **Message time to live** to the same value and keep **Dead lettering on message expiration** off so expired claim payloads are not retained in the dead-letter queue. |
+| `ServiceBusFinalizationReserveSeconds` | Both | No | `60` | No | Stops APIM retries this many seconds before the hard deadline so the worker can attempt the final failure status PUT to RTA. The reserve is clamped below the configured message lifetime. |
 | `ServiceBusReceiveBatchSize` | SERVICEBUS | No | `10` | No | Maximum messages retrieved in one Service Bus receive call (the worker continues receiving while other messages are being processed). It does not cap total concurrent processing. |
 | `ServiceBusReceiveWaitSeconds` | SERVICEBUS | No | `5` | No | Maximum wait for a Service Bus receive operation when the queue is empty. |
 | `ServiceBusDependencyRetrySeconds` | SERVICEBUS | No | `5` | No | Delay before retrying dependency health checks. |
@@ -208,13 +208,13 @@ Project Pulse authenticates to Azure Service Bus with the Container App's manage
 | Container App role (`PROJECT_PULSE_ROLE`) | Azure Service Bus role | Why |
 | --- | --- | --- |
 | `RTA` | `Azure Service Bus Data Sender`; use `Azure Service Bus Data Owner` when queue metrics are enabled | Sends retry messages. Data Owner is also required to read runtime queue counts and peek messages for the requests-page metrics. |
-| `SERVICEBUS` | `Azure Service Bus Data Receiver` and `Azure Service Bus Data Sender` | Receives, completes, and dead-letters queued messages; it also needs to send replacement messages when a retry is needed. |
+| `SERVICEBUS` | `Azure Service Bus Data Receiver` and `Azure Service Bus Data Sender` | Receives, completes, and sends replacement messages when a retry is needed. |
 
 Use the queue as the role-assignment scope when possible. The Service Bus role assignments can take several minutes to propagate.
 
 The admin-only `requests.html` page loads queue metrics from `GET /requests/servicebus-health` on the RTA deployment. Configure `ServiceBusFullyQualifiedNamespace` and `ServiceBusQueueName` on that RTA Container App to identify the namespace and queue (see step 4), then grant the managed identity actually assigned to the RTA app `Azure Service Bus Data Owner` at the queue's **Access control (IAM)** scope. The endpoint uses this role to read runtime counts and non-destructively peek at messages. Data Owner is broader than the sender-only access used for normal RTA queue sends; use it only when the metrics are needed. Role assignments can take several minutes to propagate. The page also requires an account authorized to access the Project Pulse admin UI. If configuration, permissions, or role assignment have not taken effect, the panel reports metrics as unavailable. Age is sampled from up to 100 active messages (scheduled retries are counted separately); new messages carry their original queue timestamp so retries do not reset their displayed age. Legacy messages without that timestamp use their current enqueue time.
 
-4. Configure the namespace and queue on **both** Container Apps. The namespace is the host name only, without `https://`:
+4. Configure the namespace and queue on **both** Container Apps. Set the queue's **Message time to live** to 10 minutes and leave **Dead lettering on message expiration** disabled. Set **Max delivery count** high enough that transient lock/processing errors do not dead-letter messages before their 10-minute lifetime (the customer queue currently shows 5, which can strand a message early). The namespace is the host name only, without `https://`:
 
 ```text
 # RTA Container App
@@ -222,12 +222,14 @@ PROJECT_PULSE_ROLE=RTA
 ServiceBusFullyQualifiedNamespace=<namespace>.servicebus.windows.net
 ServiceBusQueueName=<queue-name>
 ServiceBusMessageTtlMinutes=10
+ServiceBusFinalizationReserveSeconds=60
 
 # Service Bus worker Container App
 PROJECT_PULSE_ROLE=SERVICEBUS
 ServiceBusFullyQualifiedNamespace=<same-namespace>.servicebus.windows.net
 ServiceBusQueueName=<same-queue-name>
 ServiceBusMessageTtlMinutes=10
+ServiceBusFinalizationReserveSeconds=60
 ServiceBusMessageRetentionMinutes=1440
 ServiceBusReceiveBatchSize=10
 ServiceBusReceiveWaitSeconds=5
@@ -240,7 +242,7 @@ The namespace and queue name must match between the apps. The `SERVICEBUS` app a
 
 ## RTA failure notifications
 
-Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` for catastrophic failures. When the RTA poller's APIM health probe first reports an outage, it also sends one admin notification with the health-check status/detail and configured outage mode. Under the default `BUFFER_THEN_STOP` mode, the alert is sent while the poller is still fetching RTA records and buffering them to Service Bus; after the configured threshold the RTA GET polling suspends until APIM recovers. It does not send a separate alert for each buffered record. A downstream API JSON error envelope containing `errorCode` (for example, `ACC-NOTF-001` with HTTP 404) is treated as an application error and written directly back to RTA. Other actual APIM HTTP statuses except 200 are buffered to Service Bus for one fixed `ServiceBusMessageTtlMinutes` retry window (10 minutes by default); successfully queuing that APIM failure does not trigger an admin notification. Retries use bounded backoff and preserve the latest HTTP status, response body, and response headers. If no successful APIM response arrives before the deadline, Project Pulse sends a final RTA failure status containing the last APIM response details in `API_CALL_HISTORY`. An inability to enqueue or schedule a retry triggers an admin notification. If that final RTA writeback cannot be delivered during its own direct retry window, the Service Bus worker sends an admin notification and dead-letters the message. A completely stopped worker cannot report its own outage and must be monitored through Azure.
+Project Pulse POSTs to `RTANotificationsBaseURL` + `RTANotificationsPath` for catastrophic failures. When the RTA poller's APIM health probe first reports an outage, it also sends one admin notification with the health-check status/detail and configured outage mode. Under the default `BUFFER_THEN_STOP` mode, the alert is sent while the poller is still fetching RTA records and buffering them to Service Bus; after the configured threshold the RTA GET polling suspends until APIM recovers. It does not send a separate alert for each buffered record. A downstream API JSON error envelope containing `errorCode` (for example, `ACC-NOTF-001` with HTTP 404) is treated as an application error and written directly back to RTA. Other actual APIM HTTP statuses except 200 are buffered to Service Bus for one fixed 10-minute lifetime from first enqueue; successfully queuing that APIM failure does not trigger an admin notification. Retries use bounded backoff and preserve the latest HTTP status, response body, and response headers. APIM retry attempts stop before expiry to reserve time for the final RTA failure-status PUT. If the final PUT fails, direct writeback retries use only the remaining lifetime; failure to enqueue, schedule, or complete the writeback before expiry triggers an admin notification and the message is removed rather than retained past the claim's validity. A completely stopped worker cannot report its own outage and must be monitored through Azure. The design makes a best-effort final PUT within the hard deadline; it cannot make RTA accept a request while RTA is unavailable, or compensate for a stopped worker or backlog beyond provisioned capacity.
 
 Status-like values inside downstream API JSON are application data, not HTTP statuses. For example, an HTTP 200 response whose JSON contains `"status": 404` does not trigger HTTP retry or notification handling. Notifications set `EXTERNAL_CORRELATION_ID` to JSON `null`, include `REQUEST_ID` and `REQUEST_QUEUE_ID` when present in the RTA item, and include concise diagnostics in `NOTIFICATION_ATTRS`; raw request/response payloads and patient identifiers are not included. Notifications use `AppApiScope` for RTA authorization.
 
