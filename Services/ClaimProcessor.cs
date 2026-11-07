@@ -1673,14 +1673,14 @@ public sealed class ClaimProcessor(
         apiCallHistory["ERROR_STACK"] = errorStack;
         payload["API_CALL_HISTORY"] = apiCallHistory;
 
-        payload["INITIAL_REQUEST_METADATA"] = null;
+        payload["INITIAL_REQUEST_RESPONSE"] = null;
         try
         {
-            payload["UPDATE_REQUEST_METADATA"] = JsonNode.Parse(rawApimResponse);
+            payload["UPDATE_REQUEST_RESPONSE"] = JsonNode.Parse(rawApimResponse);
         }
         catch (JsonException)
         {
-            payload["UPDATE_REQUEST_METADATA"] = JsonValue.Create(rawApimResponse);
+            payload["UPDATE_REQUEST_RESPONSE"] = JsonValue.Create(rawApimResponse);
         }
 
         return payload;
