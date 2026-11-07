@@ -35,6 +35,14 @@ public sealed class ServiceBusWorker(
                 ReceiveMode = ServiceBusReceiveMode.PeekLock,
                 PrefetchCount = 0
             });
+        await using var deadLetterReceiver = serviceBusClient.CreateReceiver(
+            _options.ServiceBusQueueName,
+            new ServiceBusReceiverOptions
+            {
+                ReceiveMode = ServiceBusReceiveMode.PeekLock,
+                PrefetchCount = 0,
+                SubQueue = SubQueue.DeadLetter
+            });
         var mode = _concurrencyGates.Mode;
         var maxConcurrency = _concurrencyGates.MaxConcurrentMessages;
         var inFlight = new List<Task>();
@@ -61,6 +69,17 @@ public sealed class ServiceBusWorker(
                 {
                     if (inFlight.Count >= maxConcurrency)
                     {
+                        continue;
+                    }
+
+                    // Max-delivery handling can move a claim to DLQ before its 10-minute TTL.
+                    // Recover only while its original deadline is still live; never extend it.
+                    var deadLetterMessage = await deadLetterReceiver.ReceiveMessageAsync(
+                        TimeSpan.FromMilliseconds(50),
+                        stoppingToken);
+                    if (deadLetterMessage is not null)
+                    {
+                        inFlight.Add(ProcessDeadLetterMessageAsync(deadLetterReceiver, deadLetterMessage, stoppingToken));
                         continue;
                     }
 
@@ -149,6 +168,125 @@ public sealed class ServiceBusWorker(
                 logger.LogError(ex, "Unhandled error while processing a Service Bus message");
                 telemetry.TrackException(ex);
             }
+        }
+    }
+
+    private async Task ProcessDeadLetterMessageAsync(
+        ServiceBusReceiver deadLetterReceiver,
+        ServiceBusReceivedMessage message,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(message.Body.ToString());
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+                return;
+            }
+
+            if (root.TryGetProperty("MessageType", out var messageType) &&
+                messageType.ValueKind == JsonValueKind.String &&
+                string.Equals(messageType.GetString(), RtaWritebackRetryEnvelope.TypeName, StringComparison.OrdinalIgnoreCase))
+            {
+                var writeback = JsonSerializer.Deserialize<RtaWritebackRetryEnvelope>(root.GetRawText());
+                if (writeback is null)
+                {
+                    await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+                    return;
+                }
+
+                if (DateTimeOffset.UtcNow >= writeback.RetryUntilUtc)
+                {
+                    await NotifyWritebackFailureAsync(
+                        writeback,
+                        "RTA_WRITEBACK_WINDOW_EXPIRED",
+                        "A dead-lettered RTA status retry reached its original 10-minute deadline without acceptance.",
+                        null,
+                        cancellationToken);
+                    await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+                    return;
+                }
+
+                await retryQueue.EnqueueRtaWritebackAsync(writeback, cancellationToken);
+                await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+                telemetry.TrackEvent("ServiceBusWritebackRecoveredFromDeadLetter", new Dictionary<string, string>
+                {
+                    ["correlationId"] = writeback.CorrelationId,
+                    ["retryUntilUtc"] = writeback.RetryUntilUtc.ToString("O")
+                });
+                return;
+            }
+
+            var envelope = JsonSerializer.Deserialize<RetryEnvelope>(root.GetRawText());
+            if (envelope is null || string.IsNullOrWhiteSpace(envelope.OriginalPayload))
+            {
+                await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+                return;
+            }
+
+            var retryUntilUtc = envelope.RetryUntilUtc
+                ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
+            envelope = envelope with { RetryUntilUtc = retryUntilUtc };
+            var nowUtc = DateTimeOffset.UtcNow;
+            if (nowUtc >= retryUntilUtc)
+            {
+                logger.LogCritical(
+                    "Dead-lettered claim {UniqueId} passed its original 10-minute deadline without a final RTA status. Removing expired payload.",
+                    envelope.UniqueId);
+                telemetry.TrackEvent("ServiceBusDeadLetterExpiredBeforeFinalization", new Dictionary<string, string>
+                {
+                    ["uniqueId"] = envelope.UniqueId,
+                    ["retryUntilUtc"] = retryUntilUtc.ToString("O")
+                });
+                await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+                return;
+            }
+
+            if (nowUtc >= retryUntilUtc.AddSeconds(-_options.GetServiceBusFinalizationReserveSeconds()))
+            {
+                using var claimDocument = JsonDocument.Parse(envelope.OriginalPayload);
+                var claim = claimDocument.RootElement.Clone();
+                await claimProcessor.ProcessBatchAsync(
+                    [claim],
+                    [],
+                    cancellationToken,
+                    retryEnvelope: envelope);
+            }
+            else
+            {
+                await retryQueue.EnqueueAsync(
+                    envelope with
+                    {
+                        Reason = "RecoveredMaxDeliveryRetry",
+                        RetryAttempt = envelope.RetryAttempt + 1
+                    },
+                    cancellationToken);
+            }
+
+            await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+            telemetry.TrackEvent("ServiceBusClaimRecoveredFromDeadLetter", new Dictionary<string, string>
+            {
+                ["uniqueId"] = envelope.UniqueId,
+                ["retryUntilUtc"] = retryUntilUtc.ToString("O")
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (JsonException ex)
+        {
+            logger.LogError(ex, "Invalid dead-letter message JSON. MessageId={MessageId}", message.MessageId);
+            telemetry.TrackException(ex);
+            await deadLetterReceiver.CompleteMessageAsync(message, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Could not recover a dead-letter message within its original deadline. MessageId={MessageId}", message.MessageId);
+            telemetry.TrackException(ex);
+            await deadLetterReceiver.AbandonMessageAsync(message, cancellationToken: cancellationToken);
         }
     }
 
