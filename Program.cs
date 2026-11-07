@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using Azure.Core;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Options;
 using ProjectPulse.Processor.ContainerApp;
 using ProjectPulse.Processor.Options;
@@ -64,6 +65,14 @@ builder.Services.AddSingleton(sp =>
     var credential = sp.GetRequiredService<TokenCredential>();
     return new ServiceBusClient(options.ServiceBusFullyQualifiedNamespace, credential);
 });
+
+builder.Services.AddSingleton(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value;
+    var credential = sp.GetRequiredService<TokenCredential>();
+    return new ServiceBusAdministrationClient(options.ServiceBusFullyQualifiedNamespace, credential);
+});
+builder.Services.AddSingleton<ServiceBusQueueHealthService>();
 
 builder.Services.AddSingleton<IAuthHeaderProvider, ManagedIdentityAuthHeaderProvider>();
 builder.Services.AddSingleton<IHealthGate, HealthGate>();
@@ -548,6 +557,35 @@ app.MapPost("/requests/poll", (HttpContext context, IClaimPollingTrigger pollTri
             ? "An immediate RTA poll was queued."
             : "An immediate RTA poll is already queued."
     });
+});
+
+app.MapGet("/requests/servicebus-health", async (
+    HttpContext context,
+    ServiceBusQueueHealthService queueHealth,
+    IOptions<ClaimProcessorOptions> options,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    try
+    {
+        var snapshot = await queueHealth.GetSnapshotAsync(cancellationToken);
+        return Results.Json(snapshot, historyJsonOptions);
+    }
+    catch (Exception ex) when (ex is not OperationCanceledException)
+    {
+        loggerFactory.CreateLogger("ProjectPulse.ServiceBusHealth").LogWarning(
+            ex,
+            "Could not read Service Bus health metrics for queue {QueueName}.",
+            options.Value.ServiceBusQueueName);
+        return Results.Problem(
+            title: "Service Bus metrics are unavailable",
+            detail: "Check the queue configuration and grant the RTA managed identity Azure Service Bus Data Owner on this queue to read runtime counts and peek messages.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
 });
 
 app.MapPost("/requests/servicebus-test", async (
