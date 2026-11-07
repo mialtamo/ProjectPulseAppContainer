@@ -58,6 +58,7 @@ public sealed class ClaimProcessorOptions
 
     public string ApimHealthPath { get; init; } = "/health";
     public string ApimAdjudicationPath { get; init; } = "/claims/adjudicate";
+    public string ApimUpdateAdjudicationPath { get; init; } = string.Empty;
     public int ApimRequestTimeoutSeconds { get; init; } = 15;
     [ConfigurationKeyName("APIM_AUTHENTICATION_ENABLED")]
     public bool ApimAuthenticationEnabled { get; init; } = true;
