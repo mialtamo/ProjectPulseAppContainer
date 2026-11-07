@@ -29,7 +29,6 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
 
     public async Task EnqueueAsync(RetryEnvelope envelope, CancellationToken cancellationToken)
     {
-        var payload = JsonSerializer.Serialize(envelope);
         var retryUntilUtc = envelope.RetryUntilUtc
             ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
         var finalizeAtUtc = retryUntilUtc.AddSeconds(-_options.GetServiceBusFinalizationReserveSeconds());
@@ -40,13 +39,22 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             throw new InvalidOperationException($"Service Bus retry deadline has elapsed for claim {envelope.UniqueId}.");
         }
 
-        var message = new ServiceBusMessage(payload)
+        var retryDelaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt - 1, 0, 10)));
+        var retryDelay = TimeSpan.FromSeconds(retryDelaySeconds);
+        var scheduledAtUtc = nowUtc.Add(retryDelay);
+        if (scheduledAtUtc > finalizeAtUtc)
+        {
+            scheduledAtUtc = finalizeAtUtc;
+        }
+        var scheduled = envelope.RetryAttempt > 0 && scheduledAtUtc > nowUtc;
+        var ttl = scheduled ? retryUntilUtc - scheduledAtUtc : remaining;
+        var message = new ServiceBusMessage(JsonSerializer.Serialize(envelope))
         {
             ContentType = "application/json",
             MessageId = envelope.UniqueId + "-apim-" + envelope.RetryAttempt + "-" + Guid.NewGuid().ToString("N"),
             CorrelationId = envelope.UniqueId,
-            TimeToLive = remaining < TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes)
-                ? remaining
+            TimeToLive = ttl < TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes)
+                ? ttl
                 : TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes),
             Subject = "ClaimRetry"
         };
@@ -63,25 +71,17 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
             message.ApplicationProperties["idempotencyKey"] = envelope.IdempotencyKey;
         }
 
-        var retryDelaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt - 1, 0, 10)));
-        var retryDelay = TimeSpan.FromSeconds(retryDelaySeconds);
-        var scheduledAtUtc = nowUtc.Add(retryDelay);
-        if (scheduledAtUtc > finalizeAtUtc)
-        {
-            scheduledAtUtc = finalizeAtUtc;
-        }
-        var scheduled = envelope.RetryAttempt > 0 && scheduledAtUtc > nowUtc;
-
         try
         {
             if (scheduled)
             {
-                // APIM retries stop before expiry; the worker then has the reserved interval to write the final status.
+                // Scheduled TTL starts when the message becomes active, so set it to the time remaining after activation.
+                // This keeps the broker expiry at the original per-record deadline.
                 await _sender.ScheduleMessageAsync(message, scheduledAtUtc, cancellationToken);
             }
             else
             {
-                // The finalization window has begun; deliver immediately so the worker can write the final status.
+                // During the reserved finalization interval, deliver immediately for the final RTA status attempt.
                 await _sender.SendMessageAsync(message, cancellationToken);
             }
         }
@@ -162,7 +162,8 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         var scheduledTime = nowUtc.Add(delay < remaining - TimeSpan.FromSeconds(1)
             ? delay
             : remaining - TimeSpan.FromSeconds(1));
-        var message = CreateRtaWritebackMessage(next, remaining);
+        var scheduledDelay = scheduledTime - nowUtc;
+        var message = CreateRtaWritebackMessage(next, remaining - scheduledDelay);
         await _sender.ScheduleMessageAsync(message, scheduledTime, cancellationToken);
 
         _telemetry.TrackEvent("RtaWritebackRetryScheduled", new Dictionary<string, string>
