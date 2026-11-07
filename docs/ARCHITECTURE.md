@@ -24,6 +24,10 @@ ServiceBusWorker
     +--> writeback retry envelope -----------------------------> RTA
 ```
 
+## Request routing and translation
+
+Project Pulse processes each RTA record separately. The root-level `REQUEST_TYPE` selects the APIM operation: `UPDATE_REQUEST` uses the configured relative update path with HTTP PUT; other requests use the general adjudication path with HTTP POST. If the update path is unset, update requests fall back to the general path. Update bodies are mapped from `UPDATE_REQUEST_METADATA` into the downstream update contract, including accumulator adjustment items. The record's `IDEMPOTENCY_KEY` is sent as the `Idempotency-Key` header for APIM to forward downstream. Update writeback sets `INITIAL_REQUEST_METADATA` to null and stores the raw APIM response JSON in `UPDATE_REQUEST_METADATA`; initial-request handling is unchanged.
+
 ## Polling model
 
 `POLL_INTERVAL_SECONDS` controls the application polling interval. Default is 5 seconds; supported range is 1 through 300 seconds.
