@@ -1,7 +1,7 @@
 # Current State
 
 Last reviewed: 2026-11-06  
-Repository image tag: `0.0.107` (from `VERSION`; Azure's active/latest-ready revision must be verified separately.)
+Repository image tag: `0.0.108` (from `VERSION`; Azure's active/latest-ready revision must be verified separately.)
 
 Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps implementation of Project Pulse. This file records repository behavior and the POC observations shared so far; environment-specific configuration and production readiness must be verified separately.
 
@@ -29,6 +29,7 @@ Project Pulse App Container is the ASP.NET Core / .NET 10 Azure Container Apps i
 - Timing averages are grouped by record-processing run (one pass on one record), not by poll or unique record; a replay through APIM creates another run. Each card counts only runs with a saved value for that stage. RTA pull duration is associated with each record returned by the poll. The UI also shows **Other processing** (end-to-end minus the measured stages) to expose uninstrumented time. Per-run durations overlap under concurrency and must not be summed as total elapsed time. The Requests page also reports observed RTA throughput: records received divided by wall-clock time from the first receipt to the last completed poll in the selected range. It includes gaps between polls and excludes later Service Bus replays.
 - The Requests list can filter to the last 5 minutes, hour, 24 hours, week, or all time. It shows the exact number matching the selected time window and search, plus the number currently loaded; pagination retains the original time cutoff.
 - RTA batch processing supports `SEQUENTIAL`, `RTA_ONLY`, `APIM_ONLY`, and `FULL` through `PROCESSING_CONCURRENCY_MODE`, capped by `PROCESSING_MAX_CONCURRENCY` (default 5, bounded by `PROCESSING_MAX_CONCURRENCY_LIMIT`). The cap is per active batch and per replica, and multiple replicas multiply aggregate APIM/backend or RTA load. Polling cycles remain non-overlapping. The Service Bus role also uses the concurrency configuration to process multiple queued messages up to the effective limit.
+- Configured HTTP base URLs and endpoint paths are normalized before calls to RTA, APIM, health checks, and notification endpoints. Paths with or without leading/trailing slashes are joined with one separator, while any base URL path prefix is preserved.
 - Health endpoints, Application Insights logging/telemetry, Docker image build, and GitHub Actions deployment are present.
 
 ## POC observations and limits
