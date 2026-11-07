@@ -106,7 +106,8 @@ For `UPDATE_REQUEST` writeback, the RTA status PUT body sets `INITIAL_REQUEST_RE
 | `JsonAlertCodes` | Both | No | `419` | No | Comma-separated application response codes that should be alerted. |
 | `ServiceBusFullyQualifiedNamespace` | Both | Yes | `<namespace>.servicebus.windows.net` | No | Service Bus namespace used by the retry queue. Authentication uses managed identity. |
 | `ServiceBusQueueName` | Both | No | `claim-retry` in code | No | Retry queue name. |
-| `ServiceBusMessageTtlMinutes` | Both | No | `10` | No | Message lifetime for claim retries and direct RTA writeback retries. Direct writeback retries are scheduled with backoff until this deadline; unsuccessful messages are dead-lettered. Configure the queue to dead-letter expired messages so messages expiring while the worker is unavailable remain inspectable. |
+| `ServiceBusMessageTtlMinutes` | Both | No | `10` | No | Per-record APIM retry window. The deadline is set once when the record is first buffered and is preserved across retries; it is not extended by re-enqueueing. At the deadline, the worker writes the final failure status to RTA. |
+| `ServiceBusMessageRetentionMinutes` | Both | No | `1440` (24 hours) | No | Broker retention for each retry message, separate from the APIM retry window. Set the Service Bus queue's **Message time to live** to at least this value and enable **Dead lettering on message expiration**. The worker recovers recognized retry messages from the dead-letter queue; malformed/unrecognized messages remain there for support review. Must be at least the retry window plus 10 minutes. |
 | `ServiceBusReceiveBatchSize` | SERVICEBUS | No | `10` | No | Maximum messages retrieved in one Service Bus receive call (the worker continues receiving while other messages are being processed). It does not cap total concurrent processing. |
 | `ServiceBusReceiveWaitSeconds` | SERVICEBUS | No | `5` | No | Maximum wait for a Service Bus receive operation when the queue is empty. |
 | `ServiceBusDependencyRetrySeconds` | SERVICEBUS | No | `5` | No | Delay before retrying dependency health checks. |
@@ -227,6 +228,7 @@ PROJECT_PULSE_ROLE=SERVICEBUS
 ServiceBusFullyQualifiedNamespace=<same-namespace>.servicebus.windows.net
 ServiceBusQueueName=<same-queue-name>
 ServiceBusMessageTtlMinutes=10
+ServiceBusMessageRetentionMinutes=1440
 ServiceBusReceiveBatchSize=10
 ServiceBusReceiveWaitSeconds=5
 ServiceBusDependencyRetrySeconds=5
