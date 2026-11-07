@@ -310,6 +310,8 @@ RequestHistoryStorageConnectionString=<secret reference>
 REQUEST_HISTORY_PAYLOAD_MODE=OFF
 ```
 
+For URL settings, base URLs can include or omit a final slash. Endpoint path settings can include or omit leading/trailing slashes; Project Pulse normalizes the join to avoid duplicate separators and preserves any path prefix in the base URL. See the [URL and path formatting guidance](docs/CONFIGURATION.md#url-and-path-formatting).
+
 ### RTA page size
 
 `RtaPageSize` controls how many records Project Pulse requests in each RTA GET page (default 100). `RtaMaxPageSize` sets the configurable upper bound (default 5,000); set it higher if the RTA endpoint supports larger pages. The RTA endpoint may impose its own lower maximum. Larger pages increase response size and memory use but do not increase processing concurrency. `RtaPagesPerPoll` remains clamped to 1-3, so the theoretical per-poll maximum is `RtaMaxPageSize × RtaPagesPerPoll`. Increase the page limit only after confirming the RTA limit and checking container memory and request duration.
@@ -326,9 +328,7 @@ Set `PROCESSING_CONCURRENCY_MODE` to choose which external calls may overlap:
 `PROCESSING_MAX_CONCURRENCY` sets the per-batch concurrency (default `5`). `PROCESSING_MAX_CONCURRENCY_LIMIT` sets its configurable upper bound (default `300`); the effective concurrency is clamped between 1 and that limit. Raise both values when intentionally increasing concurrency. For batches larger than the configured concurrency, remaining records wait while the configured number are processed concurrently. APIM
 concurrency also increases the number of simultaneous requests that can reach downstream API through APIM;
 use it only after checking APIM and downstream API capacity. RTA concurrency increases simultaneous status
-PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica,
-so multiple replicas add to the aggregate load. The Service Bus worker handles one queued record
-at a time.
+PUTs to the RTA API. These limits apply per active RTA polling batch and per Container App replica, so multiple replicas add to the aggregate load. The Service Bus role also uses the concurrency setting for messages; its default mode remains sequential.
 
 ### Request-history payload capture
 
