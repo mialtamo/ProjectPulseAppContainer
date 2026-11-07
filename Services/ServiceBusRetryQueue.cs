@@ -32,20 +32,15 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         var payload = JsonSerializer.Serialize(envelope);
         var retryUntilUtc = envelope.RetryUntilUtc
             ?? envelope.QueuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes);
-        var remaining = retryUntilUtc - DateTimeOffset.UtcNow;
-        if (remaining <= TimeSpan.Zero)
-        {
-            throw new InvalidOperationException("The APIM retry window expired before the retry could be queued.");
-        }
-
+        var nowUtc = DateTimeOffset.UtcNow;
+        var remaining = retryUntilUtc - nowUtc;
         var message = new ServiceBusMessage(payload)
         {
             ContentType = "application/json",
             MessageId = envelope.UniqueId + "-apim-" + envelope.RetryAttempt + "-" + Guid.NewGuid().ToString("N"),
             CorrelationId = envelope.UniqueId,
-            TimeToLive = remaining < TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes)
-                ? remaining
-                : TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes),
+            // Keep the broker message past the logical retry deadline so the worker can send a final RTA outcome.
+            TimeToLive = TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes()),
             Subject = "ClaimRetry"
         };
 
@@ -63,16 +58,21 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
 
         var retryDelaySeconds = Math.Min(60, 5 * Math.Pow(2, Math.Clamp(envelope.RetryAttempt - 1, 0, 10)));
         var retryDelay = TimeSpan.FromSeconds(retryDelaySeconds);
-        var scheduled = envelope.RetryAttempt > 0 && remaining > retryDelay;
+        var scheduled = envelope.RetryAttempt > 0 && remaining > TimeSpan.Zero;
+        var scheduledAtUtc = scheduled
+            ? nowUtc.Add(remaining < retryDelay ? remaining : retryDelay)
+            : nowUtc;
 
         try
         {
             if (scheduled)
             {
-                await _sender.ScheduleMessageAsync(message, DateTimeOffset.UtcNow.Add(retryDelay), cancellationToken);
+                // The last retry is scheduled at the logical deadline; when received, the worker finalizes it.
+                await _sender.ScheduleMessageAsync(message, scheduledAtUtc, cancellationToken);
             }
             else
             {
+                // If the deadline elapsed during processing, deliver immediately for finalization instead of dropping it.
                 await _sender.SendMessageAsync(message, cancellationToken);
             }
         }
@@ -117,7 +117,7 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         RtaWritebackRetryEnvelope envelope,
         CancellationToken cancellationToken)
     {
-        await _sender.SendMessageAsync(CreateRtaWritebackMessage(envelope, TimeSpan.FromMinutes(_options.ServiceBusMessageTtlMinutes)), cancellationToken);
+        await _sender.SendMessageAsync(CreateRtaWritebackMessage(envelope, TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes())), cancellationToken);
 
         _telemetry.TrackEvent("RtaWritebackQueuedForRetry", new Dictionary<string, string>
         {
@@ -136,14 +136,10 @@ public sealed class ServiceBusRetryQueue : IRetryQueue, IAsyncDisposable
         TimeSpan delay,
         CancellationToken cancellationToken)
     {
-        var remaining = envelope.RetryUntilUtc - DateTimeOffset.UtcNow;
-        if (remaining <= delay)
-        {
-            throw new InvalidOperationException("The RTA writeback retry window expires before the next scheduled attempt.");
-        }
-
         var next = envelope with { RetryAttempt = envelope.RetryAttempt + 1 };
-        var message = CreateRtaWritebackMessage(next, remaining);
+        var message = CreateRtaWritebackMessage(
+            next,
+            TimeSpan.FromMinutes(_options.GetServiceBusMessageRetentionMinutes()));
         var scheduledTime = DateTimeOffset.UtcNow.Add(delay);
         await _sender.ScheduleMessageAsync(message, scheduledTime, cancellationToken);
 
