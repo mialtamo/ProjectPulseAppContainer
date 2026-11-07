@@ -282,7 +282,17 @@ public sealed class ClaimProcessor(
         }
 
         var client = httpClientFactory.CreateClient("Apim");
-        using var request = new HttpRequestMessage(HttpMethod.Post, _options.ApimAdjudicationPath)
+        var requestType = GetScalar(claims[0], "REQUEST_TYPE");
+        var isUpdateRequest = string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase);
+        var apimEndpoint = GetApimEndpointForRequest(claims[0]);
+        var apimMethod = isUpdateRequest ? HttpMethod.Put : HttpMethod.Post;
+        if (isUpdateRequest && string.IsNullOrWhiteSpace(_options.ApimUpdateAdjudicationPath))
+        {
+            logger.LogWarning(
+                "ApimUpdateAdjudicationPath is not configured; UPDATE_REQUEST is falling back to ApimAdjudicationPath.");
+        }
+
+        using var request = new HttpRequestMessage(apimMethod, apimEndpoint)
         {
             Content = new StringContent(outboundPayloadJson, Encoding.UTF8, "application/json")
         };
@@ -1372,7 +1382,8 @@ public sealed class ClaimProcessor(
                     apimResponseReceivedAtUtc,
                     apimResponseTimeMs,
                     _options.ApimBaseUrl,
-                    _options.ApimAdjudicationPath,
+                    GetApimEndpointForRequest(originatingRequest),
+                    GetApimMethodForRequest(originatingRequest),
                     apimResponseHeaders,
                     outboundApimRequestBody ?? string.Empty,
                     apimErrorMessage,
@@ -1458,6 +1469,23 @@ public sealed class ClaimProcessor(
             : (true, "WritebackCompleted", rtaWritebackResult);
     }
 
+    private string GetApimEndpointForRequest(JsonElement request)
+    {
+        var requestType = GetScalar(request, "REQUEST_TYPE");
+        return string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(_options.ApimUpdateAdjudicationPath)
+                ? _options.ApimUpdateAdjudicationPath
+                : _options.ApimAdjudicationPath;
+    }
+
+    private string GetApimMethodForRequest(JsonElement request)
+    {
+        var requestType = GetScalar(request, "REQUEST_TYPE");
+        return string.Equals(requestType, "UPDATE_REQUEST", StringComparison.OrdinalIgnoreCase)
+            ? HttpMethod.Put.Method
+            : HttpMethod.Post.Method;
+    }
+
     private static JsonObject BuildInitialRtaStatusPayload(
         JsonElement apimResponse,
         JsonElement originatingRequest,
@@ -1467,6 +1495,7 @@ public sealed class ClaimProcessor(
         long apimResponseTimeMs,
         string apimBaseUrl,
         string apimEndpoint,
+        string apimHttpMethod,
         string apimResponseHeaders,
         string outboundApimRequestBody,
         string? errorMessage = null,
@@ -1491,7 +1520,7 @@ public sealed class ClaimProcessor(
         apiCallHistory["EXTERNAL_CORRELATION_ID"] = null;
         CopyJsonProperty(originatingRequest, apiCallHistory, "CORRELATION_ID");
         apiCallHistory["IDENTIFIER"] = "initial-accum-request";
-        apiCallHistory["HTTP_METHOD"] = "POST";
+        apiCallHistory["HTTP_METHOD"] = apimHttpMethod;
         apiCallHistory["API_URL"] = $"{apimBaseUrl.TrimEnd('/')}/";
         apiCallHistory["API_ENDPOINT"] = apimEndpoint.Trim('/');
         apiCallHistory["REQUEST_HEADER"] = apimResponseHeaders;
