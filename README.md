@@ -280,6 +280,7 @@ x-api-key=<secret reference>
 
 ApimBaseUrl=<APIM URL>
 ApimAdjudicationPath=pulse/pending
+ApimUpdateAdjudicationPath=accumulator/api/1.0/update
 ApimRequestTimeoutSeconds=15
 
 ServiceBusFullyQualifiedNamespace=<namespace>.servicebus.windows.net
