@@ -120,16 +120,9 @@ public sealed class ClaimProcessorOptions
       "requestId": "REQUEST_ID",
       "requestType": "REQUEST_TYPE",
       "patientIcn": "UPDATE_REQUEST_METADATA.PATIENT_ICN",
-      "sponsorIcn": "UPDATE_REQUEST_METADATA.SPONSOR_ICN",
       "startDateOfService": "UPDATE_REQUEST_METADATA.START_DATE_OF_SERVICE",
-      "endDateOfService": "UPDATE_REQUEST_METADATA.END_DATE_OF_SERVICE",
-      "program": "UPDATE_REQUEST_METADATA.PROGRAM",
       "claimNumber": "UPDATE_REQUEST_METADATA.CLAIM_NUMBER",
-      "source": "UPDATE_REQUEST_METADATA.SOURCE",
-      "notes": "UPDATE_REQUEST_METADATA.NOTES",
-      "adjustments.individual.delta": "UPDATE_REQUEST_METADATA.ADJ_IND_DEDUCTIBLE",
-      "adjustments.family.delta": "UPDATE_REQUEST_METADATA.ADJ_FAM_DEDUCTIBLE",
-      "adjustments.outOfPocket.delta": "UPDATE_REQUEST_METADATA.ADJ_OUT_OF_POCKET"
+      "source": "UPDATE_REQUEST_METADATA.SOURCE"
     }
     """;
 
