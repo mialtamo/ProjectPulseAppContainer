@@ -52,11 +52,14 @@ public sealed class RtaNotificationClient(
 
         var path = string.IsNullOrWhiteSpace(_options.RTANotificationsPath)
             ? "/admin/notifications"
-            : "/" + _options.RTANotificationsPath.Trim('/');
+            : _options.RTANotificationsPath;
         Uri endpoint;
         try
         {
-            endpoint = new Uri(_options.RTANotificationsBaseURL.TrimEnd('/') + path, UriKind.Absolute);
+            var baseAddress = EndpointUri.NormalizeBaseAddress(
+                _options.RTANotificationsBaseURL,
+                nameof(_options.RTANotificationsBaseURL));
+            endpoint = EndpointUri.Combine(baseAddress, path);
         }
         catch (UriFormatException ex)
         {
