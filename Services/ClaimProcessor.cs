@@ -1051,8 +1051,8 @@ public sealed class ClaimProcessor(
             {
                 PollRunId = retryContext?.PollRunId ?? pollRunId,
                 PollRecordOrdinal = retryContext?.PollRecordOrdinal ?? pollRecordOrdinal + i,
-                RetryUntilUtc = retryContext?.RetryUntilUtc
-                    ?? queuedAtUtc.AddMinutes(_options.ServiceBusMessageTtlMinutes),
+                // The Service Bus worker starts the per-record retry clock on first pickup.
+                RetryUntilUtc = retryContext?.RetryUntilUtc,
                 RetryAttempt = (retryContext?.RetryAttempt ?? 0) + (retryContext is null ? 0 : 1),
                 LastHttpStatusCode = lastHttpStatusCode ?? retryContext?.LastHttpStatusCode,
                 LastHttpReasonPhrase = lastHttpReasonPhrase ?? retryContext?.LastHttpReasonPhrase,
