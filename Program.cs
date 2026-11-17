@@ -773,9 +773,6 @@ app.MapGet("/requests.html", (HttpContext context) =>
 
 app.MapGet("/checklist.html", (HttpContext context, ConfigurationChecklist checklist) =>
 {
-    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: true);
-    if (authorization is not null) return authorization;
-
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "DENY";
