@@ -101,6 +101,7 @@ builder.Services.AddSingleton<IHostedService>(sp => new ConfigurationGatedHosted
     sp.GetRequiredService<ILogger<ConfigurationGatedHostedService>>()));
 
 var app = builder.Build();
+long lastChecklistProbeAt = 0;
 var authSetting = builder.Configuration["APIM_AUTHENTICATION_ENABLED"];
 var apimAuthenticationEnabled = !bool.TryParse(authSetting, out var parsedAuthSetting) || parsedAuthSetting;
 if (!apimAuthenticationEnabled)
@@ -141,12 +142,10 @@ app.MapGet("/version", () => Results.Ok(new
 app.MapPost("/checklist/probes", async (
     HttpContext context,
     ConfigurationChecklist checklist,
-    IServiceProvider services,
+    IHealthGate healthGate,
+    ILoggerFactory loggerFactory,
     CancellationToken cancellationToken) =>
 {
-    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
-    if (authorization is not null) return authorization;
-
     if (!string.Equals(context.Request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.Ordinal))
     {
         return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -158,29 +157,64 @@ app.MapPost("/checklist/probes", async (
     {
         return Results.Conflict(new
         {
-            error = "Live checks are paused until the blocked configuration settings are fixed.",
+            error = "Fix the blocked configuration settings before running connection checks.",
             checks = report.Checks.Where(check => check.Status == "Blocked")
         });
     }
 
+    var now = Environment.TickCount64;
+    var previous = Interlocked.Read(ref lastChecklistProbeAt);
+    if ((previous != 0 && now - previous < 5000)
+        || Interlocked.CompareExchange(ref lastChecklistProbeAt, now, previous) != previous)
+    {
+        return Results.Json(
+            new { error = "Please wait a few seconds before verifying again." },
+            statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
     try
     {
-        var healthGate = services.GetRequiredService<IHealthGate>();
-        var (appApi, apim) = await healthGate.CheckAsync(cancellationToken);
+        using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+        var (rtaApi, rtaDatabase, apim) = await healthGate.CheckDetailedAsync(probeTimeout.Token);
+        var checks = new[]
+        {
+            new { name = "RTA API", isHealthy = rtaApi.IsHealthy, statusCode = rtaApi.StatusCode, detail = rtaApi.Detail },
+            new { name = "RTA database", isHealthy = rtaDatabase.IsHealthy, statusCode = rtaDatabase.StatusCode, detail = rtaDatabase.Detail },
+            new { name = "APIM", isHealthy = apim.IsHealthy, statusCode = apim.StatusCode, detail = apim.Detail }
+        };
         return Results.Json(new
         {
-            appApi,
-            apim,
+            allHealthy = checks.All(check => check.isHealthy),
+            checks,
             checkedAt = DateTimeOffset.UtcNow
         });
     }
-    catch (Exception ex) when (ex is not OperationCanceledException)
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
     {
-        app.Logger.LogWarning(ex, "Live configuration checklist probes failed.");
-        return Results.Problem(
-            title: "Live checks could not complete",
-            detail: "Check the replica log stream for the underlying error.",
-            statusCode: StatusCodes.Status503ServiceUnavailable);
+        return Results.Json(new
+        {
+            allHealthy = false,
+            checks = new[]
+            {
+                new { name = "RTA/API/APIM probe", isHealthy = false, statusCode = (int?)null, detail = "Verification timed out before all checks completed." }
+            },
+            checkedAt = DateTimeOffset.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        loggerFactory.CreateLogger("ProjectPulse.ConfigurationChecklist")
+            .LogWarning(ex, "Public configuration checklist probes failed.");
+        return Results.Json(new
+        {
+            allHealthy = false,
+            checks = new[]
+            {
+                new { name = "RTA/API/APIM probe", isHealthy = false, statusCode = (int?)null, detail = "Verification could not complete. Check configuration and the replica log stream." }
+            },
+            checkedAt = DateTimeOffset.UtcNow
+        }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
 
@@ -771,60 +805,16 @@ app.MapGet("/requests.html", (HttpContext context) =>
         "text/html; charset=utf-8");
 });
 
-app.MapGet("/checklist.html", async (
-    HttpContext context,
-    ConfigurationChecklist checklist,
-    IServiceProvider services,
-    ILoggerFactory loggerFactory,
-    CancellationToken cancellationToken) =>
+app.MapGet("/checklist.html", (HttpContext context, ConfigurationChecklist checklist) =>
 {
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "DENY";
     context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
-
-    var report = checklist.Evaluate();
-    var issues = report.Checks
-        .Where(check => check.Status == "Blocked")
-        .Select(check => $"{check.Name}: {check.Details}")
-        .ToList();
-
-    if (report.CanStartWorker)
-    {
-        try
-        {
-            using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            probeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-            var (appApi, apim) = await services.GetRequiredService<IHealthGate>()
-                .CheckAsync(probeTimeout.Token);
-
-            if (!appApi.IsHealthy)
-            {
-                issues.Add("RTA API/database health checks failed. Check the RTA endpoint configuration and this replica's logs.");
-            }
-
-            if (!apim.IsHealthy)
-            {
-                issues.Add("APIM health check failed. Check the APIM endpoint, authentication, and this replica's logs.");
-            }
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            loggerFactory.CreateLogger("ProjectPulse.ConfigurationChecklist")
-                .LogWarning("Public checklist live dependency probes timed out.");
-            issues.Add("RTA/APIM health checks timed out. Check network access and this replica's logs.");
-        }
-        catch (Exception ex)
-        {
-            loggerFactory.CreateLogger("ProjectPulse.ConfigurationChecklist")
-                .LogWarning(ex, "Public checklist live dependency probes failed.");
-            issues.Add("RTA/APIM health checks could not complete. Check this replica's logs.");
-        }
-    }
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
     return Results.Content(
-        ConfigurationChecklistPage.Render(issues),
+        ConfigurationChecklistPage.Render(checklist.Evaluate()),
         "text/html; charset=utf-8");
 });
 
