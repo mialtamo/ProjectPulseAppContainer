@@ -24,6 +24,16 @@ public sealed class HealthGate(
         return (await rtaTask, await apimTask);
     }
 
+    public async Task<(HealthResult RtaApi, HealthResult RtaDatabase, HealthResult Apim)> CheckDetailedAsync(
+        CancellationToken cancellationToken)
+    {
+        var apiTask = ProbeRtaHealthAsync("RtaApi", _options.RtaHealthPath, cancellationToken);
+        var databaseTask = ProbeRtaHealthAsync("RtaDbApp", _options.RtaDbHealthPath, cancellationToken);
+        var apimTask = CheckApimAsync(cancellationToken);
+        await Task.WhenAll(apiTask, databaseTask, apimTask);
+        return (await apiTask, await databaseTask, await apimTask);
+    }
+
     public async Task<HealthResult> CheckRtaAsync(CancellationToken cancellationToken)
     {
         var appHealthTask = ProbeRtaHealthAsync("RtaApi", _options.RtaHealthPath, cancellationToken);
@@ -59,19 +69,53 @@ public sealed class HealthGate(
             RtaApiKeyHeader.Apply(request, _options);
             await authHeaderProvider.ApplyBearerTokenAsync(request, _options.AppApiScope, cancellationToken);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            var statusCode = (int)response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                return Report(new HealthResult(
+                    false,
+                    dependency,
+                    statusCode,
+                    $"HTTP {statusCode} {response.ReasonPhrase}".Trim()));
+            }
 
-            var healthy = response.IsSuccessStatusCode && IsHealthyPayload(body);
-            return Report(new HealthResult(
-                healthy,
-                dependency,
-                (int)response.StatusCode,
-                healthy ? "IS_HEALTHY=true" : body));
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            try
+            {
+                var healthy = IsHealthyPayload(body);
+                return Report(new HealthResult(
+                    healthy,
+                    dependency,
+                    statusCode,
+                    healthy ? "Health payload reports IS_HEALTHY=true." : "HTTP response succeeded, but the health payload did not report IS_HEALTHY=true."));
+            }
+            catch (JsonException ex)
+            {
+                logger.LogWarning(ex, "Health check returned invalid JSON for {Dependency}", dependency);
+                return Report(new HealthResult(false, dependency, statusCode, "HTTP response succeeded, but the health payload was not valid JSON."));
+            }
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        catch (TaskCanceledException ex)
         {
-            logger.LogWarning(ex, "Health check failed for {Dependency}", dependency);
-            return Report(new HealthResult(false, dependency, Detail: ex.Message));
+            logger.LogWarning(ex, "Health check timed out or was canceled for {Dependency}", dependency);
+            var timeout = client.Timeout;
+            var detail = timeout == Timeout.InfiniteTimeSpan
+                ? "No response arrived before the probe deadline."
+                : $"Request timed out after {timeout.TotalSeconds:0} seconds.";
+            return Report(new HealthResult(false, dependency, Detail: detail));
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "Health check failed before receiving an HTTP response for {Dependency}", dependency);
+            return Report(new HealthResult(
+                false,
+                dependency,
+                Detail: "No HTTP response. Check DNS, routing, firewall, TLS, and the replica log stream."));
+        }
+        catch (Azure.Identity.AuthenticationFailedException ex)
+        {
+            logger.LogWarning(ex, "Managed identity authentication failed for {Dependency}", dependency);
+            return Report(new HealthResult(false, dependency, Detail: "Managed identity token acquisition failed."));
         }
     }
 
@@ -102,10 +146,23 @@ public sealed class HealthGate(
                 (int)response.StatusCode,
                 response.ReasonPhrase));
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (TaskCanceledException ex)
         {
-            logger.LogWarning(ex, "Health check failed for {Dependency}", dependency);
-            return Report(new HealthResult(false, dependency, Detail: ex.Message));
+            logger.LogWarning(ex, "Health check timed out or was canceled for {Dependency}", dependency);
+            return Report(new HealthResult(false, dependency, Detail: "No response arrived before the probe deadline."));
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "Health check failed before receiving an HTTP response for {Dependency}", dependency);
+            return Report(new HealthResult(
+                false,
+                dependency,
+                Detail: "No HTTP response. Check DNS, routing, firewall, TLS, and the replica log stream."));
+        }
+        catch (Azure.Identity.AuthenticationFailedException ex)
+        {
+            logger.LogWarning(ex, "Managed identity authentication failed for {Dependency}", dependency);
+            return Report(new HealthResult(false, dependency, Detail: "Managed identity token acquisition failed."));
         }
     }
 
