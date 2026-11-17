@@ -141,7 +141,7 @@ app.MapGet("/version", () => Results.Ok(new
 app.MapPost("/checklist/probes", async (
     HttpContext context,
     ConfigurationChecklist checklist,
-    IHealthGate healthGate,
+    IServiceProvider services,
     CancellationToken cancellationToken) =>
 {
     var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
@@ -165,6 +165,7 @@ app.MapPost("/checklist/probes", async (
 
     try
     {
+        var healthGate = services.GetRequiredService<IHealthGate>();
         var (appApi, apim) = await healthGate.CheckAsync(cancellationToken);
         return Results.Json(new
         {
