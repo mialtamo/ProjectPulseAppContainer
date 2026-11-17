@@ -13,8 +13,9 @@ using ProjectPulse.Processor.Services;
 using ProjectPulse.Processor.Web;
 
 var builder = WebApplication.CreateBuilder(args);
-var projectPulseRole = ProjectPulseRoleResolver.Resolve();
-var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
+var configuredRole = builder.Configuration["PROJECT_PULSE_ROLE"];
+var roleIsValid = ProjectPulseRoleResolver.TryResolve(configuredRole, out var projectPulseRole);
+var projectPulseRoleName = roleIsValid ? projectPulseRole.ToConfigurationValue() : "INVALID";
 var projectPulseBuildVersion = Environment.GetEnvironmentVariable("PROJECT_PULSE_BUILD_VERSION") ?? "unknown";
 var projectPulseEnvironment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT");
 projectPulseEnvironment = string.IsNullOrWhiteSpace(projectPulseEnvironment) ? "UNKNOWN" : projectPulseEnvironment.Trim();
@@ -24,14 +25,14 @@ var requestHistoryStorageConfigured = !string.IsNullOrWhiteSpace(
 
 builder.Services.AddApplicationInsightsTelemetry();
 
+// Keep option binding lazy so a bad value cannot prevent the web host from serving diagnostics.
 builder.Services.AddOptions<ClaimProcessorOptions>()
-    .BindConfiguration(string.Empty)
-    .ValidateDataAnnotations()
-    .Validate(options => options.IsApimAuthenticationConfigurationValid(),
-        "ApimScope is required when APIM_AUTHENTICATION_ENABLED is true.")
-    .Validate(options => options.IsApimMockScenarioValid(),
-        "APIM_MOCK_SCENARIO must be blank or one of: success, docmp-not-found, docmp-error, http-404, http-429, http-500, http-503, http-504.")
-    .ValidateOnStart();
+    .BindConfiguration(string.Empty);
+
+builder.Services.AddSingleton(sp => new ConfigurationChecklist(
+    sp.GetRequiredService<IConfiguration>(),
+    projectPulseRoleName,
+    roleIsValid));
 
 builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
 
@@ -88,21 +89,20 @@ builder.Services.AddSingleton<OutboundCircuitBreaker>();
 builder.Services.AddSingleton<ApimOutageTracker>();
 builder.Services.AddSingleton<IClaimPollingTrigger, ClaimPollingTrigger>();
 
-if (projectPulseRole == ProjectPulseRole.Rta)
-{
-    builder.Services.AddHostedService<ClaimPollingWorker>();
-    if (requestHistoryStorageConfigured)
-    {
-        builder.Services.AddHostedService<RequestHistoryAutoCleanupWorker>();
-    }
-}
-else
-{
-    builder.Services.AddHostedService<ServiceBusWorker>();
-}
+builder.Services.AddSingleton<ClaimPollingWorker>();
+builder.Services.AddSingleton<ServiceBusWorker>();
+builder.Services.AddSingleton<RequestHistoryAutoCleanupWorker>();
+builder.Services.AddSingleton<IHostedService>(sp => new ConfigurationGatedHostedService(
+    sp,
+    sp.GetRequiredService<ConfigurationChecklist>(),
+    projectPulseRole,
+    roleIsValid,
+    requestHistoryStorageConfigured,
+    sp.GetRequiredService<ILogger<ConfigurationGatedHostedService>>()));
 
 var app = builder.Build();
-var apimAuthenticationEnabled = app.Services.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value.IsApimAuthenticationEnabled();
+var authSetting = builder.Configuration["APIM_AUTHENTICATION_ENABLED"];
+var apimAuthenticationEnabled = !bool.TryParse(authSetting, out var parsedAuthSetting) || parsedAuthSetting;
 if (!apimAuthenticationEnabled)
 {
     app.Logger.LogWarning(
@@ -137,6 +137,51 @@ app.MapGet("/version", () => Results.Ok(new
     role = projectPulseRoleName,
     environment = projectPulseEnvironment
 }));
+
+app.MapPost("/checklist/probes", async (
+    HttpContext context,
+    ConfigurationChecklist checklist,
+    IHealthGate healthGate,
+    CancellationToken cancellationToken) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: false);
+    if (authorization is not null) return authorization;
+
+    if (!string.Equals(context.Request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var report = checklist.Evaluate();
+    if (!report.CanStartWorker)
+    {
+        return Results.Conflict(new
+        {
+            error = "Live checks are paused until the blocked configuration settings are fixed.",
+            checks = report.Checks.Where(check => check.Status == "Blocked")
+        });
+    }
+
+    try
+    {
+        var (appApi, apim) = await healthGate.CheckAsync(cancellationToken);
+        return Results.Json(new
+        {
+            appApi,
+            apim,
+            checkedAt = DateTimeOffset.UtcNow
+        });
+    }
+    catch (Exception ex) when (ex is not OperationCanceledException)
+    {
+        app.Logger.LogWarning(ex, "Live configuration checklist probes failed.");
+        return Results.Problem(
+            title: "Live checks could not complete",
+            detail: "Check the replica log stream for the underlying error.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 
 app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFactory httpClientFactory) =>
 {
@@ -719,6 +764,27 @@ app.MapGet("/requests.html", (HttpContext context) =>
         UiPages.RequestHistoryPageFor(
             signedInUser,
             projectPulseRole == ProjectPulseRole.Rta,
+            projectPulseBuildVersion,
+            projectPulseEnvironment,
+            projectPulseRoleName),
+        "text/html; charset=utf-8");
+});
+
+app.MapGet("/checklist.html", (HttpContext context, ConfigurationChecklist checklist) =>
+{
+    var authorization = RequireProjectPulseAdmin(context, redirectToLogin: true);
+    if (authorization is not null) return authorization;
+
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+    var report = checklist.Evaluate();
+    return Results.Content(
+        ConfigurationChecklistPage.Render(
+            report,
             projectPulseBuildVersion,
             projectPulseEnvironment,
             projectPulseRoleName),
