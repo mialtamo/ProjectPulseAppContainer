@@ -17,7 +17,7 @@ Open `/checklist.html` without signing in to see whether the active replica has 
 
 Missing or invalid required settings no longer prevent the web host from serving this page: the processing worker stays paused, and startup logs identify the settings that blocked it. After changing environment variables or secret references, deploy or restart the revision so the active replica loads them. If Container Apps authentication is configured to require sign-in globally, add `/checklist.html` to its unauthenticated `excludedPaths`; keep the rest of the app protected. Otherwise the platform can redirect the request before it reaches this public app route.
 
-The checklist confirms required settings are present and valid; it does not itself prove that downstream services are reachable. Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
+The checklist confirms required settings are present and valid, then runs read-only RTA API/database and APIM health checks from the active replica. It shows only **All is well** when configuration and both live checks pass; otherwise, it lists only the failed checks. Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
 
 ## Secrets
 
