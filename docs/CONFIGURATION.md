@@ -13,13 +13,11 @@ Values shown as defaults are the defaults implemented by the application unless 
 
 ## Startup configuration checklist
 
-Open the admin-only `/checklist.html` page to see which configuration settings the active replica actually loaded. Missing or invalid required settings no longer prevent the web host from serving the diagnostics page: the worker stays paused, and startup logs identify the settings that blocked it. The page never displays secret values.
+Open `/checklist.html` without signing in to see whether the active replica has the required configuration. This page remains available when sign-in or worker configuration is broken. It does not display configured values or secrets. When required checks pass, it shows only **All is well**. When checks fail, it lists only the settings blocking the worker and the correction needed.
 
-The checklist checks required API base URLs, Service Bus namespace and queue, request-history storage, APIM authentication and scope, APIM response-token secret, enabled RTA status writeback, the 10-minute Service Bus deadline, and supported mock-scenario values. Admin notification URL and optional RTA API key are shown as warnings when absent.
+Missing or invalid required settings no longer prevent the web host from serving this page: the processing worker stays paused, and startup logs identify the settings that blocked it. After changing environment variables or secret references, deploy or restart the revision so the active replica loads them.
 
-Use **Run live RTA and APIM checks** to call the configured RTA health endpoints and APIM health endpoint from that replica using the configured authentication. This verifies reachability and whether those endpoints accept the replica's managed-identity token. The check is read-only. Use the existing **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
-
-The page reports the active process configuration, not unsaved Container Apps settings. After changing environment variables or secret references, deploy or restart the revision so the replica loads them. A failed live probe can indicate a URL, network, token, role-assignment, or downstream health issue; inspect the replica log stream for details.
+The checklist confirms required settings are present and valid; it does not itself prove that downstream services are reachable. Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
 
 ## Secrets
 
