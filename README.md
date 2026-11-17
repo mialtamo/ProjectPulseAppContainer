@@ -150,11 +150,15 @@ The admin-only `/ledger.html` page presents a searchable lifecycle view of store
 /requests/cleanup/{operationId} (GET, cleanup progress)
 /requests/{id}
 /requests.html
+/checklist.html (admin-only startup/configuration diagnostics)
+/checklist/probes (POST, admin-only authenticated RTA/APIM health probes)
 /ledger.html (admin-only lifecycle ledger)
 /batches.html (admin-only poll-batch reconciliation)
 
 /live
 ```
+
+The admin-only `/checklist.html` page remains available when the worker cannot start because required settings are missing or invalid. It reports the effective configuration seen by the running replica without displaying secret values. The worker stays paused until required checks pass. The page also runs authenticated, read-only RTA and APIM health probes; use the Requests page's Service Bus test to verify queue send/receive separately.
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA. The same page provides an admin-only `Test Service Bus` button on the `RTA` role. It sends a short-lived diagnostic message to the configured queue; the RTA log stream records send acceptance and the Service Bus worker log stream records receipt/completion. The worker completes this diagnostic message without treating it as a retry.
 
