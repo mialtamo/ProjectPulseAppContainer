@@ -771,21 +771,60 @@ app.MapGet("/requests.html", (HttpContext context) =>
         "text/html; charset=utf-8");
 });
 
-app.MapGet("/checklist.html", (HttpContext context, ConfigurationChecklist checklist) =>
+app.MapGet("/checklist.html", async (
+    HttpContext context,
+    ConfigurationChecklist checklist,
+    IServiceProvider services,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
 {
     context.Response.Headers.CacheControl = "no-store";
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "DENY";
     context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'";
 
     var report = checklist.Evaluate();
+    var issues = report.Checks
+        .Where(check => check.Status == "Blocked")
+        .Select(check => $"{check.Name}: {check.Details}")
+        .ToList();
+
+    if (report.CanStartWorker)
+    {
+        try
+        {
+            using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            probeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+            var (appApi, apim) = await services.GetRequiredService<IHealthGate>()
+                .CheckAsync(probeTimeout.Token);
+
+            if (!appApi.IsHealthy)
+            {
+                issues.Add("RTA API/database health checks failed. Check the RTA endpoint configuration and this replica's logs.");
+            }
+
+            if (!apim.IsHealthy)
+            {
+                issues.Add("APIM health check failed. Check the APIM endpoint, authentication, and this replica's logs.");
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            loggerFactory.CreateLogger("ProjectPulse.ConfigurationChecklist")
+                .LogWarning("Public checklist live dependency probes timed out.");
+            issues.Add("RTA/APIM health checks timed out. Check network access and this replica's logs.");
+        }
+        catch (Exception ex)
+        {
+            loggerFactory.CreateLogger("ProjectPulse.ConfigurationChecklist")
+                .LogWarning(ex, "Public checklist live dependency probes failed.");
+            issues.Add("RTA/APIM health checks could not complete. Check this replica's logs.");
+        }
+    }
+
     return Results.Content(
-        ConfigurationChecklistPage.Render(
-            report,
-            projectPulseBuildVersion,
-            projectPulseEnvironment,
-            projectPulseRoleName),
+        ConfigurationChecklistPage.Render(issues),
         "text/html; charset=utf-8");
 });
 
