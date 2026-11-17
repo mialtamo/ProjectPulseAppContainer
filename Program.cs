@@ -155,11 +155,20 @@ app.MapPost("/checklist/probes", async (
     var report = checklist.Evaluate();
     if (!report.CanStartWorker)
     {
-        return Results.Conflict(new
+        return Results.Json(new
         {
+            allHealthy = false,
             error = "Fix the blocked configuration settings before running connection checks.",
-            checks = report.Checks.Where(check => check.Status == "Blocked")
-        });
+            checks = report.Checks
+                .Where(check => check.Status == "Blocked")
+                .Select(check => new
+                {
+                    name = check.Name,
+                    isHealthy = false,
+                    statusCode = (int?)null,
+                    detail = check.Details
+                })
+        }, statusCode: StatusCodes.Status409Conflict);
     }
 
     var now = Environment.TickCount64;
