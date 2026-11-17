@@ -15,7 +15,7 @@ Values shown as defaults are the defaults implemented by the application unless 
 
 Open `/checklist.html` without signing in to see whether the active replica has the required configuration. This page remains available when sign-in or worker configuration is broken. It does not display configured values or secrets. When required checks pass, it shows only **All is well**. When checks fail, it lists only the settings blocking the worker and the correction needed.
 
-Missing or invalid required settings no longer prevent the web host from serving this page: the processing worker stays paused, and startup logs identify the settings that blocked it. After changing environment variables or secret references, deploy or restart the revision so the active replica loads them.
+Missing or invalid required settings no longer prevent the web host from serving this page: the processing worker stays paused, and startup logs identify the settings that blocked it. After changing environment variables or secret references, deploy or restart the revision so the active replica loads them. If Container Apps authentication is configured to require sign-in globally, add `/checklist.html` to its unauthenticated `excludedPaths`; keep the rest of the app protected. Otherwise the platform can redirect the request before it reaches this public app route.
 
 The checklist confirms required settings are present and valid; it does not itself prove that downstream services are reachable. Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
 
