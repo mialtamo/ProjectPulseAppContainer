@@ -42,8 +42,8 @@ public sealed class ConfigurationChecklist(
         var validNamespace = !string.IsNullOrWhiteSpace(namespaceHost)
             && Uri.CheckHostName(namespaceHost) == UriHostNameType.Dns
             && !namespaceHost.Contains("://", StringComparison.Ordinal)
-            && !namespaceHost.Contains('/', StringComparison.Ordinal)
-            && !namespaceHost.Contains(':', StringComparison.Ordinal);
+            && !namespaceHost.Contains("/", StringComparison.Ordinal)
+            && !namespaceHost.Contains(":", StringComparison.Ordinal);
         Add(
             checks,
             "Service Bus namespace",
@@ -58,7 +58,7 @@ public sealed class ConfigurationChecklist(
             checks,
             "Service Bus queue",
             "ServiceBusQueueName",
-            string.IsNullOrWhiteSpace(queueName) ? "Ready" : "Ready",
+            "Ready",
             string.IsNullOrWhiteSpace(queueName)
                 ? "The application default queue name is in use."
                 : "A queue name is configured.");
