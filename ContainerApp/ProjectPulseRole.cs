@@ -11,20 +11,36 @@ public static class ProjectPulseRoleResolver
     public static ProjectPulseRole Resolve()
     {
         var raw = Environment.GetEnvironmentVariable("PROJECT_PULSE_ROLE");
-
-        if (string.IsNullOrWhiteSpace(raw))
+        if (TryResolve(raw, out var role))
         {
-            return ProjectPulseRole.Rta;
+            return role;
         }
 
-        return raw.Trim().ToUpperInvariant() switch
+        throw new InvalidOperationException(
+            $"Unsupported PROJECT_PULSE_ROLE '{raw}'. Valid values are RTA or SERVICEBUS.");
+    }
+
+    public static bool TryResolve(string? raw, out ProjectPulseRole role)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
         {
-            "RTA" => ProjectPulseRole.Rta,
-            "SERVICEBUS" => ProjectPulseRole.ServiceBus,
-            "SERVICE_BUS" => ProjectPulseRole.ServiceBus,
-            _ => throw new InvalidOperationException(
-                $"Unsupported PROJECT_PULSE_ROLE '{raw}'. Valid values are RTA or SERVICEBUS.")
-        };
+            role = ProjectPulseRole.Rta;
+            return true;
+        }
+
+        switch (raw.Trim().ToUpperInvariant())
+        {
+            case "RTA":
+                role = ProjectPulseRole.Rta;
+                return true;
+            case "SERVICEBUS":
+            case "SERVICE_BUS":
+                role = ProjectPulseRole.ServiceBus;
+                return true;
+            default:
+                role = ProjectPulseRole.Rta;
+                return false;
+        }
     }
 
     public static string ToConfigurationValue(this ProjectPulseRole role) =>
