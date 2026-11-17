@@ -150,11 +150,15 @@ The admin-only `/ledger.html` page presents a searchable lifecycle view of store
 /requests/cleanup/{operationId} (GET, cleanup progress)
 /requests/{id}
 /requests.html
+/checklist.html (public startup/configuration checklist)
+/checklist/probes (POST, public rate-limited RTA API/database/APIM probes)
 /ledger.html (admin-only lifecycle ledger)
 /batches.html (admin-only poll-batch reconciliation)
 
 /live
 ```
+
+The public `/checklist.html` page is available even when sign-in or worker configuration is broken. It does not display configured values or secrets. It lists blocked settings or provides a **Verify connections** button for read-only RTA API, RTA database, and APIM probes. Failed probes report HTTP status or a safe timeout/network/authentication diagnosis; when all pass, it shows only “All is well.” The worker stays paused until required configuration checks pass. Use the admin-only Requests page's Service Bus test to verify queue send/receive separately. If Container Apps authentication redirects anonymous traffic globally, exclude `/checklist.html` and `/checklist/probes` from that redirect.
 
 The admin-only `Poll now` button on `/requests.html` queues an immediate RTA polling cycle. It uses the normal worker path, including existing health checks and APIM outage handling, and does not start a concurrent poll. Repeated clicks while a poll is already queued are coalesced. The endpoint is available only on the `RTA` role; the `SERVICEBUS` role does not poll RTA. The same page provides an admin-only `Test Service Bus` button on the `RTA` role. It sends a short-lived diagnostic message to the configured queue; the RTA log stream records send acceptance and the Service Bus worker log stream records receipt/completion. The worker completes this diagnostic message without treating it as a retry.
 

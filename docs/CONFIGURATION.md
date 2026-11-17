@@ -11,6 +11,18 @@ Request history also stores the runtime role that handled each attempt (`RTA` or
 
 Values shown as defaults are the defaults implemented by the application unless noted otherwise. The deployment workflow reads the base release from the repository root `VERSION` file and appends the GitHub Actions run number to create a unique image tag for every run (for example, `0.0.93-build.94`). That exact tag is baked into the image and displayed on the home page, on `requests.html` with the runtime role, and as JSON at `/version`; no per-deployment version environment setting or manual build-number edit is needed. Change `VERSION` when intentionally starting a new base release. Azure Container Apps revision counters are separate.
 
+## Startup configuration checklist
+
+Open `/checklist.html` without signing in to see whether the active replica has the required configuration. The page remains available when sign-in or worker configuration is broken and never displays configured values or secrets. When required settings are missing or invalid, it lists only the settings blocking the worker.
+
+When required settings are valid, choose **Verify connections** to run read-only probes against the RTA API health path, RTA database health path, and APIM health path. A failed probe shows its HTTP status when a response arrived (such as 401, 404, or 500), or a safe diagnosis such as timeout, network failure, or managed-identity token failure. Response bodies and secrets are not displayed. If all configuration and live health checks pass, the page shows only **All is well**. The public probe endpoint is rate-limited.
+
+The checklist probes run from the active replica, so they test its network route, DNS, managed identity, and configured paths. A VM reaching the same endpoint does not prove the Container Apps subnet or replica can reach it. The worker remains paused while required configuration is missing or invalid; after changing environment variables or secret references, deploy or restart the revision so the active replica loads them.
+
+If Container Apps authentication is configured to require sign-in globally, add both `/checklist.html` and `/checklist/probes` to its unauthenticated `excludedPaths`; keep the rest of the app protected. Otherwise, the platform may redirect anonymous requests before they reach these public routes.
+
+Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream. The checklist does not send a Service Bus message.
+
 ## Secrets
 
 ### ApimResponseToken

@@ -13,8 +13,9 @@ using ProjectPulse.Processor.Services;
 using ProjectPulse.Processor.Web;
 
 var builder = WebApplication.CreateBuilder(args);
-var projectPulseRole = ProjectPulseRoleResolver.Resolve();
-var projectPulseRoleName = projectPulseRole.ToConfigurationValue();
+var configuredRole = builder.Configuration["PROJECT_PULSE_ROLE"];
+var roleIsValid = ProjectPulseRoleResolver.TryResolve(configuredRole, out var projectPulseRole);
+var projectPulseRoleName = roleIsValid ? projectPulseRole.ToConfigurationValue() : "INVALID";
 var projectPulseBuildVersion = Environment.GetEnvironmentVariable("PROJECT_PULSE_BUILD_VERSION") ?? "unknown";
 var projectPulseEnvironment = Environment.GetEnvironmentVariable("PROJECT_PULSE_ENVIRONMENT");
 projectPulseEnvironment = string.IsNullOrWhiteSpace(projectPulseEnvironment) ? "UNKNOWN" : projectPulseEnvironment.Trim();
@@ -24,14 +25,14 @@ var requestHistoryStorageConfigured = !string.IsNullOrWhiteSpace(
 
 builder.Services.AddApplicationInsightsTelemetry();
 
+// Keep option binding lazy so a bad value cannot prevent the web host from serving diagnostics.
 builder.Services.AddOptions<ClaimProcessorOptions>()
-    .BindConfiguration(string.Empty)
-    .ValidateDataAnnotations()
-    .Validate(options => options.IsApimAuthenticationConfigurationValid(),
-        "ApimScope is required when APIM_AUTHENTICATION_ENABLED is true.")
-    .Validate(options => options.IsApimMockScenarioValid(),
-        "APIM_MOCK_SCENARIO must be blank or one of: success, docmp-not-found, docmp-error, http-404, http-429, http-500, http-503, http-504.")
-    .ValidateOnStart();
+    .BindConfiguration(string.Empty);
+
+builder.Services.AddSingleton(sp => new ConfigurationChecklist(
+    sp.GetRequiredService<IConfiguration>(),
+    projectPulseRoleName,
+    roleIsValid));
 
 builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
 
@@ -88,21 +89,21 @@ builder.Services.AddSingleton<OutboundCircuitBreaker>();
 builder.Services.AddSingleton<ApimOutageTracker>();
 builder.Services.AddSingleton<IClaimPollingTrigger, ClaimPollingTrigger>();
 
-if (projectPulseRole == ProjectPulseRole.Rta)
-{
-    builder.Services.AddHostedService<ClaimPollingWorker>();
-    if (requestHistoryStorageConfigured)
-    {
-        builder.Services.AddHostedService<RequestHistoryAutoCleanupWorker>();
-    }
-}
-else
-{
-    builder.Services.AddHostedService<ServiceBusWorker>();
-}
+builder.Services.AddSingleton<ClaimPollingWorker>();
+builder.Services.AddSingleton<ServiceBusWorker>();
+builder.Services.AddSingleton<RequestHistoryAutoCleanupWorker>();
+builder.Services.AddSingleton<IHostedService>(sp => new ConfigurationGatedHostedService(
+    sp,
+    sp.GetRequiredService<ConfigurationChecklist>(),
+    projectPulseRole,
+    roleIsValid,
+    requestHistoryStorageConfigured,
+    sp.GetRequiredService<ILogger<ConfigurationGatedHostedService>>()));
 
 var app = builder.Build();
-var apimAuthenticationEnabled = app.Services.GetRequiredService<IOptions<ClaimProcessorOptions>>().Value.IsApimAuthenticationEnabled();
+long lastChecklistProbeAt = 0;
+var authSetting = builder.Configuration["APIM_AUTHENTICATION_ENABLED"];
+var apimAuthenticationEnabled = !bool.TryParse(authSetting, out var parsedAuthSetting) || parsedAuthSetting;
 if (!apimAuthenticationEnabled)
 {
     app.Logger.LogWarning(
@@ -137,6 +138,94 @@ app.MapGet("/version", () => Results.Ok(new
     role = projectPulseRoleName,
     environment = projectPulseEnvironment
 }));
+
+app.MapPost("/checklist/probes", async (
+    HttpContext context,
+    ConfigurationChecklist checklist,
+    IHealthGate healthGate,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    if (!string.Equals(context.Request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    context.Response.Headers.CacheControl = "no-store";
+    var report = checklist.Evaluate();
+    if (!report.CanStartWorker)
+    {
+        return Results.Json(new
+        {
+            allHealthy = false,
+            error = "Fix the blocked configuration settings before running connection checks.",
+            checks = report.Checks
+                .Where(check => check.Status == "Blocked")
+                .Select(check => new
+                {
+                    name = check.Name,
+                    isHealthy = false,
+                    statusCode = (int?)null,
+                    detail = check.Details
+                })
+        }, statusCode: StatusCodes.Status409Conflict);
+    }
+
+    var now = Environment.TickCount64;
+    var previous = Interlocked.Read(ref lastChecklistProbeAt);
+    if ((previous != 0 && now - previous < 5000)
+        || Interlocked.CompareExchange(ref lastChecklistProbeAt, now, previous) != previous)
+    {
+        return Results.Json(
+            new { error = "Please wait a few seconds before verifying again." },
+            statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+        var (rtaApi, rtaDatabase, apim) = await healthGate.CheckDetailedAsync(probeTimeout.Token);
+        var checks = new[]
+        {
+            new { name = "RTA API", isHealthy = rtaApi.IsHealthy, statusCode = rtaApi.StatusCode, detail = rtaApi.Detail },
+            new { name = "RTA database", isHealthy = rtaDatabase.IsHealthy, statusCode = rtaDatabase.StatusCode, detail = rtaDatabase.Detail },
+            new { name = "APIM", isHealthy = apim.IsHealthy, statusCode = apim.StatusCode, detail = apim.Detail }
+        };
+        return Results.Json(new
+        {
+            allHealthy = checks.All(check => check.isHealthy),
+            checks,
+            checkedAt = DateTimeOffset.UtcNow
+        });
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+        return Results.Json(new
+        {
+            allHealthy = false,
+            checks = new[]
+            {
+                new { name = "RTA/API/APIM probe", isHealthy = false, statusCode = (int?)null, detail = "Verification timed out before all checks completed." }
+            },
+            checkedAt = DateTimeOffset.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        loggerFactory.CreateLogger("ProjectPulse.ConfigurationChecklist")
+            .LogWarning(ex, "Public configuration checklist probes failed.");
+        return Results.Json(new
+        {
+            allHealthy = false,
+            checks = new[]
+            {
+                new { name = "RTA/API/APIM probe", isHealthy = false, statusCode = (int?)null, detail = "Verification could not complete. Check configuration and the replica log stream." }
+            },
+            checkedAt = DateTimeOffset.UtcNow
+        }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 
 app.MapGet("/pulse-health", async (IConfiguration configuration, IHttpClientFactory httpClientFactory) =>
 {
@@ -722,6 +811,19 @@ app.MapGet("/requests.html", (HttpContext context) =>
             projectPulseBuildVersion,
             projectPulseEnvironment,
             projectPulseRoleName),
+        "text/html; charset=utf-8");
+});
+
+app.MapGet("/checklist.html", (HttpContext context, ConfigurationChecklist checklist) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+    return Results.Content(
+        ConfigurationChecklistPage.Render(checklist.Evaluate()),
         "text/html; charset=utf-8");
 });
 
