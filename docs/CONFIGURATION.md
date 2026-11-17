@@ -11,6 +11,16 @@ Request history also stores the runtime role that handled each attempt (`RTA` or
 
 Values shown as defaults are the defaults implemented by the application unless noted otherwise. The deployment workflow reads the base release from the repository root `VERSION` file and appends the GitHub Actions run number to create a unique image tag for every run (for example, `0.0.93-build.94`). That exact tag is baked into the image and displayed on the home page, on `requests.html` with the runtime role, and as JSON at `/version`; no per-deployment version environment setting or manual build-number edit is needed. Change `VERSION` when intentionally starting a new base release. Azure Container Apps revision counters are separate.
 
+## Startup configuration checklist
+
+Open the admin-only `/checklist.html` page to see which configuration settings the active replica actually loaded. Missing or invalid required settings no longer prevent the web host from serving the diagnostics page: the worker stays paused, and startup logs identify the settings that blocked it. The page never displays secret values.
+
+The checklist checks required API base URLs, Service Bus namespace and queue, request-history storage, APIM authentication and scope, APIM response-token secret, enabled RTA status writeback, the 10-minute Service Bus deadline, and supported mock-scenario values. Admin notification URL and optional RTA API key are shown as warnings when absent.
+
+Use **Run live RTA and APIM checks** to call the configured RTA health endpoints and APIM health endpoint from that replica using the configured authentication. This verifies reachability and whether those endpoints accept the replica's managed-identity token. The check is read-only. Use the existing **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
+
+The page reports the active process configuration, not unsaved Container Apps settings. After changing environment variables or secret references, deploy or restart the revision so the replica loads them. A failed live probe can indicate a URL, network, token, role-assignment, or downstream health issue; inspect the replica log stream for details.
+
 ## Secrets
 
 ### ApimResponseToken
