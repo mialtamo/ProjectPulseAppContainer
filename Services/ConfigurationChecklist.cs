@@ -58,9 +58,9 @@ public sealed class ConfigurationChecklist(
             checks,
             "Service Bus queue",
             "ServiceBusQueueName",
-            string.IsNullOrWhiteSpace(queueName) ? "Blocked" : "Ready",
+            string.IsNullOrWhiteSpace(queueName) ? "Ready" : "Ready",
             string.IsNullOrWhiteSpace(queueName)
-                ? "Set the queue name."
+                ? "The application default queue name is in use."
                 : "A queue name is configured.");
 
         var historyStorage = Get("RequestHistoryStorageConnectionString")
@@ -87,16 +87,22 @@ public sealed class ConfigurationChecklist(
                 : "Set this to true or false.");
 
         var apimScope = Get("ApimScope");
+        var apimScopeValid = !apimAuthEnabled
+            || !apimAuthValid
+            || (!string.IsNullOrWhiteSpace(apimScope)
+                && apimScope.Trim().EndsWith("/.default", StringComparison.OrdinalIgnoreCase));
         Add(
             checks,
             "APIM token scope",
             "ApimScope",
-            !apimAuthEnabled || !apimAuthValid || !string.IsNullOrWhiteSpace(apimScope) ? "Ready" : "Blocked",
+            apimScopeValid ? "Ready" : "Blocked",
             !apimAuthEnabled
                 ? "Not required while APIM bearer-token sending is disabled."
                 : string.IsNullOrWhiteSpace(apimScope)
                     ? "Set ApimScope to the API application ID URI followed by /.default."
-                    : "An APIM scope is configured.");
+                    : apimScopeValid
+                        ? "An APIM scope ending in /.default is configured."
+                        : "The scope must be the API application ID URI followed by /.default.");
 
         Add(
             checks,
