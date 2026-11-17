@@ -6,13 +6,9 @@ namespace ProjectPulse.Processor.Web;
 
 public static class ConfigurationChecklistPage
 {
-    public static string Render(
-        ConfigurationChecklistResult result,
-        string? version,
-        string? environment,
-        string role)
+    public static string Render(IReadOnlyList<string> issues)
     {
-        if (result.CanStartWorker)
+        if (issues.Count == 0)
         {
             return """
 <!doctype html>
@@ -29,13 +25,11 @@ public static class ConfigurationChecklistPage
 """;
         }
 
-        var blockedItems = new StringBuilder();
-        foreach (var check in result.Checks.Where(check => check.Status == "Blocked"))
+        var issueItems = new StringBuilder();
+        foreach (var issue in issues)
         {
-            blockedItems.Append("<li><strong>")
-                .Append(WebUtility.HtmlEncode(check.Name))
-                .Append("</strong>: ")
-                .Append(WebUtility.HtmlEncode(check.Details))
+            issueItems.Append("<li>")
+                .Append(WebUtility.HtmlEncode(issue))
                 .Append("</li>");
         }
 
@@ -49,9 +43,8 @@ public static class ConfigurationChecklistPage
 </head>
 <body>
   <main>
-    <h1>Project Pulse needs configuration</h1>
-    <p>The processing worker is paused. Correct these settings, then restart or deploy the Container App revision:</p>
-    <ul>{{blockedItems}}</ul>
+    <h1>Checks need attention</h1>
+    <ul>{{issueItems}}</ul>
   </main>
 </body>
 </html>
