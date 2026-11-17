@@ -128,7 +128,7 @@ public sealed class HealthGate(
     {
         if (string.IsNullOrWhiteSpace(path))
         {
-            return Report(new HealthResult(true, dependency, Detail: "Health probe disabled"));
+            return Report(new HealthResult(false, dependency, Detail: "Health probe path is not configured."));
         }
 
         try
