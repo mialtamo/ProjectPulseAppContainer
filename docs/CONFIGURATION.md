@@ -13,11 +13,15 @@ Values shown as defaults are the defaults implemented by the application unless 
 
 ## Startup configuration checklist
 
-Open `/checklist.html` without signing in to see whether the active replica has the required configuration. This page remains available when sign-in or worker configuration is broken. It does not display configured values or secrets. When required checks pass, it shows only **All is well**. When checks fail, it lists only the settings blocking the worker and the correction needed.
+Open `/checklist.html` without signing in to see whether the active replica has the required configuration. The page remains available when sign-in or worker configuration is broken and never displays configured values or secrets. When required settings are missing or invalid, it lists only the settings blocking the worker.
 
-Missing or invalid required settings no longer prevent the web host from serving this page: the processing worker stays paused, and startup logs identify the settings that blocked it. After changing environment variables or secret references, deploy or restart the revision so the active replica loads them. If Container Apps authentication is configured to require sign-in globally, add `/checklist.html` to its unauthenticated `excludedPaths`; keep the rest of the app protected. Otherwise the platform can redirect the request before it reaches this public app route.
+When required settings are valid, choose **Verify connections** to run read-only probes against the RTA API health path, RTA database health path, and APIM health path. A failed probe shows its HTTP status when a response arrived (such as 401, 404, or 500), or a safe diagnosis such as timeout, network failure, or managed-identity token failure. Response bodies and secrets are not displayed. If all configuration and live health checks pass, the page shows only **All is well**. The public probe endpoint is rate-limited.
 
-The checklist confirms required settings are present and valid, then runs read-only RTA API/database and APIM health checks from the active replica. It shows only **All is well** when configuration and both live checks pass; otherwise, it lists only the failed checks. Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream.
+The checklist probes run from the active replica, so they test its network route, DNS, managed identity, and configured paths. A VM reaching the same endpoint does not prove the Container Apps subnet or replica can reach it. The worker remains paused while required configuration is missing or invalid; after changing environment variables or secret references, deploy or restart the revision so the active replica loads them.
+
+If Container Apps authentication is configured to require sign-in globally, add both `/checklist.html` and `/checklist/probes` to its unauthenticated `excludedPaths`; keep the rest of the app protected. Otherwise, the platform may redirect anonymous requests before they reach these public routes.
+
+Use the admin-only **Test Service Bus** action on `requests.html` to verify message send and confirm receipt in the SERVICEBUS app log stream. The checklist does not send a Service Bus message.
 
 ## Secrets
 
